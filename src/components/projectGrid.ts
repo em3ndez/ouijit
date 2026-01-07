@@ -1,4 +1,4 @@
-import type { Project } from '../types';
+import type { Project, RunConfig } from '../types';
 import { createProjectRow } from './projectRow';
 
 /**
@@ -7,7 +7,9 @@ import { createProjectRow } from './projectRow';
 export function renderProjects(
   container: HTMLElement,
   projects: Project[],
-  onOpen: (path: string) => void
+  onOpen: (path: string) => void,
+  onLaunch?: (path: string, runConfig: RunConfig) => void,
+  onOpenFinder?: (path: string) => void
 ): void {
   // Clear existing content
   container.innerHTML = '';
@@ -25,7 +27,7 @@ export function renderProjects(
 
   // Create and append project rows with staggered animation
   projects.forEach((project, index) => {
-    const row = createProjectRow(project, onOpen);
+    const row = createProjectRow(project, onOpen, onLaunch, onOpenFinder);
     row.style.animationDelay = `${index * 50}ms`;
     container.appendChild(row);
   });

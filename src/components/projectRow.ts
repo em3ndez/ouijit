@@ -1,4 +1,4 @@
-import type { Project } from '../types';
+import type { Project, RunConfig } from '../types';
 
 /**
  * Generate a consistent color from a string (project name)
@@ -110,11 +110,63 @@ function truncate(str: string, maxLength: number): string {
 }
 
 /**
+ * Creates a launch dropdown menu
+ */
+function createLaunchDropdown(
+  project: Project,
+  onLaunch: (path: string, runConfig: RunConfig) => void,
+  onOpenFinder: (path: string) => void
+): HTMLElement {
+  const dropdown = document.createElement('div');
+  dropdown.className = 'launch-dropdown';
+
+  const runConfigs = project.runConfigs || [];
+
+  // Add run config options
+  runConfigs.forEach((config) => {
+    const option = document.createElement('button');
+    option.className = 'launch-option';
+    option.innerHTML = `
+      <span class="launch-option-name">${config.name}</span>
+      <span class="launch-option-source">${config.source}</span>
+    `;
+    option.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onLaunch(project.path, config);
+      dropdown.classList.remove('visible');
+    });
+    dropdown.appendChild(option);
+  });
+
+  // Divider
+  if (runConfigs.length > 0) {
+    const divider = document.createElement('div');
+    divider.className = 'launch-dropdown-divider';
+    dropdown.appendChild(divider);
+  }
+
+  // Always include "Open in Finder" option
+  const finderOption = document.createElement('button');
+  finderOption.className = 'launch-option';
+  finderOption.innerHTML = `<span class="launch-option-name">Open in Finder</span>`;
+  finderOption.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onOpenFinder(project.path);
+    dropdown.classList.remove('visible');
+  });
+  dropdown.appendChild(finderOption);
+
+  return dropdown;
+}
+
+/**
  * Creates a project row DOM element
  */
 export function createProjectRow(
   project: Project,
-  onOpen: (path: string) => void
+  onOpen: (path: string) => void,
+  onLaunch?: (path: string, runConfig: RunConfig) => void,
+  onOpenFinder?: (path: string) => void
 ): HTMLElement {
   const row = document.createElement('div');
   row.className = 'project-row';
@@ -191,20 +243,61 @@ export function createProjectRow(
   lastModified.textContent = formatRelativeTime(date);
   row.appendChild(lastModified);
 
-  // Open button
-  const openButton = document.createElement('button');
-  openButton.className = 'btn btn-primary';
-  openButton.textContent = 'Open';
-  openButton.addEventListener('click', (e) => {
-    e.stopPropagation();
-    onOpen(project.path);
-  });
-  row.appendChild(openButton);
+  const hasRunConfigs = project.runConfigs && project.runConfigs.length > 0;
 
-  // Make the whole row clickable
-  row.addEventListener('click', () => {
-    onOpen(project.path);
-  });
+  if (hasRunConfigs && onLaunch && onOpenFinder) {
+    // Create launch button with dropdown
+    const launchContainer = document.createElement('div');
+    launchContainer.className = 'launch-container';
+
+    const launchButton = document.createElement('button');
+    launchButton.className = 'btn btn-primary btn-launch';
+
+    const primaryConfig = project.runConfigs![0];
+    launchButton.innerHTML = `<span>Launch</span><span class="dropdown-arrow">▾</span>`;
+
+    const dropdown = createLaunchDropdown(project, onLaunch, onOpenFinder);
+
+    launchButton.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Toggle dropdown visibility
+      const isVisible = dropdown.classList.contains('visible');
+      // Close all other dropdowns
+      document.querySelectorAll('.launch-dropdown.visible').forEach(d => d.classList.remove('visible'));
+      if (!isVisible) {
+        dropdown.classList.add('visible');
+      }
+    });
+
+    launchContainer.appendChild(launchButton);
+    launchContainer.appendChild(dropdown);
+    row.appendChild(launchContainer);
+
+    // Row click launches primary config
+    row.addEventListener('click', () => {
+      onLaunch(project.path, primaryConfig);
+    });
+  } else {
+    // Fallback to simple Open button
+    const openButton = document.createElement('button');
+    openButton.className = 'btn btn-primary';
+    openButton.textContent = 'Open';
+    openButton.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onOpen(project.path);
+    });
+    row.appendChild(openButton);
+
+    // Make the whole row clickable
+    row.addEventListener('click', () => {
+      onOpen(project.path);
+    });
+  }
 
   return row;
 }
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', () => {
+  document.querySelectorAll('.launch-dropdown.visible').forEach(d => d.classList.remove('visible'));
+});

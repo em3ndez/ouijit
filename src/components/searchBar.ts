@@ -1,4 +1,4 @@
-import type { Project } from '../types';
+import type { Project, RunConfig } from '../types';
 import { filterProjects, renderProjects } from './projectGrid';
 
 /**
@@ -28,11 +28,13 @@ export function setupSearch(
   input: HTMLInputElement,
   projects: Project[],
   container: HTMLElement,
-  onOpen: (path: string) => void
+  onOpen: (path: string) => void,
+  onLaunch?: (path: string, runConfig: RunConfig) => void,
+  onOpenFinder?: (path: string) => void
 ): void {
   const handleSearch = (query: string) => {
     const filteredProjects = filterProjects(projects, query);
-    renderProjects(container, filteredProjects, onOpen);
+    renderProjects(container, filteredProjects, onOpen, onLaunch, onOpenFinder);
 
     // Update empty state message for search results
     if (filteredProjects.length === 0 && query.trim()) {

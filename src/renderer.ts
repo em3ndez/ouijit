@@ -5,7 +5,7 @@
  */
 
 import './index.css';
-import type { Project, ElectronAPI } from './types';
+import type { Project, RunConfig, ElectronAPI } from './types';
 import { renderProjects } from './components/projectGrid';
 import { setupSearch } from './components/searchBar';
 
@@ -41,14 +41,38 @@ function showError(container: HTMLElement, message: string): void {
 }
 
 /**
- * Handles opening a project
+ * Handles opening a project (fallback - opens in Finder)
  */
 async function handleOpenProject(path: string): Promise<void> {
   try {
     await window.api.openProject(path);
   } catch (error) {
     console.error('Failed to open project:', error);
-    // Could show a toast notification here
+  }
+}
+
+/**
+ * Handles launching a project with a run config
+ */
+async function handleLaunchProject(path: string, runConfig: RunConfig): Promise<void> {
+  try {
+    const result = await window.api.launchProject(path, runConfig);
+    if (!result.success) {
+      console.error('Failed to launch project:', result.error);
+    }
+  } catch (error) {
+    console.error('Failed to launch project:', error);
+  }
+}
+
+/**
+ * Handles opening project in Finder
+ */
+async function handleOpenInFinder(path: string): Promise<void> {
+  try {
+    await window.api.openInFinder(path);
+  } catch (error) {
+    console.error('Failed to open in Finder:', error);
   }
 }
 
@@ -71,12 +95,12 @@ async function initialize(): Promise<void> {
     // Fetch projects from the main process
     const projects: Project[] = await window.api.getProjects();
 
-    // Render the projects
-    renderProjects(projectGrid, projects, handleOpenProject);
+    // Render the projects with all handlers
+    renderProjects(projectGrid, projects, handleOpenProject, handleLaunchProject, handleOpenInFinder);
 
     // Set up search functionality if search input exists
     if (searchInput) {
-      setupSearch(searchInput, projects, projectGrid, handleOpenProject);
+      setupSearch(searchInput, projects, projectGrid, handleOpenProject, handleLaunchProject, handleOpenInFinder);
     }
   } catch (error) {
     console.error('Failed to load projects:', error);
