@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ouijit</title>
+    <link rel="stylesheet" href="/src/index.css" />
+  </head>
+  <body>
+    <header class="header">
+      <div class="header-content">
+        <h1 class="app-title">ouijit</h1>
+        <div class="search-container">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M7 12C9.76142 12 12 9.76142 12 7C12 4.23858 9.76142 2 7 2C4.23858 2 2 4.23858 2 7C2 9.76142 4.23858 12 7 12Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M14 14L10.5 10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <input
+            type="text"
+            id="search-input"
+            class="search-input"
+            placeholder="Search projects..."
+            autocomplete="off"
+          />
+        </div>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <div id="project-grid" class="project-grid">
+        <!-- Project cards will be rendered here -->
+      </div>
+
+      <div id="empty-state" class="empty-state" style="display: none;">
+        <div class="empty-state-icon">
+          <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M56 20V52C56 54.2091 54.2091 56 52 56H12C9.79086 56 8 54.2091 8 52V12C8 9.79086 9.79086 8 12 8H36" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M48 8V20H56" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M20 32H44" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M20 40H36" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h2 class="empty-state-title">No projects found</h2>
+        <p class="empty-state-description">Try adjusting your search or add some projects to get started.</p>
+      </div>
+
+      <div id="loading-state" class="loading-state" style="display: none;">
+        <div class="loading-spinner"></div>
+        <p class="loading-text">Loading projects...</p>
+      </div>
+    </main>
+
+    <script type="module" src="/src/renderer.ts"></script>
+  </body>
+</html>
