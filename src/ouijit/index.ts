@@ -1,3 +1,4 @@
 export { exportProject } from './export';
 export { previewOuijitFile, importOuijitPackage, cleanupPreview, IMPORTS_DIR } from './import';
-export { checkDependencies, isImportedProject, getFullCommand } from './dependencies';
+export { isImportedProject } from './dependencies';
+export { getCommandWithMise, ensureMiseInstalled, detectRuntime } from './mise';

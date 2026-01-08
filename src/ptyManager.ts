@@ -1,7 +1,7 @@
 import * as pty from 'node-pty';
 import { BrowserWindow } from 'electron';
 import type { PtyId, PtySpawnOptions, PtySpawnResult } from './types';
-import { getFullCommand } from './ouijit';
+import { getCommandWithMise, isImportedProject } from './ouijit';
 
 interface ManagedPty {
   process: pty.IPty;
@@ -30,8 +30,9 @@ export async function spawnPty(
     const ptyId = generatePtyId();
     const shell = getDefaultShell();
 
-    // Check if this is an imported project and prepend install command if needed
-    const command = await getFullCommand(options.cwd, options.command);
+    // Check if this is an imported project and use mise for runtime/dependency management
+    const isImported = await isImportedProject(options.cwd);
+    const command = await getCommandWithMise(options.cwd, options.command, isImported);
 
     const shellArgs = process.platform === 'win32'
       ? ['/c', command]
