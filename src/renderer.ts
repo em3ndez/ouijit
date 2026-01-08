@@ -6,6 +6,7 @@
 
 import './index.css';
 import '@xterm/xterm/css/xterm.css';
+import { createIcons, Search, FolderOpen } from 'lucide';
 import type { Project, RunConfig, ElectronAPI } from './types';
 import { renderProjects } from './components/projectGrid';
 import { setupSearch } from './components/searchBar';
@@ -123,4 +124,11 @@ async function initialize(): Promise<void> {
 }
 
 // Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', initialize);
+document.addEventListener('DOMContentLoaded', () => {
+  // Initialize Lucide icons
+  createIcons({
+    icons: { Search, FolderOpen },
+  });
+
+  initialize();
+});

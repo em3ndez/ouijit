@@ -177,6 +177,8 @@ body {
   left: var(--spacing-md);
   top: 50%;
   transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
   color: var(--color-text-tertiary);
   pointer-events: none;
   transition: color var(--transition-fast);
@@ -544,7 +546,8 @@ body {
 }
 
 .dropdown-arrow {
-  font-size: 14px;
+  width: 14px;
+  height: 14px;
   opacity: 0.8;
   margin-left: 4px;
 }
@@ -620,6 +623,8 @@ body {
 }
 
 .empty-state-icon {
+  width: 64px;
+  height: 64px;
   color: var(--color-text-tertiary);
   margin-bottom: var(--spacing-lg);
   opacity: 0.6;

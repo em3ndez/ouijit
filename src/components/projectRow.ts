@@ -1,4 +1,5 @@
 import type { Project, RunConfig } from '../types';
+import { createElement, ChevronDown } from 'lucide';
 
 /**
  * Generate a consistent color from a string (project name)
@@ -255,7 +256,13 @@ export function createProjectRow(
     launchButton.className = 'btn btn-primary btn-launch';
 
     const primaryConfig = project.runConfigs![0];
-    launchButton.innerHTML = `<span>Launch</span><span class="dropdown-arrow">▾</span>`;
+    const launchText = document.createElement('span');
+    launchText.textContent = 'Launch';
+    launchButton.appendChild(launchText);
+
+    const chevron = createElement(ChevronDown);
+    chevron.classList.add('dropdown-arrow');
+    launchButton.appendChild(chevron);
 
     const dropdown = createLaunchDropdown(project, row, onLaunch, onOpenFinder);
 
