@@ -1,5 +1,6 @@
 import type { Project, RunConfig } from '../types';
-import { createElement, ChevronDown } from 'lucide';
+import { createElement, ChevronDown, Upload, FolderOpen } from 'lucide';
+import { showToast } from './importDialog';
 
 /**
  * Generate a consistent color from a string (project name)
@@ -147,10 +148,43 @@ function createLaunchDropdown(
     dropdown.appendChild(divider);
   }
 
-  // Always include "Open in Finder" option
+  // Export option
+  const exportOption = document.createElement('button');
+  exportOption.className = 'launch-option';
+  const exportIcon = createElement(Upload);
+  exportIcon.classList.add('launch-option-icon');
+  exportOption.appendChild(exportIcon);
+  const exportText = document.createElement('span');
+  exportText.className = 'launch-option-name';
+  exportText.textContent = 'Export as .ouijit';
+  exportOption.appendChild(exportText);
+  exportOption.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    dropdown.classList.remove('visible');
+    try {
+      const result = await window.api.exportProject(project.path);
+      if (result.success && result.outputPath) {
+        const filename = result.outputPath.split('/').pop();
+        showToast(`Exported ${filename}`, 'success');
+      } else if (result.error !== 'Cancelled') {
+        showToast(`Export failed: ${result.error}`, 'error');
+      }
+    } catch (error) {
+      showToast('Export failed', 'error');
+    }
+  });
+  dropdown.appendChild(exportOption);
+
+  // Open in Finder option
   const finderOption = document.createElement('button');
   finderOption.className = 'launch-option';
-  finderOption.innerHTML = `<span class="launch-option-name">Open in Finder</span>`;
+  const folderIcon = createElement(FolderOpen);
+  folderIcon.classList.add('launch-option-icon');
+  finderOption.appendChild(folderIcon);
+  const finderText = document.createElement('span');
+  finderText.className = 'launch-option-name';
+  finderText.textContent = 'Open in Finder';
+  finderOption.appendChild(finderText);
   finderOption.addEventListener('click', (e) => {
     e.stopPropagation();
     onOpenFinder(project.path);
@@ -286,6 +320,10 @@ export function createProjectRow(
       onLaunch(project.path, primaryConfig, row);
     });
   } else {
+    // Container for open button
+    const actionContainer = document.createElement('div');
+    actionContainer.className = 'launch-container';
+
     // Fallback to simple Open button
     const openButton = document.createElement('button');
     openButton.className = 'btn btn-primary';
@@ -294,7 +332,8 @@ export function createProjectRow(
       e.stopPropagation();
       onOpen(project.path);
     });
-    row.appendChild(openButton);
+    actionContainer.appendChild(openButton);
+    row.appendChild(actionContainer);
 
     // Make the whole row clickable
     row.addEventListener('click', () => {

@@ -1,4 +1,4 @@
-import { ipcMain, shell, BrowserWindow } from 'electron';
+import { ipcMain, shell, BrowserWindow, dialog } from 'electron';
 import { spawn } from 'node:child_process';
 import { scanForProjects } from './scanner';
 import {
@@ -8,7 +8,8 @@ import {
   killPty,
   cleanupAllPtys,
 } from './ptyManager';
-import type { RunConfig, LaunchResult, PtySpawnOptions } from './types';
+import { exportProject, previewOuijitFile, importOuijitPackage } from './ouijit';
+import type { RunConfig, LaunchResult, PtySpawnOptions, ExportResult, PreviewResult, ImportResult } from './types';
 
 /**
  * Escapes a string for use in AppleScript
@@ -104,8 +105,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // PTY handlers
-  ipcMain.handle('pty:spawn', (_event, options: PtySpawnOptions) => {
-    return spawnPty(options, mainWindow);
+  ipcMain.handle('pty:spawn', async (_event, options: PtySpawnOptions) => {
+    return await spawnPty(options, mainWindow);
   });
 
   ipcMain.on('pty:write', (_event, ptyId: string, data: string) => {
@@ -118,6 +119,76 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.on('pty:kill', (_event, ptyId: string) => {
     killPty(ptyId);
+  });
+
+  // Export project as .ouijit file
+  ipcMain.handle('export-project', async (_event, projectPath: string): Promise<ExportResult> => {
+    try {
+      // Find project by path
+      const projects = await scanForProjects();
+      const project = projects.find(p => p.path === projectPath);
+
+      if (!project) {
+        return { success: false, error: 'Project not found' };
+      }
+
+      // Show save dialog
+      const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+        title: 'Export Project',
+        defaultPath: `${project.name}.ouijit`,
+        filters: [{ name: 'Ouijit Package', extensions: ['ouijit'] }],
+      });
+
+      if (canceled || !filePath) {
+        return { success: false, error: 'Cancelled' };
+      }
+
+      return exportProject({
+        project,
+        outputPath: filePath,
+      });
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  });
+
+  // Preview a .ouijit file before importing
+  ipcMain.handle('preview-ouijit-file', async (_event, filePath: string): Promise<PreviewResult> => {
+    return previewOuijitFile(filePath);
+  });
+
+  // Import a previewed .ouijit package
+  ipcMain.handle('import-ouijit-package', async (_event, tempDir: string): Promise<ImportResult> => {
+    return importOuijitPackage(tempDir);
+  });
+
+  // Open file dialog to select a .ouijit file
+  ipcMain.handle('open-ouijit-file-dialog', async (): Promise<string | null> => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import .ouijit file',
+      filters: [{ name: 'Ouijit Package', extensions: ['ouijit'] }],
+      properties: ['openFile'],
+    });
+
+    if (canceled || filePaths.length === 0) {
+      return null;
+    }
+
+    return filePaths[0];
+  });
+
+  // Refresh projects (re-scan)
+  ipcMain.handle('refresh-projects', async () => {
+    try {
+      const projects = await scanForProjects();
+      return projects;
+    } catch (error) {
+      console.error('Error refreshing projects:', error);
+      throw error;
+    }
   });
 }
 

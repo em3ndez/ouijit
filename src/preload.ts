@@ -1,8 +1,8 @@
 // See the Electron documentation for details on how to use preload scripts:
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
-import { contextBridge, ipcRenderer } from 'electron';
-import type { Project, RunConfig, LaunchResult, PtySpawnOptions, PtySpawnResult, PtyId } from './types';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { Project, RunConfig, LaunchResult, PtySpawnOptions, PtySpawnResult, PtyId, ExportResult, PreviewResult, ImportResult } from './types';
 
 // Expose protected methods that allow the renderer process to use
 // ipcRenderer without exposing the entire object
@@ -63,4 +63,42 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener(channel, handler);
     },
   },
+
+  /**
+   * Export a project as .ouijit file
+   */
+  exportProject: (projectPath: string): Promise<ExportResult> =>
+    ipcRenderer.invoke('export-project', projectPath),
+
+  /**
+   * Preview a .ouijit file before importing
+   */
+  previewOuijitFile: (filePath: string): Promise<PreviewResult> =>
+    ipcRenderer.invoke('preview-ouijit-file', filePath),
+
+  /**
+   * Import a previewed .ouijit package
+   */
+  importOuijitPackage: (tempDir: string): Promise<ImportResult> =>
+    ipcRenderer.invoke('import-ouijit-package', tempDir),
+
+  /**
+   * Open file dialog to select a .ouijit file
+   */
+  openOuijitFileDialog: (): Promise<string | null> =>
+    ipcRenderer.invoke('open-ouijit-file-dialog'),
+
+  /**
+   * Refresh the project list
+   */
+  refreshProjects: (): Promise<Project[]> =>
+    ipcRenderer.invoke('refresh-projects'),
+});
+
+// Expose Electron utilities
+contextBridge.exposeInMainWorld('electronAPI', {
+  /**
+   * Get the file system path for a File object from drag & drop
+   */
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 });

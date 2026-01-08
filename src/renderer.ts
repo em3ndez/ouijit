@@ -6,11 +6,12 @@
 
 import './index.css';
 import '@xterm/xterm/css/xterm.css';
-import { createIcons, Search, FolderOpen } from 'lucide';
+import { createIcons, Search, FolderOpen, Download } from 'lucide';
 import type { Project, RunConfig, ElectronAPI } from './types';
 import { renderProjects } from './components/projectGrid';
 import { setupSearch } from './components/searchBar';
 import { createTerminal, destroyTerminal, hasTerminal } from './components/terminalComponent';
+import { showImportDialog, showToast } from './components/importDialog';
 
 // Declare the global window.api interface
 declare global {
@@ -91,6 +92,131 @@ async function handleOpenInFinder(path: string): Promise<void> {
 }
 
 /**
+ * Refreshes the project list
+ */
+async function refreshProjects(): Promise<void> {
+  const projectGrid = document.getElementById('project-grid');
+  const searchInput = document.getElementById('search-input') as HTMLInputElement | null;
+
+  if (!projectGrid) return;
+
+  try {
+    const projects: Project[] = await window.api.refreshProjects();
+    renderProjects(projectGrid, projects, handleOpenProject, handleLaunchProject, handleOpenInFinder);
+
+    if (searchInput) {
+      setupSearch(searchInput, projects, projectGrid, handleOpenProject, handleLaunchProject, handleOpenInFinder);
+    }
+  } catch (error) {
+    console.error('Failed to refresh projects:', error);
+  }
+}
+
+/**
+ * Creates the drop overlay element
+ */
+function createDropOverlay(): HTMLElement {
+  const overlay = document.createElement('div');
+  overlay.className = 'drop-overlay';
+  overlay.innerHTML = `
+    <div class="drop-overlay-content">
+      <svg class="drop-overlay-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      <p class="drop-overlay-text">Drop .ouijit file to import</p>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+/**
+ * Sets up drag and drop handling for .ouijit files
+ */
+function setupDragDropImport(): void {
+  const overlay = createDropOverlay();
+  let dragCounter = 0;
+
+  document.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter++;
+
+    // Check if it's a file
+    if (e.dataTransfer?.types.includes('Files')) {
+      overlay.classList.add('drop-overlay--visible');
+    }
+  });
+
+  document.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter--;
+
+    if (dragCounter === 0) {
+      overlay.classList.remove('drop-overlay--visible');
+    }
+  });
+
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  document.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter = 0;
+    overlay.classList.remove('drop-overlay--visible');
+
+    const files = Array.from(e.dataTransfer?.files || []);
+    const ouijitFile = files.find(f => f.name.endsWith('.ouijit'));
+
+    if (!ouijitFile) {
+      if (files.length > 0) {
+        showToast('Please drop a .ouijit file', 'error');
+      }
+      return;
+    }
+
+    // Get the file path using Electron's webUtils
+    const filePath = window.electronAPI?.getPathForFile(ouijitFile);
+    if (!filePath) {
+      showToast('Could not read file path', 'error');
+      return;
+    }
+
+    // Preview the file
+    const preview = await window.api.previewOuijitFile(filePath);
+
+    if (!preview.success || !preview.package) {
+      showToast(`Failed to read file: ${preview.error}`, 'error');
+      return;
+    }
+
+    // Show confirmation dialog
+    const confirmed = await showImportDialog(preview.package);
+
+    if (!confirmed) {
+      return;
+    }
+
+    // Do the import
+    const result = await window.api.importOuijitPackage(preview.package.tempDir);
+
+    if (result.success) {
+      showToast(`Imported ${preview.package.manifest.name}`, 'success');
+      // Refresh project list
+      await refreshProjects();
+    } else {
+      showToast(`Import failed: ${result.error}`, 'error');
+    }
+  });
+}
+
+/**
  * Initializes the application
  */
 async function initialize(): Promise<void> {
@@ -127,8 +253,9 @@ async function initialize(): Promise<void> {
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize Lucide icons
   createIcons({
-    icons: { Search, FolderOpen },
+    icons: { Search, FolderOpen, Download },
   });
 
   initialize();
+  setupDragDropImport();
 });

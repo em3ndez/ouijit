@@ -14,6 +14,7 @@ const PROJECT_DIRECTORIES = [
   '~/code',
   '~/repos',
   '~/workspace',
+  '~/Ouijit/imports',
 ];
 
 const MAX_SCAN_DEPTH = 2;
@@ -41,14 +42,15 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 /**
- * Checks if a directory is a project (contains .git, .claude, or CLAUDE.md)
+ * Checks if a directory is a project (contains .git, .claude, CLAUDE.md, or .ouijit-import.json)
  */
 async function isProject(dirPath: string): Promise<boolean> {
   const hasGitDir = await exists(path.join(dirPath, '.git'));
   const hasClaudeDir = await exists(path.join(dirPath, '.claude'));
   const hasClaudeMd = await exists(path.join(dirPath, 'CLAUDE.md'));
+  const hasOuijitImport = await exists(path.join(dirPath, '.ouijit-import.json'));
 
-  return hasGitDir || hasClaudeDir || hasClaudeMd;
+  return hasGitDir || hasClaudeDir || hasClaudeMd || hasOuijitImport;
 }
 
 /**

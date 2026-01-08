@@ -1,6 +1,7 @@
 import * as pty from 'node-pty';
 import { BrowserWindow } from 'electron';
 import type { PtyId, PtySpawnOptions, PtySpawnResult } from './types';
+import { getFullCommand } from './ouijit';
 
 interface ManagedPty {
   process: pty.IPty;
@@ -21,17 +22,20 @@ function getDefaultShell(): string {
   return process.env.SHELL || '/bin/bash';
 }
 
-export function spawnPty(
+export async function spawnPty(
   options: PtySpawnOptions,
   window: BrowserWindow
-): PtySpawnResult {
+): Promise<PtySpawnResult> {
   try {
     const ptyId = generatePtyId();
     const shell = getDefaultShell();
 
+    // Check if this is an imported project and prepend install command if needed
+    const command = await getFullCommand(options.cwd, options.command);
+
     const shellArgs = process.platform === 'win32'
-      ? ['/c', options.command]
-      : ['-c', options.command];
+      ? ['/c', command]
+      : ['-c', command];
 
     const ptyProcess = pty.spawn(shell, shellArgs, {
       name: 'xterm-256color',
@@ -47,7 +51,7 @@ export function spawnPty(
     activePtys.set(ptyId, {
       process: ptyProcess,
       projectPath: options.cwd,
-      command: options.command,
+      command: command,
     });
 
     ptyProcess.onData((data: string) => {
