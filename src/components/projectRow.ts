@@ -1,5 +1,5 @@
 import type { Project, RunConfig } from '../types';
-import { createElement, ChevronDown, Upload, FolderOpen } from 'lucide';
+import { createElement, ChevronDown, Upload, FolderOpen, SquareTerminal } from 'lucide';
 import { showToast } from './importDialog';
 
 /**
@@ -202,7 +202,8 @@ export function createProjectRow(
   project: Project,
   onOpen: (path: string) => void,
   onLaunch?: (path: string, runConfig: RunConfig, row: HTMLElement) => void,
-  onOpenFinder?: (path: string) => void
+  onOpenFinder?: (path: string) => void,
+  onOpenTerminal?: (path: string, row: HTMLElement) => void
 ): HTMLElement {
   const row = document.createElement('div');
   row.className = 'project-row';
@@ -281,10 +282,32 @@ export function createProjectRow(
 
   const hasRunConfigs = project.runConfigs && project.runConfigs.length > 0;
 
+  // Actions container for buttons
+  const actionsContainer = document.createElement('div');
+  actionsContainer.className = 'actions-container';
+
+  // Terminal button
+  if (onOpenTerminal) {
+    const terminalBtn = document.createElement('button');
+    terminalBtn.className = 'btn btn-primary btn-terminal';
+    terminalBtn.title = 'Open Terminal';
+    terminalBtn.setAttribute('aria-label', 'Open Terminal');
+
+    const terminalIcon = createElement(SquareTerminal);
+    terminalBtn.appendChild(terminalIcon);
+
+    terminalBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onOpenTerminal(project.path, row);
+    });
+
+    actionsContainer.appendChild(terminalBtn);
+  }
+
   if (hasRunConfigs && onLaunch && onOpenFinder) {
     // Create launch button with dropdown
-    const launchContainer = document.createElement('div');
-    launchContainer.className = 'launch-container';
+    const launchWrapper = document.createElement('div');
+    launchWrapper.className = 'launch-wrapper';
 
     const launchButton = document.createElement('button');
     launchButton.className = 'btn btn-primary btn-launch';
@@ -311,9 +334,9 @@ export function createProjectRow(
       }
     });
 
-    launchContainer.appendChild(launchButton);
-    launchContainer.appendChild(dropdown);
-    row.appendChild(launchContainer);
+    launchWrapper.appendChild(launchButton);
+    launchWrapper.appendChild(dropdown);
+    actionsContainer.appendChild(launchWrapper);
 
     // Row click launches primary config
     row.addEventListener('click', () => {
@@ -332,14 +355,15 @@ export function createProjectRow(
       e.stopPropagation();
       onOpen(project.path);
     });
-    actionContainer.appendChild(openButton);
-    row.appendChild(actionContainer);
+    actionsContainer.appendChild(openButton);
 
     // Make the whole row clickable
     row.addEventListener('click', () => {
       onOpen(project.path);
     });
   }
+
+  row.appendChild(actionsContainer);
 
   return row;
 }

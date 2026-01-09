@@ -30,13 +30,19 @@ export async function spawnPty(
     const ptyId = generatePtyId();
     const shell = getDefaultShell();
 
-    // Check if this is an imported project and use mise for runtime/dependency management
-    const isImported = await isImportedProject(options.cwd);
-    const command = await getCommandWithMise(options.cwd, options.command, isImported);
+    // If no command provided, spawn interactive shell; otherwise run the command
+    let shellArgs: string[];
+    let finalCommand = options.command || '';
 
-    const shellArgs = process.platform === 'win32'
-      ? ['/c', command]
-      : ['-c', command];
+    if (options.command) {
+      // Check if this is an imported project and use mise for runtime/dependency management
+      const isImported = await isImportedProject(options.cwd);
+      finalCommand = await getCommandWithMise(options.cwd, options.command, isImported);
+      shellArgs = process.platform === 'win32' ? ['/c', finalCommand] : ['-c', finalCommand];
+    } else {
+      // Interactive shell mode
+      shellArgs = [];
+    }
 
     const ptyProcess = pty.spawn(shell, shellArgs, {
       name: 'xterm-256color',
@@ -52,7 +58,7 @@ export async function spawnPty(
     activePtys.set(ptyId, {
       process: ptyProcess,
       projectPath: options.cwd,
-      command: command,
+      command: finalCommand,
     });
 
     ptyProcess.onData((data: string) => {
