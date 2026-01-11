@@ -13,6 +13,7 @@ const config: ForgeConfig = {
     asar: {
       unpack: '**/*.node',
     },
+    icon: './src/assets/icons/icon',
   },
   rebuildConfig: {},
   makers: [
