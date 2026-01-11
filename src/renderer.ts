@@ -6,11 +6,11 @@
 
 import './index.css';
 import '@xterm/xterm/css/xterm.css';
-import { createIcons, Search, FolderOpen, Download, SquareTerminal } from 'lucide';
+import { createIcons, Search, FolderOpen, Download, SquareTerminal, RefreshCw } from 'lucide';
 import type { Project, RunConfig, ElectronAPI } from './types';
 import { renderProjects } from './components/projectGrid';
 import { setupSearch } from './components/searchBar';
-import { createTerminal, destroyTerminal, hasTerminal } from './components/terminalComponent';
+import { createTerminal, destroyTerminal, hasTerminal, getOpenTerminalPaths } from './components/terminalComponent';
 import { showImportDialog, showToast } from './components/importDialog';
 
 // Declare the global window.api interface
@@ -125,11 +125,23 @@ async function refreshProjects(): Promise<void> {
 
   if (!projectGrid) return;
 
+  // Capture open terminal paths before refresh
+  const openTerminalPaths = getOpenTerminalPaths();
+
   try {
     const projects: Project[] = await window.api.refreshProjects();
-    renderProjects(projectGrid, projects, handleOpenProject, handleLaunchProject, handleOpenInFinder, handleOpenTerminal);
+    renderProjects(projectGrid, projects, handleOpenProject, handleLaunchProject, handleOpenInFinder, handleOpenTerminal, openTerminalPaths);
+
+    // Clean up terminals for projects that no longer exist
+    const currentPaths = new Set(projects.map(p => p.path));
+    for (const path of openTerminalPaths) {
+      if (!currentPaths.has(path)) {
+        destroyTerminal(path);
+      }
+    }
 
     if (searchInput) {
+      searchInput.value = ''; // Reset search on refresh
       setupSearch(searchInput, projects, projectGrid, handleOpenProject, handleLaunchProject, handleOpenInFinder, handleOpenTerminal);
     }
   } catch (error) {
@@ -278,8 +290,23 @@ async function initialize(): Promise<void> {
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize Lucide icons
   createIcons({
-    icons: { Search, FolderOpen, Download, SquareTerminal },
+    icons: { Search, FolderOpen, Download, SquareTerminal, RefreshCw },
   });
+
+  // Set up refresh button
+  const refreshBtn = document.getElementById('refresh-btn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.classList.add('spinning');
+      refreshBtn.setAttribute('disabled', 'true');
+      try {
+        await refreshProjects();
+      } finally {
+        refreshBtn.classList.remove('spinning');
+        refreshBtn.removeAttribute('disabled');
+      }
+    });
+  }
 
   initialize();
   setupDragDropImport();

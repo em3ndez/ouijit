@@ -228,6 +228,36 @@ export function hasTerminal(projectPath: string): boolean {
   return terminals.has(projectPath);
 }
 
+/**
+ * Returns project paths that currently have open terminals
+ */
+export function getOpenTerminalPaths(): string[] {
+  return Array.from(terminals.keys());
+}
+
+/**
+ * Re-attaches an existing terminal to a new anchor element after DOM refresh.
+ * Returns true if successful, false if terminal doesn't exist.
+ */
+export function reattachTerminal(projectPath: string, newAnchorElement: HTMLElement): boolean {
+  const instance = terminals.get(projectPath);
+  if (!instance) return false;
+
+  // Insert existing container after the new anchor
+  newAnchorElement.insertAdjacentElement('afterend', instance.container);
+  newAnchorElement.classList.add('project-row--has-terminal');
+
+  // Re-fit terminal after DOM insertion
+  requestAnimationFrame(() => {
+    instance.fitAddon.fit();
+    if (instance.ptyId) {
+      window.api.pty.resize(instance.ptyId, instance.terminal.cols, instance.terminal.rows);
+    }
+  });
+
+  return true;
+}
+
 export function destroyAllTerminals(): void {
   for (const projectPath of terminals.keys()) {
     destroyTerminal(projectPath);

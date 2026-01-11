@@ -1,5 +1,6 @@
 import type { Project, RunConfig } from '../types';
 import { filterProjects, renderProjects } from './projectGrid';
+import { getOpenTerminalPaths } from './terminalComponent';
 
 /**
  * Creates a debounced version of a function
@@ -34,8 +35,9 @@ export function setupSearch(
   onOpenTerminal?: (path: string, row: HTMLElement) => void
 ): void {
   const handleSearch = (query: string) => {
+    const openTerminalPaths = getOpenTerminalPaths();
     const filteredProjects = filterProjects(projects, query);
-    renderProjects(container, filteredProjects, onOpen, onLaunch, onOpenFinder, onOpenTerminal);
+    renderProjects(container, filteredProjects, onOpen, onLaunch, onOpenFinder, onOpenTerminal, openTerminalPaths);
 
     // Update empty state message for search results
     if (filteredProjects.length === 0 && query.trim()) {

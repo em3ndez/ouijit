@@ -1,5 +1,6 @@
 import type { Project, RunConfig } from '../types';
 import { createProjectRow } from './projectRow';
+import { reattachTerminal } from './terminalComponent';
 
 /**
  * Renders projects to a container element
@@ -10,7 +11,8 @@ export function renderProjects(
   onOpen: (path: string) => void,
   onLaunch?: (path: string, runConfig: RunConfig, row: HTMLElement) => void,
   onOpenFinder?: (path: string) => void,
-  onOpenTerminal?: (path: string, row: HTMLElement) => void
+  onOpenTerminal?: (path: string, row: HTMLElement) => void,
+  openTerminalPaths?: string[]
 ): void {
   // Clear existing content
   container.innerHTML = '';
@@ -31,6 +33,11 @@ export function renderProjects(
     const row = createProjectRow(project, onOpen, onLaunch, onOpenFinder, onOpenTerminal);
     row.style.animationDelay = `${index * 50}ms`;
     container.appendChild(row);
+
+    // Re-attach terminal if this project had one open
+    if (openTerminalPaths?.includes(project.path)) {
+      reattachTerminal(project.path, row);
+    }
   });
 }
 
