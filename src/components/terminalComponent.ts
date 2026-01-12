@@ -348,7 +348,7 @@ function buildGitDropdownHtml(info: GitDropdownInfo): string {
     aheadBehindHtml = `<div class="git-dropdown-ahead-behind">${aheadPart}${behindPart}</div>`;
   }
 
-  // Build uncommitted changes line
+  // Build uncommitted changes line or "up to date" status
   let uncommittedHtml = '';
   if (current.uncommitted) {
     const { filesChanged, insertions, deletions } = current.uncommitted;
@@ -357,6 +357,8 @@ function buildGitDropdownHtml(info: GitDropdownInfo): string {
     if (insertions > 0) parts.push(`<span class="insertions">+${insertions}</span>`);
     if (deletions > 0) parts.push(`<span class="deletions">-${deletions}</span>`);
     uncommittedHtml = `<div class="git-dropdown-uncommitted">${parts.join(' \u00B7 ')}</div>`;
+  } else if (current.ahead === 0 && current.behind === 0) {
+    uncommittedHtml = `<div class="git-dropdown-uncommitted">Up to date</div>`;
   }
 
   // Build recent branches list
