@@ -1299,6 +1299,13 @@ body.theatre-mode .project-row {
   display: none !important;
 }
 
+/* Remove max-width constraint from header in theatre mode */
+body.theatre-mode .header-content {
+  max-width: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+
 /* Hide search/refresh area in header */
 body.theatre-mode .search-container {
   display: none !important;
@@ -1317,10 +1324,10 @@ body.theatre-mode .project-list-header {
 /* Theatre mode terminal - position fixed lifts it visually */
 .terminal-accordion--theatre {
   position: fixed !important;
-  top: 92px;
-  left: 20px;
-  right: 20px;
-  bottom: 20px;
+  top: 82px;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
   max-height: none !important;
   height: auto !important;
   margin: 0 !important;
@@ -1348,7 +1355,13 @@ body.theatre-mode .project-list-header {
   align-items: center;
   gap: 12px;
   flex: 1;
-  padding-left: 80px;
+  padding-left: 96px; /* Space for macOS traffic lights */
+  padding-right: 16px;
+}
+
+/* Remove traffic light padding when in fullscreen */
+body.is-fullscreen .theatre-header-content {
+  padding-left: 16px;
 }
 
 .theatre-project-icon {

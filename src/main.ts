@@ -41,6 +41,14 @@ const createWindow = (): BrowserWindow => {
   // Open the DevTools.
   window.webContents.openDevTools();
 
+  // Notify renderer of fullscreen state changes
+  window.on('enter-full-screen', () => {
+    window.webContents.send('fullscreen-change', true);
+  });
+  window.on('leave-full-screen', () => {
+    window.webContents.send('fullscreen-change', false);
+  });
+
   return window;
 };
 

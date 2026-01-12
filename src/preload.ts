@@ -99,6 +99,15 @@ contextBridge.exposeInMainWorld('api', {
    */
   createProject: (options: CreateProjectOptions): Promise<CreateProjectResult> =>
     ipcRenderer.invoke('create-project', options),
+
+  /**
+   * Listen for fullscreen state changes
+   */
+  onFullscreenChange: (callback: (isFullscreen: boolean) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, isFullscreen: boolean) => callback(isFullscreen);
+    ipcRenderer.on('fullscreen-change', handler);
+    return () => ipcRenderer.removeListener('fullscreen-change', handler);
+  },
 });
 
 // Expose Electron utilities

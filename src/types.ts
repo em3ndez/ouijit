@@ -99,6 +99,8 @@ export interface ElectronAPI {
   refreshProjects(): Promise<Project[]>;
   /** Create a new project */
   createProject(options: CreateProjectOptions): Promise<CreateProjectResult>;
+  /** Listen for fullscreen state changes */
+  onFullscreenChange(callback: (isFullscreen: boolean) => void): () => void;
 }
 
 /**

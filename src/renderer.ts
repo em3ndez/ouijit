@@ -326,4 +326,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initialize();
   setupDragDropImport();
+
+  // Listen for fullscreen state changes (for theatre mode layout)
+  window.api.onFullscreenChange((isFullscreen) => {
+    document.body.classList.toggle('is-fullscreen', isFullscreen);
+  });
 });
