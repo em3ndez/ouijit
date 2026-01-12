@@ -917,10 +917,7 @@ body {
 .terminal-accordion {
   max-height: 0;
   overflow: hidden;
-  background: var(--color-terminal-bg, #1a1a1a);
   margin: 0 var(--spacing-lg) 0 56px;
-  border-radius: var(--radius-lg);
-  border: 1px solid rgba(255, 255, 255, 0.1);
   transition: max-height 0.3s ease-out, opacity 0.3s ease-out, margin 0.3s ease-out;
   opacity: 0;
 }
@@ -932,20 +929,17 @@ body {
   margin-bottom: var(--spacing-md);
 }
 
+/* Control bar appears above the terminal */
 .terminal-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: transparent;
+  justify-content: flex-end;
+  padding: 0 0 var(--spacing-xs) 0;
 }
 
+/* Hide the title - controls only */
 .terminal-title {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  color: rgba(255, 255, 255, 0.5);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  display: none;
 }
 
 .terminal-controls {
@@ -953,43 +947,26 @@ body {
   gap: var(--spacing-xs);
 }
 
-.terminal-close-btn {
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.1);
-  border: none;
-  border-radius: var(--radius-full);
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 14px;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.terminal-close-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.9);
-}
-
+.terminal-close-btn,
 .terminal-theatre-btn {
   width: 24px;
   height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.1);
-  border: none;
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-full);
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--color-text-secondary);
+  font-size: 14px;
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 
+.terminal-close-btn:hover,
 .terminal-theatre-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.9);
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
 }
 
 .terminal-theatre-btn svg {
@@ -999,12 +976,17 @@ body {
 
 .terminal-viewport {
   height: 280px;
-  padding: 0 var(--spacing-md) var(--spacing-md);
+  padding: var(--spacing-md);
+  background: var(--color-terminal-bg, #1a1a1a);
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
 }
 
 /* Override xterm.js styles */
 .terminal-viewport .xterm {
   padding: 0;
+  height: 100%;
 }
 
 .terminal-viewport .xterm-viewport {
@@ -1295,6 +1277,10 @@ body.theatre-mode .project-list-header {
   flex-direction: column;
 }
 
+.terminal-accordion--theatre .terminal-header {
+  display: none;
+}
+
 .terminal-accordion--theatre .terminal-viewport {
   flex: 1;
   min-height: 0;
@@ -1363,6 +1349,7 @@ body.theatre-mode .project-list-header {
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
+  -webkit-app-region: no-drag;
 }
 
 .theatre-exit-btn:hover {
