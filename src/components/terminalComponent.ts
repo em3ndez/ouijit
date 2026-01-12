@@ -590,10 +590,8 @@ function updateGitStatusElement(gitStatus: GitStatus | null): void {
 async function refreshGitStatus(): Promise<void> {
   if (!theatreModeProjectPath) return;
 
-  const gitStatus = await window.api.getGitStatus(theatreModeProjectPath);
-  updateGitStatusElement(gitStatus);
-
-  // Also refresh dropdown content if it's visible
+  // Skip refreshing the status element if dropdown is open to avoid closing it
+  // The dropdown content will be refreshed instead
   if (gitDropdownVisible) {
     const gitStatusEl = document.querySelector('.theatre-git-status');
     const dropdown = gitStatusEl?.querySelector('.theatre-git-dropdown');
@@ -609,6 +607,9 @@ async function refreshGitStatus(): Promise<void> {
         }
       }
     }
+  } else {
+    const gitStatus = await window.api.getGitStatus(theatreModeProjectPath);
+    updateGitStatusElement(gitStatus);
   }
 }
 
