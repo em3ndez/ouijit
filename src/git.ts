@@ -52,6 +52,8 @@ export interface ChangedFile {
   path: string;
   status: 'M' | 'A' | 'D' | 'R' | '?';  // Modified, Added, Deleted, Renamed, Untracked
   oldPath?: string;  // For renamed files
+  additions: number;
+  deletions: number;
 }
 
 /**
@@ -311,13 +313,33 @@ export function checkoutBranch(projectPath: string, branchName: string): { succe
 }
 
 /**
- * Gets list of changed files with their status
+ * Gets list of changed files with their status and line stats
  */
 export function getChangedFiles(projectPath: string): ChangedFile[] {
   const opts = { cwd: projectPath, encoding: 'utf8' as const, stdio: ['pipe', 'pipe', 'pipe'] as const };
   const files: ChangedFile[] = [];
 
   try {
+    // Get numstat for additions/deletions per file
+    const statsMap = new Map<string, { additions: number; deletions: number }>();
+    try {
+      const numstat = execSync('git diff --numstat HEAD', opts).toString().trim();
+      if (numstat) {
+        for (const line of numstat.split('\n')) {
+          const parts = line.split('\t');
+          if (parts.length >= 3) {
+            // Format: additions<tab>deletions<tab>filename
+            // Binary files show as '-' for additions/deletions
+            const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10) || 0;
+            const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10) || 0;
+            statsMap.set(parts[2], { additions, deletions });
+          }
+        }
+      }
+    } catch {
+      // Stats are optional, continue without them
+    }
+
     // Get tracked file changes (modified, deleted, renamed)
     const tracked = execSync('git diff --name-status HEAD', opts).toString().trim();
     if (tracked) {
@@ -325,22 +347,32 @@ export function getChangedFiles(projectPath: string): ChangedFile[] {
         const parts = line.split('\t');
         if (parts.length >= 2) {
           const statusChar = parts[0][0] as ChangedFile['status'];
+          const filePath = statusChar === 'R' && parts.length >= 3 ? parts[2] : parts[1];
+          const stats = statsMap.get(filePath) || { additions: 0, deletions: 0 };
+
           if (statusChar === 'R' && parts.length >= 3) {
-            // Renamed: R100<tab>oldPath<tab>newPath
-            files.push({ path: parts[2], status: 'R', oldPath: parts[1] });
+            files.push({ path: parts[2], status: 'R', oldPath: parts[1], ...stats });
           } else {
-            files.push({ path: parts[1], status: statusChar });
+            files.push({ path: parts[1], status: statusChar, ...stats });
           }
         }
       }
     }
 
-    // Get untracked files
+    // Get untracked files (count lines for stats)
     const untracked = execSync('git ls-files --others --exclude-standard', opts).toString().trim();
     if (untracked) {
-      for (const path of untracked.split('\n')) {
-        if (path) {
-          files.push({ path, status: '?' });
+      for (const filePath of untracked.split('\n')) {
+        if (filePath) {
+          // For untracked files, count lines as additions
+          let additions = 0;
+          try {
+            const lineCount = execSync(`wc -l < "${filePath}"`, opts).toString().trim();
+            additions = parseInt(lineCount, 10) || 0;
+          } catch {
+            // Can't count lines, leave as 0
+          }
+          files.push({ path: filePath, status: '?', additions, deletions: 0 });
         }
       }
     }

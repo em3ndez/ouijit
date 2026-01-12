@@ -1,11 +1,11 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch } from 'lucide';
+import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown } from 'lucide';
 import type { PtyId, PtySpawnOptions, Project, GitStatus, GitDropdownInfo, ChangedFile, FileDiff } from '../types';
 import { stringToColor, getInitials } from '../utils/projectIcon';
 import { showToast } from './importDialog';
 
-const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch };
+const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown };
 
 interface TerminalInstance {
   terminal: Terminal;
@@ -37,6 +37,8 @@ let gitDropdownCleanup: (() => void) | null = null;
 let diffPanelVisible = false;
 let diffPanelSelectedFile: string | null = null;
 let diffPanelFiles: ChangedFile[] = [];
+let diffFileDropdownVisible = false;
+let diffFileDropdownCleanup: (() => void) | null = null;
 
 function createTerminalContainer(projectPath: string): HTMLElement {
   const container = document.createElement('div');
@@ -640,35 +642,143 @@ function escapeHtml(text: string): string {
 /**
  * Build HTML for the diff panel
  */
+function formatDiffStats(additions: number, deletions: number): string {
+  const parts: string[] = [];
+  if (additions > 0) parts.push(`<span class="diff-stat-add">+${additions}</span>`);
+  if (deletions > 0) parts.push(`<span class="diff-stat-del">-${deletions}</span>`);
+  return parts.length > 0 ? parts.join(' ') : '';
+}
+
 function buildDiffPanelHtml(files: ChangedFile[]): string {
-  const fileItems = files.map((file, index) => {
-    const statusLabel = file.status === '?' ? 'U' : file.status;  // Untracked shows as U (for Untracked/New)
-    const fileName = file.path.split('/').pop() || file.path;
-    return `
-      <div class="diff-file-item${index === 0 ? ' diff-file-item--selected' : ''}" data-path="${escapeHtml(file.path)}" data-status="${file.status}">
-        <span class="diff-file-status diff-file-status--${statusLabel}">${statusLabel}</span>
-        <span class="diff-file-name" title="${escapeHtml(file.path)}">${escapeHtml(fileName)}</span>
-      </div>
-    `;
-  }).join('');
+  // Get first file for initial selector state
+  const firstFile = files[0];
+  const statusLabel = firstFile.status === '?' ? 'U' : firstFile.status;
+  const fileName = firstFile.path.split('/').pop() || firstFile.path;
+  const stats = formatDiffStats(firstFile.additions, firstFile.deletions);
 
   return `
     <div class="diff-panel">
-      <div class="diff-file-list">
-        <div class="diff-file-list-header">Changed Files</div>
-        <div class="diff-file-list-items">
-          ${fileItems}
-        </div>
-      </div>
       <div class="diff-content">
         <div class="diff-content-header">
-          <span class="diff-content-filename"></span>
+          <div class="diff-file-selector" title="${escapeHtml(firstFile.path)}" data-additions="${firstFile.additions}" data-deletions="${firstFile.deletions}">
+            <span class="diff-file-status diff-file-status--${statusLabel}">${statusLabel}</span>
+            <span class="diff-file-selector-name">${escapeHtml(fileName)}</span>
+            <span class="diff-file-selector-stats">${stats}</span>
+            <i data-lucide="chevron-down" class="diff-file-selector-chevron"></i>
+          </div>
+          <span class="diff-header-info"></span>
           <button class="diff-panel-close" title="Close diff panel">&times;</button>
         </div>
         <div class="diff-content-body"></div>
       </div>
     </div>
   `;
+}
+
+/**
+ * Build HTML for the file dropdown menu
+ */
+function buildDiffFileDropdownHtml(files: ChangedFile[], selectedPath: string): string {
+  const items = files.map(file => {
+    const statusLabel = file.status === '?' ? 'U' : file.status;
+    const isSelected = file.path === selectedPath;
+    const stats = formatDiffStats(file.additions, file.deletions);
+    return `
+      <div class="diff-file-dropdown-item${isSelected ? ' diff-file-dropdown-item--selected' : ''}" data-path="${escapeHtml(file.path)}" data-status="${file.status}" data-additions="${file.additions}" data-deletions="${file.deletions}">
+        <span class="diff-file-status diff-file-status--${statusLabel}">${statusLabel}</span>
+        <span class="diff-file-dropdown-name" title="${escapeHtml(file.path)}">${escapeHtml(file.path)}</span>
+        <span class="diff-file-dropdown-stats">${stats}</span>
+      </div>
+    `;
+  }).join('');
+
+  return `<div class="diff-file-dropdown">${items}</div>`;
+}
+
+/**
+ * Show the file dropdown menu
+ */
+function showDiffFileDropdown(): void {
+  if (diffFileDropdownVisible || !diffPanelSelectedFile) return;
+
+  const panel = document.querySelector('.diff-panel');
+  const selector = panel?.querySelector('.diff-file-selector');
+  if (!selector) return;
+
+  diffFileDropdownVisible = true;
+  selector.classList.add('open');
+
+  // Insert dropdown inside selector (like git dropdown pattern)
+  const dropdownHtml = buildDiffFileDropdownHtml(diffPanelFiles, diffPanelSelectedFile);
+  selector.insertAdjacentHTML('beforeend', dropdownHtml);
+
+  const dropdown = selector.querySelector('.diff-file-dropdown');
+  if (!dropdown) return;
+
+  // Animate in
+  requestAnimationFrame(() => {
+    dropdown.classList.add('visible');
+  });
+
+  // Wire up item clicks
+  dropdown.querySelectorAll('.diff-file-dropdown-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const filePath = (item as HTMLElement).dataset.path;
+      if (filePath) {
+        selectDiffFile(filePath);
+      }
+    });
+  });
+
+  // Set up click-outside handler
+  const handleClickOutside = (e: MouseEvent) => {
+    const target = e.target as Node;
+    if (!selector.contains(target)) {
+      hideDiffFileDropdown();
+    }
+  };
+
+  setTimeout(() => {
+    document.addEventListener('click', handleClickOutside);
+    diffFileDropdownCleanup = () => {
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, 0);
+}
+
+/**
+ * Hide the file dropdown menu
+ */
+function hideDiffFileDropdown(): void {
+  if (!diffFileDropdownVisible) return;
+
+  diffFileDropdownVisible = false;
+
+  const panel = document.querySelector('.diff-panel');
+  const selector = panel?.querySelector('.diff-file-selector');
+  const dropdown = selector?.querySelector('.diff-file-dropdown');
+
+  selector?.classList.remove('open');
+
+  if (dropdown) {
+    dropdown.classList.remove('visible');
+    setTimeout(() => dropdown.remove(), 150);
+  }
+
+  diffFileDropdownCleanup?.();
+  diffFileDropdownCleanup = null;
+}
+
+/**
+ * Toggle the file dropdown menu
+ */
+function toggleDiffFileDropdown(): void {
+  if (diffFileDropdownVisible) {
+    hideDiffFileDropdown();
+  } else {
+    showDiffFileDropdown();
+  }
 }
 
 /**
@@ -679,7 +789,7 @@ function renderDiffContentHtml(diff: FileDiff): string {
     return '<div class="diff-empty-state">No changes to display</div>';
   }
 
-  return diff.hunks.map(hunk => {
+  const hunksHtml = diff.hunks.map(hunk => {
     const linesHtml = hunk.lines.map(line => {
       const oldNum = line.oldLineNo !== undefined ? line.oldLineNo : '';
       const newNum = line.newLineNo !== undefined ? line.newLineNo : '';
@@ -701,6 +811,8 @@ function renderDiffContentHtml(diff: FileDiff): string {
       </div>
     `;
   }).join('');
+
+  return `<div class="diff-hunks-wrapper">${hunksHtml}</div>`;
 }
 
 /**
@@ -711,20 +823,36 @@ async function selectDiffFile(filePath: string): Promise<void> {
 
   diffPanelSelectedFile = filePath;
 
-  // Update selected state in file list
+  // Close dropdown if open
+  hideDiffFileDropdown();
+
   const panel = document.querySelector('.diff-panel');
   if (!panel) return;
 
-  panel.querySelectorAll('.diff-file-item').forEach(item => {
-    const itemPath = (item as HTMLElement).dataset.path;
-    item.classList.toggle('diff-file-item--selected', itemPath === filePath);
-  });
+  // Update the selector trigger to show new file
+  const file = diffPanelFiles.find(f => f.path === filePath);
+  if (file) {
+    const selector = panel.querySelector('.diff-file-selector');
+    const statusEl = selector?.querySelector('.diff-file-status');
+    const nameEl = selector?.querySelector('.diff-file-selector-name');
+    const statsEl = selector?.querySelector('.diff-file-selector-stats');
 
-  // Update filename in header
-  const filenameEl = panel.querySelector('.diff-content-filename');
-  if (filenameEl) {
-    filenameEl.textContent = filePath;
+    if (statusEl && nameEl && selector) {
+      const statusLabel = file.status === '?' ? 'U' : file.status;
+      statusEl.className = `diff-file-status diff-file-status--${statusLabel}`;
+      statusEl.textContent = statusLabel;
+      nameEl.textContent = file.path.split('/').pop() || file.path;
+      (selector as HTMLElement).title = file.path;
+
+      if (statsEl) {
+        statsEl.innerHTML = formatDiffStats(file.additions, file.deletions);
+      }
+    }
   }
+
+  // Clear header info while loading
+  const headerInfo = panel.querySelector('.diff-header-info');
+  if (headerInfo) headerInfo.textContent = '';
 
   // Fetch and render diff
   const contentBody = panel.querySelector('.diff-content-body');
@@ -735,6 +863,12 @@ async function selectDiffFile(filePath: string): Promise<void> {
   const diff = await window.api.getFileDiff(theatreModeProjectPath, filePath);
   if (diff) {
     contentBody.innerHTML = renderDiffContentHtml(diff);
+
+    // Update header info with hunk count
+    if (headerInfo && diff.hunks.length > 0) {
+      const hunkText = diff.hunks.length === 1 ? '1 change' : `${diff.hunks.length} changes`;
+      headerInfo.textContent = hunkText;
+    }
   } else {
     contentBody.innerHTML = '<div class="diff-empty-state">Unable to load diff</div>';
   }
@@ -763,15 +897,17 @@ async function showDiffPanel(): Promise<void> {
   const panel = document.querySelector('.diff-panel');
   if (!panel) return;
 
-  // Wire up file item clicks
-  panel.querySelectorAll('.diff-file-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const filePath = (item as HTMLElement).dataset.path;
-      if (filePath) {
-        selectDiffFile(filePath);
-      }
+  // Initialize lucide icons for the chevron
+  createIcons({ icons: theatreIcons });
+
+  // Wire up file selector dropdown toggle
+  const fileSelector = panel.querySelector('.diff-file-selector');
+  if (fileSelector) {
+    fileSelector.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleDiffFileDropdown();
     });
-  });
+  }
 
   // Wire up close button
   const closeBtn = panel.querySelector('.diff-panel-close');
@@ -811,6 +947,9 @@ async function showDiffPanel(): Promise<void> {
  */
 function hideDiffPanel(): void {
   if (!diffPanelVisible) return;
+
+  // Clean up file dropdown if open
+  hideDiffFileDropdown();
 
   const panel = document.querySelector('.diff-panel');
   if (panel) {
