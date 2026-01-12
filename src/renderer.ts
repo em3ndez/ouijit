@@ -6,12 +6,13 @@
 
 import './index.css';
 import '@xterm/xterm/css/xterm.css';
-import { createIcons, Search, FolderOpen, Download, SquareTerminal, RefreshCw } from 'lucide';
+import { createIcons, Search, FolderOpen, Download, SquareTerminal, RefreshCw, Plus } from 'lucide';
 import type { Project, RunConfig, ElectronAPI } from './types';
 import { renderProjects } from './components/projectGrid';
 import { setupSearch } from './components/searchBar';
 import { createTerminal, destroyTerminal, hasTerminal, getOpenTerminalPaths } from './components/terminalComponent';
 import { showImportDialog, showToast } from './components/importDialog';
+import { showNewProjectDialog } from './components/newProjectDialog';
 
 // Declare the global window.api interface
 declare global {
@@ -293,7 +294,7 @@ async function initialize(): Promise<void> {
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize Lucide icons
   createIcons({
-    icons: { Search, FolderOpen, Download, SquareTerminal, RefreshCw },
+    icons: { Search, FolderOpen, Download, SquareTerminal, RefreshCw, Plus },
   });
 
   // Set up refresh button
@@ -307,6 +308,18 @@ document.addEventListener('DOMContentLoaded', () => {
       } finally {
         refreshBtn.classList.remove('spinning');
         refreshBtn.removeAttribute('disabled');
+      }
+    });
+  }
+
+  // Set up new project button
+  const newProjectBtn = document.getElementById('new-project-btn');
+  if (newProjectBtn) {
+    newProjectBtn.addEventListener('click', async () => {
+      const result = await showNewProjectDialog();
+      if (result?.created) {
+        await refreshProjects();
+        showToast(`Created project: ${result.projectName}`, 'success');
       }
     });
   }

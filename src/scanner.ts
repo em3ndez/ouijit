@@ -15,6 +15,7 @@ const PROJECT_DIRECTORIES = [
   '~/repos',
   '~/workspace',
   '~/Ouijit/imports',
+  '~/Ouijit/projects',
 ];
 
 const MAX_SCAN_DEPTH = 2;

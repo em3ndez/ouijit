@@ -97,6 +97,8 @@ export interface ElectronAPI {
   openOuijitFileDialog(): Promise<string | null>;
   /** Refresh the project list */
   refreshProjects(): Promise<Project[]>;
+  /** Create a new project */
+  createProject(options: CreateProjectOptions): Promise<CreateProjectResult>;
 }
 
 /**
@@ -132,6 +134,22 @@ export interface OuijitPackage {
   screenshotPath?: string;
   sourcePath: string;
   tempDir: string;
+}
+
+/**
+ * Options for creating a new project
+ */
+export interface CreateProjectOptions {
+  name: string;
+}
+
+/**
+ * Result of creating a new project
+ */
+export interface CreateProjectResult {
+  success: boolean;
+  projectPath?: string;
+  error?: string;
 }
 
 /**

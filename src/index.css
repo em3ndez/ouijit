@@ -269,6 +269,11 @@ body {
   to { transform: rotate(360deg); }
 }
 
+.btn-icon-header--after {
+  margin-right: 0;
+  margin-left: var(--spacing-sm);
+}
+
 /* Main Content */
 .main-content {
   max-width: var(--content-max-width);
@@ -1150,6 +1155,55 @@ body {
 }
 
 /* ===================================
+   New Project Dialog Form
+   =================================== */
+
+.new-project-form {
+  margin-bottom: var(--spacing-lg);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.form-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.form-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--spacing-md);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: all var(--transition-fast);
+}
+
+.form-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-light);
+}
+
+.form-input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.form-error {
+  font-size: var(--font-size-xs);
+  color: var(--color-error, #dc3545);
+  margin-top: var(--spacing-xs);
+}
+
+/* ===================================
    Toast Notification Styles
    =================================== */
 
@@ -1250,7 +1304,8 @@ body.theatre-mode .search-container {
   display: none !important;
 }
 
-body.theatre-mode #refresh-btn {
+body.theatre-mode #refresh-btn,
+body.theatre-mode #new-project-btn {
   display: none !important;
 }
 
