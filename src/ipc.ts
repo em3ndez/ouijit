@@ -12,7 +12,9 @@ import {
   cleanupAllPtys,
 } from './ptyManager';
 import { exportProject, previewOuijitFile, importOuijitPackage } from './ouijit';
+import { getGitStatus } from './git';
 import type { RunConfig, LaunchResult, PtySpawnOptions, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult } from './types';
+import type { GitStatus } from './git';
 
 /**
  * Escapes a string for use in AppleScript
@@ -192,6 +194,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       console.error('Error refreshing projects:', error);
       throw error;
     }
+  });
+
+  // Get git status for a project
+  ipcMain.handle('get-git-status', async (_event, projectPath: string): Promise<GitStatus | null> => {
+    return getGitStatus(projectPath);
   });
 
   // Create a new project

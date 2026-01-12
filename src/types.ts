@@ -1,4 +1,12 @@
 /**
+ * Git status information for a project
+ */
+export interface GitStatus {
+  branch: string;
+  isDirty: boolean;
+}
+
+/**
  * Represents a run configuration for launching a project
  */
 export interface RunConfig {
@@ -97,6 +105,8 @@ export interface ElectronAPI {
   openOuijitFileDialog(): Promise<string | null>;
   /** Refresh the project list */
   refreshProjects(): Promise<Project[]>;
+  /** Get git status (branch and dirty state) for a project */
+  getGitStatus(projectPath: string): Promise<GitStatus | null>;
   /** Create a new project */
   createProject(options: CreateProjectOptions): Promise<CreateProjectResult>;
   /** Listen for fullscreen state changes */

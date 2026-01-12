@@ -1431,3 +1431,56 @@ body.is-fullscreen .theatre-header-content {
   width: 16px;
   height: 16px;
 }
+
+/* Theatre Git Status */
+.theatre-git-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--color-background);
+  border-radius: var(--radius-full);
+  margin-left: auto;
+  margin-right: 12px;
+}
+
+.theatre-git-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--color-text-tertiary);
+}
+
+.theatre-git-branch {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theatre-git-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.theatre-git-indicator--clean {
+  background-color: #34C759;
+}
+
+.theatre-git-indicator--dirty {
+  background-color: #FF9F0A;
+}
+
+@media (prefers-color-scheme: dark) {
+  .theatre-git-indicator--clean {
+    background-color: #30D158;
+  }
+
+  .theatre-git-indicator--dirty {
+    background-color: #FFD60A;
+  }
+}

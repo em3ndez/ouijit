@@ -2,7 +2,7 @@
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { Project, RunConfig, LaunchResult, PtySpawnOptions, PtySpawnResult, PtyId, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult } from './types';
+import type { Project, RunConfig, LaunchResult, PtySpawnOptions, PtySpawnResult, PtyId, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult, GitStatus } from './types';
 
 // Expose protected methods that allow the renderer process to use
 // ipcRenderer without exposing the entire object
@@ -93,6 +93,12 @@ contextBridge.exposeInMainWorld('api', {
    */
   refreshProjects: (): Promise<Project[]> =>
     ipcRenderer.invoke('refresh-projects'),
+
+  /**
+   * Get git status (branch and dirty state) for a project
+   */
+  getGitStatus: (projectPath: string): Promise<GitStatus | null> =>
+    ipcRenderer.invoke('get-git-status', projectPath),
 
   /**
    * Create a new project

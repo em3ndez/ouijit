@@ -1,10 +1,10 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { createIcons, Maximize2, Minimize2, RefreshCw } from 'lucide';
-import type { PtyId, PtySpawnOptions, Project } from '../types';
+import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch } from 'lucide';
+import type { PtyId, PtySpawnOptions, Project, GitStatus } from '../types';
 import { stringToColor, getInitials } from '../utils/projectIcon';
 
-const theatreIcons = { Maximize2, Minimize2, RefreshCw };
+const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch };
 
 interface TerminalInstance {
   terminal: Terminal;
@@ -22,6 +22,11 @@ const terminals = new Map<string, TerminalInstance>();
 let theatreModeProjectPath: string | null = null;
 let originalHeaderContent: string | null = null;
 let escapeKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+
+// Git status idle refresh state
+let gitStatusIdleTimeout: ReturnType<typeof setTimeout> | null = null;
+let lastTerminalOutputTime: number = 0;
+const GIT_STATUS_IDLE_DELAY = 1000; // 1 second of idle before refreshing
 
 function createTerminalContainer(projectPath: string): HTMLElement {
   const container = document.createElement('div');
@@ -196,6 +201,10 @@ export async function createTerminal(
     // Set up data listener
     instance.cleanupData = window.api.pty.onData(result.ptyId, (data) => {
       terminal.write(data);
+      // Schedule git status refresh if in theatre mode for this terminal
+      if (theatreModeProjectPath === projectPath) {
+        scheduleGitStatusRefresh();
+      }
     });
 
     // Set up exit listener
@@ -305,12 +314,31 @@ export function destroyAllTerminals(): void {
 }
 
 /**
+ * Build git status HTML
+ */
+function buildGitStatusHtml(gitStatus: GitStatus | null): string {
+  if (!gitStatus) return '';
+
+  const indicatorClass = gitStatus.isDirty ? 'theatre-git-indicator--dirty' : 'theatre-git-indicator--clean';
+
+  return `
+    <div class="theatre-git-status">
+      <i data-lucide="git-branch" class="theatre-git-icon"></i>
+      <span class="theatre-git-branch">${gitStatus.branch}</span>
+      <span class="theatre-git-indicator ${indicatorClass}"></span>
+    </div>
+  `;
+}
+
+/**
  * Build the theatre mode header content
  */
-function buildTheatreHeader(projectData: Project): string {
+function buildTheatreHeader(projectData: Project, gitStatus: GitStatus | null): string {
   const icon = projectData.iconDataUrl
     ? `<img src="${projectData.iconDataUrl}" alt="" class="theatre-project-icon" />`
     : `<div class="theatre-project-icon theatre-project-icon--placeholder" style="background-color: ${stringToColor(projectData.name)}">${getInitials(projectData.name)}</div>`;
+
+  const gitStatusHtml = buildGitStatusHtml(gitStatus);
 
   return `
     <div class="theatre-header-content">
@@ -319,6 +347,7 @@ function buildTheatreHeader(projectData: Project): string {
         <span class="theatre-project-name">${projectData.name}</span>
         <span class="theatre-project-path">${projectData.path}</span>
       </div>
+      ${gitStatusHtml}
       <button class="theatre-exit-btn" title="Exit theatre mode (Esc)">
         <i data-lucide="minimize-2"></i>
       </button>
@@ -327,13 +356,69 @@ function buildTheatreHeader(projectData: Project): string {
 }
 
 /**
+ * Update just the git status element in the theatre header
+ */
+function updateGitStatusElement(gitStatus: GitStatus | null): void {
+  const headerContent = document.querySelector('.header-content');
+  if (!headerContent) return;
+
+  // Remove existing git status element
+  const existingGitStatus = headerContent.querySelector('.theatre-git-status');
+  if (existingGitStatus) {
+    existingGitStatus.remove();
+  }
+
+  // If no git status, we're done
+  if (!gitStatus) return;
+
+  // Insert new git status before the exit button
+  const exitBtn = headerContent.querySelector('.theatre-exit-btn');
+  if (exitBtn) {
+    const gitStatusHtml = buildGitStatusHtml(gitStatus);
+    exitBtn.insertAdjacentHTML('beforebegin', gitStatusHtml);
+    createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
+  }
+}
+
+/**
+ * Refresh git status for the current theatre mode project
+ */
+async function refreshGitStatus(): Promise<void> {
+  if (!theatreModeProjectPath) return;
+
+  const gitStatus = await window.api.getGitStatus(theatreModeProjectPath);
+  updateGitStatusElement(gitStatus);
+}
+
+/**
+ * Schedule a git status refresh after idle period
+ */
+function scheduleGitStatusRefresh(): void {
+  // Clear any existing timeout
+  if (gitStatusIdleTimeout) {
+    clearTimeout(gitStatusIdleTimeout);
+  }
+
+  // Update last output time
+  lastTerminalOutputTime = Date.now();
+
+  // Schedule refresh after idle period
+  gitStatusIdleTimeout = setTimeout(() => {
+    refreshGitStatus();
+  }, GIT_STATUS_IDLE_DELAY);
+}
+
+/**
  * Enter theatre mode for the specified terminal
  */
-export function enterTheatreMode(projectPath: string, projectData: Project): void {
+export async function enterTheatreMode(projectPath: string, projectData: Project): Promise<void> {
   if (theatreModeProjectPath) return; // Already in theatre mode
 
   const instance = terminals.get(projectPath);
   if (!instance) return;
+
+  // Fetch git status
+  const gitStatus = projectData.hasGit ? await window.api.getGitStatus(projectPath) : null;
 
   // 1. Add class to body - CSS handles the rest
   document.body.classList.add('theatre-mode');
@@ -353,7 +438,7 @@ export function enterTheatreMode(projectPath: string, projectData: Project): voi
   const headerContent = document.querySelector('.header-content');
   if (headerContent) {
     originalHeaderContent = headerContent.innerHTML;
-    headerContent.innerHTML = buildTheatreHeader(projectData);
+    headerContent.innerHTML = buildTheatreHeader(projectData, gitStatus);
     createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
 
     // Wire up exit button in header
@@ -443,7 +528,13 @@ export function exitTheatreMode(): void {
     escapeKeyHandler = null;
   }
 
-  // 5. Refit terminal
+  // 5. Clear git status idle timeout
+  if (gitStatusIdleTimeout) {
+    clearTimeout(gitStatusIdleTimeout);
+    gitStatusIdleTimeout = null;
+  }
+
+  // 6. Refit terminal
   if (instance) {
     requestAnimationFrame(() => {
       instance.fitAddon.fit();
