@@ -6,6 +6,9 @@ export interface GitStatus {
   isDirty: boolean;
 }
 
+// Re-export extended git types from git.ts
+export type { GitDropdownInfo, ExtendedGitStatus, RecentBranch, UncommittedChanges } from './git';
+
 /**
  * Represents a run configuration for launching a project
  */
@@ -107,6 +110,8 @@ export interface ElectronAPI {
   refreshProjects(): Promise<Project[]>;
   /** Get git status (branch and dirty state) for a project */
   getGitStatus(projectPath: string): Promise<GitStatus | null>;
+  /** Get extended git dropdown info for a project */
+  getGitDropdownInfo(projectPath: string): Promise<import('./git').GitDropdownInfo | null>;
   /** Create a new project */
   createProject(options: CreateProjectOptions): Promise<CreateProjectResult>;
   /** Listen for fullscreen state changes */

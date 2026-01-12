@@ -1,7 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch } from 'lucide';
-import type { PtyId, PtySpawnOptions, Project, GitStatus } from '../types';
+import type { PtyId, PtySpawnOptions, Project, GitStatus, GitDropdownInfo } from '../types';
 import { stringToColor, getInitials } from '../utils/projectIcon';
 
 const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch };
@@ -27,6 +27,10 @@ let escapeKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 let gitStatusIdleTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastTerminalOutputTime: number = 0;
 const GIT_STATUS_IDLE_DELAY = 1000; // 1 second of idle before refreshing
+
+// Git dropdown state
+let gitDropdownVisible = false;
+let gitDropdownCleanup: (() => void) | null = null;
 
 function createTerminalContainer(projectPath: string): HTMLElement {
   const container = document.createElement('div');
@@ -314,7 +318,7 @@ export function destroyAllTerminals(): void {
 }
 
 /**
- * Build git status HTML
+ * Build git status HTML (clickable pill)
  */
 function buildGitStatusHtml(gitStatus: GitStatus | null): string {
   if (!gitStatus) return '';
@@ -322,12 +326,152 @@ function buildGitStatusHtml(gitStatus: GitStatus | null): string {
   const indicatorClass = gitStatus.isDirty ? 'theatre-git-indicator--dirty' : 'theatre-git-indicator--clean';
 
   return `
-    <div class="theatre-git-status">
+    <div class="theatre-git-status theatre-git-status--clickable" role="button" tabindex="0">
       <i data-lucide="git-branch" class="theatre-git-icon"></i>
       <span class="theatre-git-branch">${gitStatus.branch}</span>
       <span class="theatre-git-indicator ${indicatorClass}"></span>
     </div>
   `;
+}
+
+/**
+ * Build git dropdown HTML
+ */
+function buildGitDropdownHtml(info: GitDropdownInfo): string {
+  const { current, recentBranches } = info;
+
+  // Build ahead/behind indicators
+  let aheadBehindHtml = '';
+  if (current.ahead > 0 || current.behind > 0) {
+    const aheadPart = current.ahead > 0 ? `<span class="ahead">\u2191${current.ahead}</span>` : '';
+    const behindPart = current.behind > 0 ? `<span class="behind">\u2193${current.behind}</span>` : '';
+    aheadBehindHtml = `<div class="git-dropdown-ahead-behind">${aheadPart}${behindPart}</div>`;
+  }
+
+  // Build uncommitted changes line
+  let uncommittedHtml = '';
+  if (current.uncommitted) {
+    const { filesChanged, insertions, deletions } = current.uncommitted;
+    const parts: string[] = [];
+    parts.push(`${filesChanged} file${filesChanged === 1 ? '' : 's'}`);
+    if (insertions > 0) parts.push(`<span class="insertions">+${insertions}</span>`);
+    if (deletions > 0) parts.push(`<span class="deletions">-${deletions}</span>`);
+    uncommittedHtml = `<div class="git-dropdown-uncommitted">${parts.join(' \u00B7 ')}</div>`;
+  }
+
+  // Build recent branches list
+  let recentBranchesHtml = '';
+  if (recentBranches.length > 0) {
+    const branchItems = recentBranches.map(branch => {
+      const statsHtml = branch.commitsAhead > 0
+        ? `+${branch.commitsAhead} \u00B7 ${branch.lastCommitAge}`
+        : branch.lastCommitAge;
+      return `
+        <div class="git-dropdown-branch">
+          <span class="git-dropdown-branch-name">${branch.name}</span>
+          <span class="git-dropdown-branch-stats">${statsHtml}</span>
+        </div>
+      `;
+    }).join('');
+
+    recentBranchesHtml = `
+      <div class="git-dropdown-recent">
+        <div class="git-dropdown-recent-header">Recent Branches</div>
+        ${branchItems}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="theatre-git-dropdown">
+      <div class="git-dropdown-current">
+        <div class="git-dropdown-branch-row">
+          <span class="git-dropdown-branch-name">${current.branch}</span>
+          ${aheadBehindHtml}
+        </div>
+        ${uncommittedHtml}
+      </div>
+      ${recentBranchesHtml}
+    </div>
+  `;
+}
+
+/**
+ * Show the git dropdown
+ */
+async function showGitDropdown(projectPath: string): Promise<void> {
+  if (gitDropdownVisible) return;
+
+  const gitStatusEl = document.querySelector('.theatre-git-status');
+  if (!gitStatusEl) return;
+
+  // Fetch dropdown info
+  const info = await window.api.getGitDropdownInfo(projectPath);
+  if (!info) return;
+
+  // Create and insert dropdown as a child of git status for proper positioning
+  const dropdownHtml = buildGitDropdownHtml(info);
+  gitStatusEl.insertAdjacentHTML('beforeend', dropdownHtml);
+
+  const dropdown = gitStatusEl.querySelector('.theatre-git-dropdown');
+  if (!dropdown) return;
+
+  // Show with animation
+  requestAnimationFrame(() => {
+    dropdown.classList.add('visible');
+  });
+
+  gitDropdownVisible = true;
+
+  // Set up click outside handler
+  const handleClickOutside = (e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (!target.closest('.theatre-git-status') && !target.closest('.theatre-git-dropdown')) {
+      hideGitDropdown();
+    }
+  };
+
+  // Use setTimeout to avoid immediately triggering from current click
+  setTimeout(() => {
+    document.addEventListener('click', handleClickOutside);
+  }, 0);
+
+  gitDropdownCleanup = () => {
+    document.removeEventListener('click', handleClickOutside);
+  };
+}
+
+/**
+ * Hide the git dropdown
+ */
+function hideGitDropdown(): void {
+  if (!gitDropdownVisible) return;
+
+  const gitStatusEl = document.querySelector('.theatre-git-status');
+  const dropdown = gitStatusEl?.querySelector('.theatre-git-dropdown');
+  if (dropdown) {
+    dropdown.classList.remove('visible');
+    // Remove after animation
+    setTimeout(() => dropdown.remove(), 150);
+  }
+
+  if (gitDropdownCleanup) {
+    gitDropdownCleanup();
+    gitDropdownCleanup = null;
+  }
+
+  gitDropdownVisible = false;
+}
+
+/**
+ * Toggle git dropdown visibility
+ */
+async function toggleGitDropdown(projectPath: string): Promise<void> {
+  if (gitDropdownVisible) {
+    hideGitDropdown();
+  } else {
+    await showGitDropdown(projectPath);
+  }
 }
 
 /**
@@ -377,6 +521,15 @@ function updateGitStatusElement(gitStatus: GitStatus | null): void {
     const gitStatusHtml = buildGitStatusHtml(gitStatus);
     exitBtn.insertAdjacentHTML('beforebegin', gitStatusHtml);
     createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
+
+    // Re-wire click handler for dropdown
+    const gitStatusEl = headerContent.querySelector('.theatre-git-status');
+    if (gitStatusEl && theatreModeProjectPath) {
+      gitStatusEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleGitDropdown(theatreModeProjectPath!);
+      });
+    }
   }
 }
 
@@ -388,6 +541,24 @@ async function refreshGitStatus(): Promise<void> {
 
   const gitStatus = await window.api.getGitStatus(theatreModeProjectPath);
   updateGitStatusElement(gitStatus);
+
+  // Also refresh dropdown content if it's visible
+  if (gitDropdownVisible) {
+    const gitStatusEl = document.querySelector('.theatre-git-status');
+    const dropdown = gitStatusEl?.querySelector('.theatre-git-dropdown');
+    if (dropdown) {
+      const info = await window.api.getGitDropdownInfo(theatreModeProjectPath);
+      if (info) {
+        // Build new dropdown content and replace inner HTML
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = buildGitDropdownHtml(info);
+        const newDropdown = tempDiv.firstElementChild;
+        if (newDropdown) {
+          dropdown.innerHTML = newDropdown.innerHTML;
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -445,6 +616,15 @@ export async function enterTheatreMode(projectPath: string, projectData: Project
     const exitBtn = headerContent.querySelector('.theatre-exit-btn');
     if (exitBtn) {
       exitBtn.addEventListener('click', () => exitTheatreMode());
+    }
+
+    // Wire up git status click handler for dropdown
+    const gitStatusEl = headerContent.querySelector('.theatre-git-status');
+    if (gitStatusEl) {
+      gitStatusEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleGitDropdown(projectPath);
+      });
     }
   }
 
@@ -533,6 +713,9 @@ export function exitTheatreMode(): void {
     clearTimeout(gitStatusIdleTimeout);
     gitStatusIdleTimeout = null;
   }
+
+  // 5b. Hide and cleanup git dropdown
+  hideGitDropdown();
 
   // 6. Refit terminal
   if (instance) {

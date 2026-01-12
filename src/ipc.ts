@@ -12,9 +12,9 @@ import {
   cleanupAllPtys,
 } from './ptyManager';
 import { exportProject, previewOuijitFile, importOuijitPackage } from './ouijit';
-import { getGitStatus } from './git';
+import { getGitStatus, getGitDropdownInfo } from './git';
 import type { RunConfig, LaunchResult, PtySpawnOptions, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult } from './types';
-import type { GitStatus } from './git';
+import type { GitStatus, GitDropdownInfo } from './git';
 
 /**
  * Escapes a string for use in AppleScript
@@ -199,6 +199,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Get git status for a project
   ipcMain.handle('get-git-status', async (_event, projectPath: string): Promise<GitStatus | null> => {
     return getGitStatus(projectPath);
+  });
+
+  // Get extended git dropdown info for a project
+  ipcMain.handle('get-git-dropdown-info', async (_event, projectPath: string): Promise<GitDropdownInfo | null> => {
+    return getGitDropdownInfo(projectPath);
   });
 
   // Create a new project

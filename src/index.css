@@ -1303,6 +1303,10 @@ body.theatre-mode .project-row {
 }
 
 /* Remove max-width constraint from header in theatre mode */
+body.theatre-mode .header {
+  z-index: 10000;
+}
+
 body.theatre-mode .header-content {
   max-width: none;
   padding-left: 0;
@@ -1331,6 +1335,7 @@ body.theatre-mode .project-list-header {
   left: 16px;
   right: 16px;
   bottom: 16px;
+  z-index: 50;
   max-height: none !important;
   height: auto !important;
   margin: 0 !important;
@@ -1434,6 +1439,7 @@ body.is-fullscreen .theatre-header-content {
 
 /* Theatre Git Status */
 .theatre-git-status {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1442,6 +1448,7 @@ body.is-fullscreen .theatre-header-content {
   border-radius: var(--radius-full);
   margin-left: auto;
   margin-right: 12px;
+  -webkit-app-region: no-drag;
 }
 
 .theatre-git-icon {
@@ -1482,5 +1489,140 @@ body.is-fullscreen .theatre-header-content {
 
   .theatre-git-indicator--dirty {
     background-color: #FFD60A;
+  }
+}
+
+/* Clickable git status */
+.theatre-git-status--clickable {
+  transition: background-color var(--transition-fast);
+}
+
+.theatre-git-status--clickable:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Git dropdown - mirrors .launch-dropdown pattern */
+.theatre-git-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: var(--spacing-xs);
+  min-width: 260px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+  /* Animation - same as .launch-dropdown */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-8px);
+  transition: all var(--transition-fast);
+}
+
+.theatre-git-dropdown.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.git-dropdown-current {
+  padding: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.git-dropdown-branch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.git-dropdown-branch-name {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.git-dropdown-ahead-behind {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  display: flex;
+  gap: 8px;
+}
+
+.git-dropdown-ahead-behind .ahead {
+  color: #34C759;
+}
+
+.git-dropdown-ahead-behind .behind {
+  color: #FF9F0A;
+}
+
+.git-dropdown-uncommitted {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.git-dropdown-uncommitted .insertions {
+  color: #34C759;
+}
+
+.git-dropdown-uncommitted .deletions {
+  color: #FF3B30;
+}
+
+.git-dropdown-recent {
+  padding: 8px 0;
+}
+
+.git-dropdown-recent-header {
+  padding: 4px 12px 8px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.git-dropdown-branch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  transition: background-color var(--transition-fast);
+}
+
+.git-dropdown-branch:hover {
+  background: var(--color-background);
+}
+
+.git-dropdown-branch .git-dropdown-branch-name {
+  font-weight: var(--font-weight-normal);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.git-dropdown-branch-stats {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+@media (prefers-color-scheme: dark) {
+  .git-dropdown-ahead-behind .ahead {
+    color: #30D158;
+  }
+
+  .git-dropdown-ahead-behind .behind {
+    color: #FFD60A;
+  }
+
+  .git-dropdown-uncommitted .insertions {
+    color: #30D158;
+  }
+
+  .git-dropdown-uncommitted .deletions {
+    color: #FF453A;
   }
 }
