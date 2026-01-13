@@ -1319,14 +1319,12 @@ textarea,
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  cursor: pointer;
 }
 
 .custom-checkbox input[type="checkbox"] {
   width: 16px;
   height: 16px;
   accent-color: var(--color-accent);
-  cursor: pointer;
 }
 
 .custom-checkbox-label {
@@ -1758,7 +1756,6 @@ body.is-fullscreen .theatre-header-content {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  cursor: pointer;
   transition: background-color var(--transition-fast);
 }
 
@@ -1804,7 +1801,6 @@ body.is-fullscreen .theatre-header-content {
    ========================================== */
 
 .git-dropdown-uncommitted--clickable {
-  cursor: pointer;
   padding: 8px 12px;
   margin: 4px -12px -12px -12px;
   transition: background-color var(--transition-fast);
@@ -1946,7 +1942,6 @@ body.is-fullscreen .theatre-header-content {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  cursor: pointer;
   transition: background-color var(--transition-fast);
 }
 
@@ -2226,13 +2221,11 @@ body.is-fullscreen .theatre-header-content {
   display: flex;
   flex-direction: column;
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-  cursor: pointer;
 }
 
 .theatre-card--active {
   transform: none;
   z-index: 10;
-  cursor: default;
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.05),
     0 4px 12px rgba(0, 0, 0, 0.15),

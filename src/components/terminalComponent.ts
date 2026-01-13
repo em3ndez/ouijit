@@ -44,10 +44,12 @@ let theatreModeProjectPath: string | null = null;
 let originalHeaderContent: string | null = null;
 let escapeKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
-// Git status idle refresh state
+// Git status refresh state
 let gitStatusIdleTimeout: ReturnType<typeof setTimeout> | null = null;
+let gitStatusPeriodicInterval: ReturnType<typeof setInterval> | null = null;
 let lastTerminalOutputTime: number = 0;
-const GIT_STATUS_IDLE_DELAY = 1000; // 1 second of idle before refreshing
+const GIT_STATUS_IDLE_DELAY = 500; // 500ms of idle before refreshing
+const GIT_STATUS_PERIODIC_INTERVAL = 5000; // Also refresh every 5 seconds regardless
 
 // Git dropdown state
 let gitDropdownVisible = false;
@@ -912,12 +914,19 @@ function updateGitStatusElement(gitStatus: GitStatus | null): void {
 async function refreshGitStatus(): Promise<void> {
   if (!theatreModeProjectPath) return;
 
-  // Skip refresh while dropdown is open - avoids destroying event handlers
-  // User gets fresh data when they reopen
-  if (gitDropdownVisible) return;
-
   const gitStatus = await window.api.getGitStatus(theatreModeProjectPath);
-  updateGitStatusElement(gitStatus);
+
+  if (gitDropdownVisible) {
+    // Only update the indicator dot while dropdown is open
+    // (full element replacement would destroy the dropdown)
+    const indicator = document.querySelector('.theatre-git-indicator');
+    if (indicator && gitStatus) {
+      indicator.classList.remove('theatre-git-indicator--dirty', 'theatre-git-indicator--clean');
+      indicator.classList.add(gitStatus.isDirty ? 'theatre-git-indicator--dirty' : 'theatre-git-indicator--clean');
+    }
+  } else {
+    updateGitStatusElement(gitStatus);
+  }
 }
 
 /**
@@ -1614,6 +1623,13 @@ export async function enterTheatreMode(
   // 5. Escape key handler
   escapeKeyHandler = (e) => { if (e.key === 'Escape') exitTheatreMode(); };
   document.addEventListener('keydown', escapeKeyHandler);
+
+  // 6. Start periodic git status refresh (for long-running commands)
+  if (projectData.hasGit) {
+    gitStatusPeriodicInterval = setInterval(() => {
+      refreshGitStatus();
+    }, GIT_STATUS_PERIODIC_INTERVAL);
+  }
 }
 
 /**
@@ -1683,10 +1699,14 @@ export function exitTheatreMode(): void {
     escapeKeyHandler = null;
   }
 
-  // 6. Clear git status idle timeout
+  // 6. Clear git status timers
   if (gitStatusIdleTimeout) {
     clearTimeout(gitStatusIdleTimeout);
     gitStatusIdleTimeout = null;
+  }
+  if (gitStatusPeriodicInterval) {
+    clearInterval(gitStatusPeriodicInterval);
+    gitStatusPeriodicInterval = null;
   }
 
   // 7. Hide and cleanup git dropdown
