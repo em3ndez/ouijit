@@ -30,21 +30,8 @@ export async function spawnPty(
     const ptyId = generatePtyId();
     const shell = getDefaultShell();
 
-    // If no command provided, spawn interactive shell; otherwise run the command
-    let shellArgs: string[];
-    let finalCommand = options.command || '';
-
-    if (options.command) {
-      // Check if this is an imported project and use mise for runtime/dependency management
-      const isImported = await isImportedProject(options.cwd);
-      finalCommand = await getCommandWithMise(options.cwd, options.command, isImported);
-      shellArgs = process.platform === 'win32' ? ['/c', finalCommand] : ['-c', finalCommand];
-    } else {
-      // Interactive shell mode
-      shellArgs = [];
-    }
-
-    const ptyProcess = pty.spawn(shell, shellArgs, {
+    // Always spawn an interactive shell so the session persists after commands finish
+    const ptyProcess = pty.spawn(shell, [], {
       name: 'xterm-256color',
       cols: options.cols || 80,
       rows: options.rows || 24,
@@ -54,6 +41,8 @@ export async function spawnPty(
         TERM: 'xterm-256color',
       } as Record<string, string>,
     });
+
+    let finalCommand = options.command || '';
 
     activePtys.set(ptyId, {
       process: ptyProcess,
@@ -73,6 +62,25 @@ export async function spawnPty(
       }
       activePtys.delete(ptyId);
     });
+
+    // If a command was provided, write it to the shell after a brief delay
+    // to ensure the shell is ready
+    if (options.command) {
+      const isImported = await isImportedProject(options.cwd);
+      finalCommand = await getCommandWithMise(options.cwd, options.command, isImported);
+      // Update the stored command
+      const managed = activePtys.get(ptyId);
+      if (managed) {
+        managed.command = finalCommand;
+      }
+      // Small delay to let shell initialize, then send the command
+      setTimeout(() => {
+        const m = activePtys.get(ptyId);
+        if (m) {
+          m.process.write(finalCommand + '\r');
+        }
+      }, 100);
+    }
 
     return { success: true, ptyId };
   } catch (error) {
