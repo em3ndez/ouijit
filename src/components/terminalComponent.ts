@@ -497,6 +497,12 @@ async function showGitDropdown(projectPath: string): Promise<void> {
   const gitStatusEl = document.querySelector('.theatre-git-status');
   if (!gitStatusEl) return;
 
+  // Remove any lingering dropdown elements (in case previous hide animation hasn't finished)
+  const existingDropdown = gitStatusEl.querySelector('.theatre-git-dropdown');
+  if (existingDropdown) {
+    existingDropdown.remove();
+  }
+
   // Fetch dropdown info
   const info = await window.api.getGitDropdownInfo(projectPath);
   if (!info) return;
@@ -525,7 +531,7 @@ async function showGitDropdown(projectPath: string): Promise<void> {
     uncommittedEl.addEventListener('click', (e) => {
       e.stopPropagation();
       hideGitDropdown();
-      showDiffPanel();
+      toggleDiffPanel();
     });
   }
 
@@ -906,27 +912,12 @@ function updateGitStatusElement(gitStatus: GitStatus | null): void {
 async function refreshGitStatus(): Promise<void> {
   if (!theatreModeProjectPath) return;
 
-  // Skip refreshing the status element if dropdown is open to avoid closing it
-  // The dropdown content will be refreshed instead
-  if (gitDropdownVisible) {
-    const gitStatusEl = document.querySelector('.theatre-git-status');
-    const dropdown = gitStatusEl?.querySelector('.theatre-git-dropdown');
-    if (dropdown) {
-      const info = await window.api.getGitDropdownInfo(theatreModeProjectPath);
-      if (info) {
-        // Build new dropdown content and replace inner HTML
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = buildGitDropdownHtml(info);
-        const newDropdown = tempDiv.firstElementChild;
-        if (newDropdown) {
-          dropdown.innerHTML = newDropdown.innerHTML;
-        }
-      }
-    }
-  } else {
-    const gitStatus = await window.api.getGitStatus(theatreModeProjectPath);
-    updateGitStatusElement(gitStatus);
-  }
+  // Skip refresh while dropdown is open - avoids destroying event handlers
+  // User gets fresh data when they reopen
+  if (gitDropdownVisible) return;
+
+  const gitStatus = await window.api.getGitStatus(theatreModeProjectPath);
+  updateGitStatusElement(gitStatus);
 }
 
 /**
@@ -1292,6 +1283,17 @@ function hideDiffPanel(): void {
   diffPanelVisible = false;
   diffPanelSelectedFile = null;
   diffPanelFiles = [];
+}
+
+/**
+ * Toggle the diff panel visibility
+ */
+async function toggleDiffPanel(): Promise<void> {
+  if (diffPanelVisible) {
+    hideDiffPanel();
+  } else {
+    await showDiffPanel();
+  }
 }
 
 /**

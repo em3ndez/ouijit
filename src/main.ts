@@ -43,8 +43,10 @@ const createWindow = (): BrowserWindow => {
     );
   }
 
-  // Open the DevTools.
-  window.webContents.openDevTools();
+  // Open the DevTools in development mode only
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    window.webContents.openDevTools();
+  }
 
   // Notify renderer of fullscreen state changes
   window.on('enter-full-screen', () => {
