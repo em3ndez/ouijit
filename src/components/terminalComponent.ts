@@ -1332,9 +1332,9 @@ function updateCardStack(): void {
   if (!stack) return;
 
   // Calculate number of back cards and adjust stack position
-  // Each back card needs 30px of space for its visible tab
+  // Each back card needs 24px of space for its visible tab
   const backCardCount = Math.min(theatreTerminals.length - 1, 4);
-  const tabSpace = backCardCount * 30;
+  const tabSpace = backCardCount * 24;
   stack.style.top = `${82 + tabSpace}px`;
 
   theatreTerminals.forEach((term, index) => {
