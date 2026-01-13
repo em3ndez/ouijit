@@ -39,6 +39,41 @@ let theatreTerminals: TheatreTerminal[] = [];
 let activeTheatreIndex: number = 0;
 let theatreProjectData: Project | null = null;
 
+// Per-project session storage for preserving theatre mode across project switches
+interface StoredTheatreSession {
+  terminals: TheatreTerminal[];
+  activeIndex: number;
+  projectData: Project;
+  stackElement: HTMLElement;
+  // Diff panel state
+  diffPanelWasOpen: boolean;
+  diffSelectedFile: string | null;
+  diffFiles: ChangedFile[];
+}
+const projectSessions = new Map<string, StoredTheatreSession>();
+
+// Hidden container ID for storing detached theatre stacks
+const HIDDEN_SESSIONS_CONTAINER_ID = 'hidden-theatre-sessions';
+
+/**
+ * Ensures the hidden container for storing detached theatre sessions exists
+ */
+function ensureHiddenSessionsContainer(): HTMLElement {
+  let container = document.getElementById(HIDDEN_SESSIONS_CONTAINER_ID);
+  if (!container) {
+    container = document.createElement('div');
+    container.id = HIDDEN_SESSIONS_CONTAINER_ID;
+    container.style.display = 'none';
+    container.style.position = 'absolute';
+    container.style.left = '-9999px';
+    container.style.width = '0';
+    container.style.height = '0';
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+  }
+  return container;
+}
+
 // Theatre mode state
 let theatreModeProjectPath: string | null = null;
 let originalHeaderContent: string | null = null;
@@ -1557,6 +1592,7 @@ function closeTheatreTerminal(index: number): void {
 
 /**
  * Enter theatre mode for the specified project
+ * If a preserved session exists, it will be restored instead of creating a new one
  */
 export async function enterTheatreMode(
   projectPath: string,
@@ -1565,11 +1601,12 @@ export async function enterTheatreMode(
 ): Promise<void> {
   if (theatreModeProjectPath) return; // Already in theatre mode
 
+  // Check for preserved session
+  const existingSession = projectSessions.get(projectPath);
+
   // Store project data for later use
   theatreModeProjectPath = projectPath;
-  theatreProjectData = projectData;
-  theatreTerminals = [];
-  activeTheatreIndex = 0;
+  theatreProjectData = existingSession?.projectData || projectData;
 
   // Fetch git status
   const gitStatus = projectData.hasGit ? await window.api.getGitStatus(projectPath) : null;
@@ -1581,7 +1618,7 @@ export async function enterTheatreMode(
   const headerContent = document.querySelector('.header-content');
   if (headerContent) {
     originalHeaderContent = headerContent.innerHTML;
-    headerContent.innerHTML = buildTheatreHeader(projectData, gitStatus);
+    headerContent.innerHTML = buildTheatreHeader(theatreProjectData, gitStatus);
     createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
 
     // Wire up exit button
@@ -1609,22 +1646,119 @@ export async function enterTheatreMode(
     }
   }
 
-  // 3. Create card stack container
+  // 3. Handle stack - restore existing or create new
   const mainContent = document.querySelector('.main-content');
   if (mainContent) {
-    const stack = document.createElement('div');
-    stack.className = 'theatre-stack';
-    mainContent.appendChild(stack);
+    if (existingSession) {
+      // Restore existing session
+      theatreTerminals = existingSession.terminals;
+      activeTheatreIndex = existingSession.activeIndex;
+
+      // Move stack from hidden container back to main content
+      mainContent.appendChild(existingSession.stackElement);
+
+      // Reconnect resize observers and refit terminals
+      for (const term of theatreTerminals) {
+        const xtermContainer = term.container.querySelector('.terminal-xterm-container') as HTMLElement;
+        if (xtermContainer) {
+          term.resizeObserver = new ResizeObserver(() => {
+            term.fitAddon.fit();
+            window.api.pty.resize(term.ptyId, term.terminal.cols, term.terminal.rows);
+          });
+          term.resizeObserver.observe(xtermContainer);
+        }
+
+        // Refit after DOM reattachment
+        requestAnimationFrame(() => {
+          term.fitAddon.fit();
+          window.api.pty.resize(term.ptyId, term.terminal.cols, term.terminal.rows);
+        });
+      }
+
+      // Focus the active terminal
+      if (theatreTerminals.length > 0) {
+        requestAnimationFrame(() => {
+          theatreTerminals[activeTheatreIndex].terminal.focus();
+        });
+      }
+
+      // Remove from preserved sessions (now active)
+      const savedDiffState = {
+        wasOpen: existingSession.diffPanelWasOpen,
+        selectedFile: existingSession.diffSelectedFile,
+        files: existingSession.diffFiles,
+      };
+      projectSessions.delete(projectPath);
+
+      // Update card stack positions
+      updateCardStack();
+
+      // Restore diff panel if it was open
+      if (savedDiffState.wasOpen && savedDiffState.files.length > 0) {
+        // Restore diff panel state and show it
+        diffPanelFiles = savedDiffState.files;
+        diffPanelVisible = true;
+
+        // Create and insert panel
+        const panelHtml = buildDiffPanelHtml(savedDiffState.files);
+        document.body.insertAdjacentHTML('beforeend', panelHtml);
+
+        const panel = document.querySelector('.diff-panel');
+        if (panel) {
+          createIcons({ icons: theatreIcons });
+
+          // Wire up file selector dropdown toggle
+          const fileSelector = panel.querySelector('.diff-file-selector');
+          if (fileSelector) {
+            fileSelector.addEventListener('click', (e) => {
+              e.stopPropagation();
+              toggleDiffFileDropdown();
+            });
+          }
+
+          // Wire up close button
+          const closeBtn = panel.querySelector('.diff-panel-close');
+          if (closeBtn) {
+            closeBtn.addEventListener('click', () => hideDiffPanel());
+          }
+
+          // Add class to theatre stack to shrink it
+          const stackEl = document.querySelector('.theatre-stack');
+          if (stackEl) {
+            stackEl.classList.add('diff-panel-open');
+          }
+
+          // Animate panel in
+          requestAnimationFrame(() => {
+            panel.classList.add('diff-panel--visible');
+          });
+
+          // Select the previously selected file (or first file)
+          const fileToSelect = savedDiffState.selectedFile || savedDiffState.files[0]?.path;
+          if (fileToSelect) {
+            selectDiffFile(fileToSelect);
+          }
+        }
+      }
+    } else {
+      // Create new session
+      theatreTerminals = [];
+      activeTheatreIndex = 0;
+
+      const stack = document.createElement('div');
+      stack.className = 'theatre-stack';
+      mainContent.appendChild(stack);
+
+      // Create first terminal with the provided command
+      await addTheatreTerminal(runConfig);
+    }
   }
 
-  // 4. Create first terminal with the provided command
-  await addTheatreTerminal(runConfig);
-
-  // 5. Escape key handler
+  // 4. Escape key handler
   escapeKeyHandler = (e) => { if (e.key === 'Escape') exitTheatreMode(); };
   document.addEventListener('keydown', escapeKeyHandler);
 
-  // 6. Start periodic git status refresh (for long-running commands)
+  // 5. Start periodic git status refresh (for long-running commands)
   if (projectData.hasGit) {
     gitStatusPeriodicInterval = setInterval(() => {
       refreshGitStatus();
@@ -1633,33 +1767,53 @@ export async function enterTheatreMode(
 }
 
 /**
- * Exit theatre mode
+ * Exit theatre mode - preserves sessions for later restoration
  */
 export function exitTheatreMode(): void {
   if (!theatreModeProjectPath) return;
 
-  // 1. Kill all theatre terminals
-  for (const term of theatreTerminals) {
-    window.api.pty.kill(term.ptyId);
-    if (term.cleanupData) term.cleanupData();
-    if (term.cleanupExit) term.cleanupExit();
-    if (term.resizeObserver) term.resizeObserver.disconnect();
-    term.terminal.dispose();
-    term.container.remove();
+  const projectPath = theatreModeProjectPath;
+
+  // 1. Handle session preservation or cleanup
+  const stack = document.querySelector('.theatre-stack') as HTMLElement;
+  if (stack) {
+    if (theatreTerminals.length > 0 && theatreProjectData) {
+      // Store session for later restoration
+      // Disconnect resize observers while hidden (will reconnect on restore)
+      for (const term of theatreTerminals) {
+        if (term.resizeObserver) {
+          term.resizeObserver.disconnect();
+        }
+      }
+
+      // Move stack to hidden container
+      const hiddenContainer = ensureHiddenSessionsContainer();
+      hiddenContainer.appendChild(stack);
+
+      // Store session data including diff panel state
+      projectSessions.set(projectPath, {
+        terminals: [...theatreTerminals],
+        activeIndex: activeTheatreIndex,
+        projectData: theatreProjectData,
+        stackElement: stack,
+        diffPanelWasOpen: diffPanelVisible,
+        diffSelectedFile: diffPanelSelectedFile,
+        diffFiles: [...diffPanelFiles],
+      });
+    } else {
+      // No terminals to preserve - just remove the stack
+      stack.remove();
+    }
   }
+
+  // Clear current session state
   theatreTerminals = [];
   activeTheatreIndex = 0;
 
-  // 2. Remove card stack container
-  const stack = document.querySelector('.theatre-stack');
-  if (stack) {
-    stack.remove();
-  }
-
-  // 3. Remove class from body
+  // 2. Remove class from body
   document.body.classList.remove('theatre-mode');
 
-  // 4. Restore header content
+  // 3. Restore header content
   const headerContent = document.querySelector('.header-content');
   if (headerContent && originalHeaderContent) {
     headerContent.innerHTML = originalHeaderContent;
@@ -1693,13 +1847,13 @@ export function exitTheatreMode(): void {
     }
   }
 
-  // 5. Remove escape handler
+  // 4. Remove escape handler
   if (escapeKeyHandler) {
     document.removeEventListener('keydown', escapeKeyHandler);
     escapeKeyHandler = null;
   }
 
-  // 6. Clear git status timers
+  // 5. Clear git status timers
   if (gitStatusIdleTimeout) {
     clearTimeout(gitStatusIdleTimeout);
     gitStatusIdleTimeout = null;
@@ -1709,18 +1863,57 @@ export function exitTheatreMode(): void {
     gitStatusPeriodicInterval = null;
   }
 
-  // 7. Hide and cleanup git dropdown
+  // 6. Hide and cleanup git dropdown
   hideGitDropdown();
 
-  // 8. Hide launch dropdown
+  // 7. Hide launch dropdown
   hideLaunchDropdown();
 
-  // 9. Hide diff panel
+  // 8. Hide diff panel
   hideDiffPanel();
 
   originalHeaderContent = null;
   theatreModeProjectPath = null;
   theatreProjectData = null;
+}
+
+/**
+ * Permanently destroy all theatre sessions for a project
+ * Call this when you want to truly close sessions, not just switch away
+ */
+export function destroyTheatreSessions(projectPath: string): void {
+  const session = projectSessions.get(projectPath);
+  if (!session) return;
+
+  // Kill all PTYs and clean up
+  for (const term of session.terminals) {
+    window.api.pty.kill(term.ptyId);
+    if (term.cleanupData) term.cleanupData();
+    if (term.cleanupExit) term.cleanupExit();
+    if (term.resizeObserver) term.resizeObserver.disconnect();
+    term.terminal.dispose();
+    term.container.remove();
+  }
+
+  // Remove stack element
+  session.stackElement.remove();
+
+  // Remove from storage
+  projectSessions.delete(projectPath);
+}
+
+/**
+ * Get list of projects with preserved theatre sessions
+ */
+export function getPreservedSessionPaths(): string[] {
+  return Array.from(projectSessions.keys());
+}
+
+/**
+ * Check if a project has a preserved theatre session
+ */
+export function hasPreservedSession(projectPath: string): boolean {
+  return projectSessions.has(projectPath);
 }
 
 /**
