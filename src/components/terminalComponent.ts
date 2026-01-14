@@ -1,12 +1,12 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge } from 'lucide';
-import type { PtyId, PtySpawnOptions, Project, GitStatus, CompactGitStatus, GitDropdownInfo, ChangedFile, FileDiff, RunConfig, CustomCommand } from '../types';
+import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge, CheckSquare, Square, ListTodo, Trash2 } from 'lucide';
+import type { PtyId, PtySpawnOptions, Project, GitStatus, CompactGitStatus, GitDropdownInfo, ChangedFile, FileDiff, RunConfig, CustomCommand, Task } from '../types';
 import { stringToColor, getInitials } from '../utils/projectIcon';
 import { showToast } from './importDialog';
 import { showCustomCommandDialog } from './customCommandDialog';
 
-const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge };
+const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge, CheckSquare, Square, ListTodo, Trash2 };
 
 interface TerminalInstance {
   terminal: Terminal;
@@ -57,6 +57,8 @@ interface StoredTheatreSession {
   diffPanelWasOpen: boolean;
   diffSelectedFile: string | null;
   diffFiles: ChangedFile[];
+  // Tasks panel state
+  tasksPanelWasOpen: boolean;
 }
 const projectSessions = new Map<string, StoredTheatreSession>();
 
@@ -108,6 +110,10 @@ let diffFileDropdownCleanup: (() => void) | null = null;
 // Launch dropdown state
 let launchDropdownVisible = false;
 let launchDropdownCleanup: (() => void) | null = null;
+
+// Tasks panel state
+let tasksPanelVisible = false;
+let tasksList: Task[] = [];
 
 /**
  * Generates a unique ID for a detected run config (for default selection)
@@ -964,6 +970,9 @@ function buildTheatreHeader(projectData: Project, compactStatus: CompactGitStatu
       </div>
       ${gitStatusHtml}
       ${mergeButtonHtml}
+      <button class="theatre-tasks-btn" title="Tasks (T)">
+        <i data-lucide="list-todo"></i>
+      </button>
       <div class="theatre-launch-wrapper">
         <button class="theatre-launch-chevron-btn" title="More commands">
           <i data-lucide="chevron-down"></i>
@@ -1216,6 +1225,214 @@ function toggleLaunchDropdown(): void {
     hideLaunchDropdown();
   } else {
     showLaunchDropdown();
+  }
+}
+
+/**
+ * Build tasks panel HTML
+ */
+function buildTasksPanelHtml(): string {
+  return `
+    <div class="tasks-panel">
+      <div class="tasks-panel-header">
+        <span class="tasks-panel-title">Tasks</span>
+        <button class="tasks-panel-close" title="Close tasks panel">&times;</button>
+      </div>
+      <div class="tasks-panel-input-wrapper">
+        <input type="text" class="tasks-panel-input" placeholder="Add task..." spellcheck="false" autocomplete="off" />
+      </div>
+      <div class="tasks-panel-list"></div>
+    </div>
+  `;
+}
+
+/**
+ * Build a single task item HTML
+ */
+function buildTaskItemHtml(task: Task): string {
+  const checkIcon = task.completed ? 'check-square' : 'square';
+  return `
+    <div class="tasks-panel-item${task.completed ? ' tasks-panel-item--completed' : ''}" data-task-id="${task.id}">
+      <button class="tasks-panel-item-checkbox" title="${task.completed ? 'Mark incomplete' : 'Mark complete'}">
+        <i data-lucide="${checkIcon}"></i>
+      </button>
+      <span class="tasks-panel-item-title">${escapeHtml(task.title)}</span>
+      <button class="tasks-panel-item-delete" title="Delete task">
+        <i data-lucide="trash-2"></i>
+      </button>
+    </div>
+  `;
+}
+
+/**
+ * Render the tasks list in the panel
+ */
+function renderTasksList(): void {
+  const listEl = document.querySelector('.tasks-panel-list');
+  if (!listEl) return;
+
+  if (tasksList.length === 0) {
+    listEl.innerHTML = '<div class="tasks-panel-empty">No tasks yet</div>';
+    return;
+  }
+
+  // Sort: incomplete tasks first, then completed
+  const sortedTasks = [...tasksList].sort((a, b) => {
+    if (a.completed !== b.completed) return a.completed ? 1 : -1;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+
+  listEl.innerHTML = sortedTasks.map(buildTaskItemHtml).join('');
+  createIcons({ icons: theatreIcons, nodes: [listEl as HTMLElement] });
+
+  // Wire up checkbox clicks
+  listEl.querySelectorAll('.tasks-panel-item-checkbox').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const item = (btn as HTMLElement).closest('.tasks-panel-item') as HTMLElement;
+      const taskId = item?.dataset.taskId;
+      if (taskId && theatreModeProjectPath) {
+        await window.api.toggleTask(theatreModeProjectPath, taskId);
+        await refreshTasksList();
+      }
+    });
+  });
+
+  // Wire up delete clicks
+  listEl.querySelectorAll('.tasks-panel-item-delete').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const item = (btn as HTMLElement).closest('.tasks-panel-item') as HTMLElement;
+      const taskId = item?.dataset.taskId;
+      if (taskId && theatreModeProjectPath) {
+        await window.api.deleteTask(theatreModeProjectPath, taskId);
+        await refreshTasksList();
+      }
+    });
+  });
+}
+
+/**
+ * Refresh the tasks list from the API
+ */
+async function refreshTasksList(): Promise<void> {
+  if (!theatreModeProjectPath) return;
+  tasksList = await window.api.getTasks(theatreModeProjectPath);
+  renderTasksList();
+}
+
+/**
+ * Show the tasks panel
+ */
+async function showTasksPanel(): Promise<void> {
+  if (tasksPanelVisible) return;
+
+  tasksPanelVisible = true;
+
+  // Create and insert panel
+  const panelHtml = buildTasksPanelHtml();
+  document.body.insertAdjacentHTML('beforeend', panelHtml);
+
+  const panel = document.querySelector('.tasks-panel');
+  if (!panel) return;
+
+  // Add class to theatre stack to make room
+  const stack = document.querySelector('.theatre-stack');
+  if (stack) {
+    stack.classList.add('tasks-panel-open');
+  }
+
+  // Mark tasks button as active
+  const tasksBtn = document.querySelector('.theatre-tasks-btn');
+  if (tasksBtn) {
+    tasksBtn.classList.add('active');
+  }
+
+  // Wire up close button
+  const closeBtn = panel.querySelector('.tasks-panel-close');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => hideTasksPanel());
+  }
+
+  // Wire up input for adding tasks
+  const input = panel.querySelector('.tasks-panel-input') as HTMLInputElement;
+  if (input) {
+    input.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const title = input.value.trim();
+        if (title && theatreModeProjectPath) {
+          await window.api.addTask(theatreModeProjectPath, title);
+          input.value = '';
+          await refreshTasksList();
+        }
+      }
+    });
+  }
+
+  // Load and render tasks
+  await refreshTasksList();
+
+  // Animate panel in
+  requestAnimationFrame(() => {
+    panel.classList.add('tasks-panel--visible');
+  });
+
+  // Refit active theatre terminal after animation
+  setTimeout(() => {
+    if (theatreTerminals.length > 0 && activeTheatreIndex < theatreTerminals.length) {
+      const activeTerminal = theatreTerminals[activeTheatreIndex];
+      activeTerminal.fitAddon.fit();
+      window.api.pty.resize(activeTerminal.ptyId, activeTerminal.terminal.cols, activeTerminal.terminal.rows);
+    }
+  }, 250);
+}
+
+/**
+ * Hide the tasks panel
+ */
+function hideTasksPanel(): void {
+  if (!tasksPanelVisible) return;
+
+  const panel = document.querySelector('.tasks-panel');
+  if (panel) {
+    panel.classList.remove('tasks-panel--visible');
+    setTimeout(() => panel.remove(), 250);
+  }
+
+  // Remove class from theatre stack
+  const stack = document.querySelector('.theatre-stack');
+  if (stack) {
+    stack.classList.remove('tasks-panel-open');
+  }
+
+  // Remove active state from tasks button
+  const tasksBtn = document.querySelector('.theatre-tasks-btn');
+  if (tasksBtn) {
+    tasksBtn.classList.remove('active');
+  }
+
+  // Refit active theatre terminal after animation
+  setTimeout(() => {
+    if (theatreTerminals.length > 0 && activeTheatreIndex < theatreTerminals.length) {
+      const activeTerminal = theatreTerminals[activeTheatreIndex];
+      activeTerminal.fitAddon.fit();
+      window.api.pty.resize(activeTerminal.ptyId, activeTerminal.terminal.cols, activeTerminal.terminal.rows);
+    }
+  }, 250);
+
+  tasksPanelVisible = false;
+  tasksList = [];
+}
+
+/**
+ * Toggle the tasks panel visibility
+ */
+async function toggleTasksPanel(): Promise<void> {
+  if (tasksPanelVisible) {
+    hideTasksPanel();
+  } else {
+    await showTasksPanel();
   }
 }
 
@@ -2074,6 +2291,15 @@ export async function enterTheatreMode(
       });
     }
 
+    // Wire up tasks button
+    const tasksBtn = headerContent.querySelector('.theatre-tasks-btn');
+    if (tasksBtn) {
+      tasksBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await toggleTasksPanel();
+      });
+    }
+
     // Wire up chevron button (opens dropdown)
     const chevronBtn = headerContent.querySelector('.theatre-launch-chevron-btn');
     if (chevronBtn) {
@@ -2130,6 +2356,11 @@ export async function enterTheatreMode(
 
       // Update card stack positions
       updateCardStack();
+
+      // Restore tasks panel if it was open
+      if (existingSession.tasksPanelWasOpen) {
+        await showTasksPanel();
+      }
 
       // Restore diff panel if it was open
       if (savedDiffState.wasOpen && savedDiffState.files.length > 0) {
@@ -2192,8 +2423,15 @@ export async function enterTheatreMode(
     }
   }
 
-  // 4. Escape key handler
-  escapeKeyHandler = (e) => { if (e.key === 'Escape') exitTheatreMode(); };
+  // 4. Keyboard handler (Escape to exit, T to toggle tasks)
+  escapeKeyHandler = (e) => {
+    if (e.key === 'Escape') exitTheatreMode();
+    if (e.key === 't' || e.key === 'T') {
+      // Don't toggle if user is typing in an input
+      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+      toggleTasksPanel();
+    }
+  };
   document.addEventListener('keydown', escapeKeyHandler);
 
   // 5. Start periodic git status refresh (for long-running commands)
@@ -2228,7 +2466,7 @@ export function exitTheatreMode(): void {
       const hiddenContainer = ensureHiddenSessionsContainer();
       hiddenContainer.appendChild(stack);
 
-      // Store session data including diff panel state
+      // Store session data including diff panel and tasks panel state
       projectSessions.set(projectPath, {
         terminals: [...theatreTerminals],
         activeIndex: activeTheatreIndex,
@@ -2237,6 +2475,7 @@ export function exitTheatreMode(): void {
         diffPanelWasOpen: diffPanelVisible,
         diffSelectedFile: diffPanelSelectedFile,
         diffFiles: [...diffPanelFiles],
+        tasksPanelWasOpen: tasksPanelVisible,
       });
     } else {
       // No terminals to preserve - just remove the stack
@@ -2309,6 +2548,9 @@ export function exitTheatreMode(): void {
 
   // 8. Hide diff panel
   hideDiffPanel();
+
+  // 9. Hide tasks panel
+  hideTasksPanel();
 
   originalHeaderContent = null;
   theatreModeProjectPath = null;

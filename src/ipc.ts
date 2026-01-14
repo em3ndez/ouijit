@@ -18,8 +18,12 @@ import {
   saveCustomCommand,
   deleteCustomCommand,
   setDefaultCommand,
+  getTasks,
+  addTask,
+  toggleTask,
+  deleteTask,
 } from './projectSettings';
-import type { RunConfig, LaunchResult, PtySpawnOptions, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult, CustomCommand, ProjectSettings } from './types';
+import type { RunConfig, LaunchResult, PtySpawnOptions, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult, CustomCommand, ProjectSettings, Task } from './types';
 import type { GitStatus, CompactGitStatus, GitDropdownInfo, ChangedFile, FileDiff } from './git';
 
 /**
@@ -311,6 +315,26 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Set the default command for a project
   ipcMain.handle('set-default-command', async (_event, projectPath: string, commandId: string | null) => {
     return setDefaultCommand(projectPath, commandId);
+  });
+
+  // Get tasks for a project
+  ipcMain.handle('get-tasks', async (_event, projectPath: string): Promise<Task[]> => {
+    return getTasks(projectPath);
+  });
+
+  // Add a new task to a project
+  ipcMain.handle('add-task', async (_event, projectPath: string, title: string) => {
+    return addTask(projectPath, title);
+  });
+
+  // Toggle a task's completed status
+  ipcMain.handle('toggle-task', async (_event, projectPath: string, taskId: string) => {
+    return toggleTask(projectPath, taskId);
+  });
+
+  // Delete a task
+  ipcMain.handle('delete-task', async (_event, projectPath: string, taskId: string) => {
+    return deleteTask(projectPath, taskId);
   });
 }
 
