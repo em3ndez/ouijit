@@ -2,7 +2,7 @@
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { Project, RunConfig, LaunchResult, PtySpawnOptions, PtySpawnResult, PtyId, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult, GitStatus, GitDropdownInfo, GitCheckoutResult, ChangedFile, FileDiff, ProjectSettings, CustomCommand } from './types';
+import type { Project, RunConfig, LaunchResult, PtySpawnOptions, PtySpawnResult, PtyId, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult, GitStatus, CompactGitStatus, GitDropdownInfo, GitCheckoutResult, ChangedFile, FileDiff, ProjectSettings, CustomCommand } from './types';
 
 // Expose protected methods that allow the renderer process to use
 // ipcRenderer without exposing the entire object
@@ -99,6 +99,12 @@ contextBridge.exposeInMainWorld('api', {
    */
   getGitStatus: (projectPath: string): Promise<GitStatus | null> =>
     ipcRenderer.invoke('get-git-status', projectPath),
+
+  /**
+   * Get compact git status for at-a-glance display
+   */
+  getCompactGitStatus: (projectPath: string): Promise<CompactGitStatus | null> =>
+    ipcRenderer.invoke('get-compact-git-status', projectPath),
 
   /**
    * Get extended git dropdown info for a project

@@ -12,7 +12,7 @@ import {
   cleanupAllPtys,
 } from './ptyManager';
 import { exportProject, previewOuijitFile, importOuijitPackage } from './ouijit';
-import { getGitStatus, getGitDropdownInfo, checkoutBranch, getChangedFiles, getFileDiff } from './git';
+import { getGitStatus, getCompactGitStatus, getGitDropdownInfo, checkoutBranch, getChangedFiles, getFileDiff } from './git';
 import {
   getProjectSettings,
   saveCustomCommand,
@@ -20,7 +20,7 @@ import {
   setDefaultCommand,
 } from './projectSettings';
 import type { RunConfig, LaunchResult, PtySpawnOptions, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult, CustomCommand, ProjectSettings } from './types';
-import type { GitStatus, GitDropdownInfo, ChangedFile, FileDiff } from './git';
+import type { GitStatus, CompactGitStatus, GitDropdownInfo, ChangedFile, FileDiff } from './git';
 
 /**
  * Escapes a string for use in AppleScript
@@ -205,6 +205,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Get git status for a project
   ipcMain.handle('get-git-status', async (_event, projectPath: string): Promise<GitStatus | null> => {
     return getGitStatus(projectPath);
+  });
+
+  // Get compact git status for at-a-glance display
+  ipcMain.handle('get-compact-git-status', async (_event, projectPath: string): Promise<CompactGitStatus | null> => {
+    return getCompactGitStatus(projectPath);
   });
 
   // Get extended git dropdown info for a project

@@ -1608,72 +1608,107 @@ body.is-fullscreen .theatre-header-content {
   display: flex;
   align-items: center;
   margin-left: auto;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: 0;
   background: var(--color-background);
   border-radius: var(--radius-full);
-  margin-left: auto;
   margin-right: 12px;
   -webkit-app-region: no-drag;
+}
+
+/* Branch zone - clickable to open branch dropdown */
+.theatre-git-branch-zone {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 10px;
+  border-radius: var(--radius-full) 0 0 var(--radius-full);
+  transition: background-color var(--transition-fast);
+}
+
+.theatre-git-branch-zone:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.theatre-git-branch-zone:active {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .theatre-git-icon {
   width: 14px;
   height: 14px;
   color: var(--color-text-tertiary);
+  flex-shrink: 0;
 }
 
 .theatre-git-branch {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-secondary);
-  max-width: 150px;
+  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.theatre-git-indicator {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.theatre-git-chevron {
+  width: 12px;
+  height: 12px;
+  color: var(--color-text-tertiary);
   flex-shrink: 0;
 }
 
-.theatre-git-indicator--clean {
-  background-color: #34C759;
+/* Stats zone - clickable to open diff panel when dirty */
+.theatre-git-stats-zone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-left: 1px solid var(--color-border);
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
 }
 
-.theatre-git-indicator--dirty {
-  background-color: #FF9F0A;
-}
-
-@media (prefers-color-scheme: dark) {
-  .theatre-git-indicator--clean {
-    background-color: #30D158;
-  }
-
-  .theatre-git-indicator--dirty {
-    background-color: #FFD60A;
-  }
-}
-
-/* Clickable git status */
-.theatre-git-status--clickable {
+.theatre-git-stats-zone--clickable {
   transition: background-color var(--transition-fast);
 }
 
-.theatre-git-status--clickable:hover {
-  background: rgba(255, 255, 255, 0.1);
+.theatre-git-stats-zone--clickable:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
-/* Git dropdown - mirrors .launch-dropdown pattern */
+.theatre-git-stats-zone--clickable:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.theatre-git-ahead {
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  color: #34C759;
+}
+
+.theatre-git-dirty {
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  color: #FF9F0A;
+}
+
+@media (prefers-color-scheme: dark) {
+  .theatre-git-ahead {
+    color: #30D158;
+  }
+
+  .theatre-git-dirty {
+    color: #FFD60A;
+  }
+}
+
+/* Git dropdown - simplified branch list */
 .theatre-git-dropdown {
   position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: var(--spacing-xs);
-  min-width: 260px;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 180px;
+  max-width: 280px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -1681,7 +1716,8 @@ body.is-fullscreen .theatre-header-content {
   z-index: 1000;
   overflow: hidden;
   -webkit-app-region: no-drag;
-  /* Animation - same as .launch-dropdown */
+  padding: 4px 0;
+  /* Animation */
   opacity: 0;
   visibility: hidden;
   transform: translateY(-8px);
@@ -1694,62 +1730,11 @@ body.is-fullscreen .theatre-header-content {
   transform: translateY(0);
 }
 
-.git-dropdown-current {
-  padding: 12px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.git-dropdown-branch-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-.git-dropdown-branch-name {
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-}
-
-.git-dropdown-ahead-behind {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  display: flex;
-  gap: 8px;
-}
-
-.git-dropdown-ahead-behind .ahead {
-  color: #34C759;
-}
-
-.git-dropdown-ahead-behind .behind {
-  color: #FF9F0A;
-}
-
-.git-dropdown-uncommitted {
-  font-size: var(--font-size-xs);
+.git-dropdown-empty {
+  padding: 12px 16px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-tertiary);
-}
-
-.git-dropdown-uncommitted .insertions {
-  color: #34C759;
-}
-
-.git-dropdown-uncommitted .deletions {
-  color: #FF3B30;
-}
-
-.git-dropdown-recent {
-  padding: 8px 0;
-}
-
-.git-dropdown-recent-header {
-  padding: 4px 12px 8px;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  text-align: center;
 }
 
 .git-dropdown-branch {
@@ -1757,6 +1742,7 @@ body.is-fullscreen .theatre-header-content {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
+  gap: 12px;
   transition: background-color var(--transition-fast);
 }
 
@@ -1768,48 +1754,24 @@ body.is-fullscreen .theatre-header-content {
   background: var(--color-border);
 }
 
-.git-dropdown-branch .git-dropdown-branch-name {
+.git-dropdown-branch-name {
   font-weight: var(--font-weight-normal);
   font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .git-dropdown-branch-stats {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
-}
-
-@media (prefers-color-scheme: dark) {
-  .git-dropdown-ahead-behind .ahead {
-    color: #30D158;
-  }
-
-  .git-dropdown-ahead-behind .behind {
-    color: #FFD60A;
-  }
-
-  .git-dropdown-uncommitted .insertions {
-    color: #30D158;
-  }
-
-  .git-dropdown-uncommitted .deletions {
-    color: #FF453A;
-  }
+  flex-shrink: 0;
 }
 
 /* ==========================================
    Diff Panel (Theatre Mode)
    ========================================== */
-
-.git-dropdown-uncommitted--clickable {
-  padding: 8px 12px;
-  margin: 4px -12px -12px -12px;
-  transition: background-color var(--transition-fast);
-}
-
-.git-dropdown-uncommitted--clickable:hover {
-  background: var(--color-background);
-}
 
 /* Diff Panel Container */
 .diff-panel {

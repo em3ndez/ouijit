@@ -7,7 +7,7 @@ export interface GitStatus {
 }
 
 // Re-export extended git types from git.ts
-export type { GitDropdownInfo, ExtendedGitStatus, RecentBranch, UncommittedChanges, ChangedFile, DiffLine, DiffHunk, FileDiff } from './git';
+export type { GitDropdownInfo, ExtendedGitStatus, RecentBranch, UncommittedChanges, ChangedFile, DiffLine, DiffHunk, FileDiff, CompactGitStatus } from './git';
 
 /**
  * Represents a run configuration for launching a project
@@ -144,6 +144,8 @@ export interface ElectronAPI {
   refreshProjects(): Promise<Project[]>;
   /** Get git status (branch and dirty state) for a project */
   getGitStatus(projectPath: string): Promise<GitStatus | null>;
+  /** Get compact git status for at-a-glance display */
+  getCompactGitStatus(projectPath: string): Promise<import('./git').CompactGitStatus | null>;
   /** Get extended git dropdown info for a project */
   getGitDropdownInfo(projectPath: string): Promise<import('./git').GitDropdownInfo | null>;
   /** Checkout a git branch */

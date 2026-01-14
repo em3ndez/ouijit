@@ -1,7 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X } from 'lucide';
-import type { PtyId, PtySpawnOptions, Project, GitStatus, GitDropdownInfo, ChangedFile, FileDiff, RunConfig, CustomCommand } from '../types';
+import type { PtyId, PtySpawnOptions, Project, GitStatus, CompactGitStatus, GitDropdownInfo, ChangedFile, FileDiff, RunConfig, CustomCommand } from '../types';
 import { stringToColor, getInitials } from '../utils/projectIcon';
 import { showToast } from './importDialog';
 import { showCustomCommandDialog } from './customCommandDialog';
@@ -425,82 +425,79 @@ export function destroyAllTerminals(): void {
 }
 
 /**
- * Build git status HTML (clickable pill)
+ * Build git status HTML (pill with two click zones)
  */
-function buildGitStatusHtml(gitStatus: GitStatus | null): string {
-  if (!gitStatus) return '';
+function buildGitStatusHtml(compactStatus: CompactGitStatus | null): string {
+  if (!compactStatus) return '';
 
-  const indicatorClass = gitStatus.isDirty ? 'theatre-git-indicator--dirty' : 'theatre-git-indicator--clean';
+  const { branch, commitsAheadOfMain, dirtyFileCount } = compactStatus;
+
+  // Build stats zone content (only shown if there's something to show)
+  const hasStats = commitsAheadOfMain > 0 || dirtyFileCount > 0;
+  let statsContent = '';
+  if (commitsAheadOfMain > 0) {
+    statsContent += `<span class="theatre-git-ahead">\u2191${commitsAheadOfMain}</span>`;
+  }
+  if (dirtyFileCount > 0) {
+    statsContent += `<span class="theatre-git-dirty">\u2022${dirtyFileCount}</span>`;
+  }
+
+  // Stats zone is clickable if dirty (opens diff panel)
+  const statsZoneClass = dirtyFileCount > 0 ? 'theatre-git-stats-zone theatre-git-stats-zone--clickable' : 'theatre-git-stats-zone';
 
   return `
-    <div class="theatre-git-status theatre-git-status--clickable" role="button" tabindex="0">
-      <i data-lucide="git-branch" class="theatre-git-icon"></i>
-      <span class="theatre-git-branch">${gitStatus.branch}</span>
-      <span class="theatre-git-indicator ${indicatorClass}"></span>
+    <div class="theatre-git-status">
+      <div class="theatre-git-branch-zone" role="button" tabindex="0" title="Switch branch">
+        <i data-lucide="git-branch" class="theatre-git-icon"></i>
+        <span class="theatre-git-branch">${branch}</span>
+        <i data-lucide="chevron-down" class="theatre-git-chevron"></i>
+      </div>
+      ${hasStats ? `<div class="${statsZoneClass}" role="button" tabindex="0" title="${dirtyFileCount > 0 ? 'View changes' : ''}">${statsContent}</div>` : ''}
     </div>
   `;
 }
 
 /**
- * Build git dropdown HTML
+ * Build git dropdown HTML (simplified - just branch list for switching)
  */
 function buildGitDropdownHtml(info: GitDropdownInfo): string {
-  const { current, recentBranches } = info;
+  const { current, recentBranches, mainBranch } = info;
 
-  // Build ahead/behind indicators
-  let aheadBehindHtml = '';
-  if (current.ahead > 0 || current.behind > 0) {
-    const aheadPart = current.ahead > 0 ? `<span class="ahead">\u2191${current.ahead}</span>` : '';
-    const behindPart = current.behind > 0 ? `<span class="behind">\u2193${current.behind}</span>` : '';
-    aheadBehindHtml = `<div class="git-dropdown-ahead-behind">${aheadPart}${behindPart}</div>`;
+  // Build branch list (main branch first if not current, then recent)
+  const branches: { name: string; isCurrent: boolean; stats: string }[] = [];
+
+  // Add main branch if not current
+  if (current.branch !== mainBranch) {
+    branches.push({ name: mainBranch, isCurrent: false, stats: '' });
   }
 
-  // Build uncommitted changes line or "up to date" status
-  let uncommittedHtml = '';
-  if (current.uncommitted) {
-    const { filesChanged, insertions, deletions } = current.uncommitted;
-    const parts: string[] = [];
-    parts.push(`${filesChanged} file${filesChanged === 1 ? '' : 's'}`);
-    if (insertions > 0) parts.push(`<span class="insertions">+${insertions}</span>`);
-    if (deletions > 0) parts.push(`<span class="deletions">-${deletions}</span>`);
-    uncommittedHtml = `<div class="git-dropdown-uncommitted git-dropdown-uncommitted--clickable" role="button" title="View changes">${parts.join(' \u00B7 ')}</div>`;
-  } else if (current.ahead === 0 && current.behind === 0) {
-    uncommittedHtml = `<div class="git-dropdown-uncommitted">Up to date</div>`;
+  // Add recent branches
+  for (const branch of recentBranches) {
+    branches.push({
+      name: branch.name,
+      isCurrent: false,
+      stats: branch.lastCommitAge,
+    });
   }
 
-  // Build recent branches list
-  let recentBranchesHtml = '';
-  if (recentBranches.length > 0) {
-    const branchItems = recentBranches.map(branch => {
-      const statsHtml = branch.commitsAhead > 0
-        ? `+${branch.commitsAhead} \u00B7 ${branch.lastCommitAge}`
-        : branch.lastCommitAge;
-      return `
-        <div class="git-dropdown-branch" data-branch="${branch.name}">
-          <span class="git-dropdown-branch-name">${branch.name}</span>
-          <span class="git-dropdown-branch-stats">${statsHtml}</span>
-        </div>
-      `;
-    }).join('');
-
-    recentBranchesHtml = `
-      <div class="git-dropdown-recent">
-        <div class="git-dropdown-recent-header">Recent Branches</div>
-        ${branchItems}
+  if (branches.length === 0) {
+    return `
+      <div class="theatre-git-dropdown">
+        <div class="git-dropdown-empty">No other branches</div>
       </div>
     `;
   }
 
+  const branchItems = branches.map(branch => `
+    <div class="git-dropdown-branch" data-branch="${branch.name}">
+      <span class="git-dropdown-branch-name">${branch.name}</span>
+      ${branch.stats ? `<span class="git-dropdown-branch-stats">${branch.stats}</span>` : ''}
+    </div>
+  `).join('');
+
   return `
     <div class="theatre-git-dropdown">
-      <div class="git-dropdown-current">
-        <div class="git-dropdown-branch-row">
-          <span class="git-dropdown-branch-name">${current.branch}</span>
-          ${aheadBehindHtml}
-        </div>
-        ${uncommittedHtml}
-      </div>
-      ${recentBranchesHtml}
+      ${branchItems}
     </div>
   `;
 }
@@ -531,11 +528,11 @@ async function switchToBranch(branchName: string): Promise<void> {
 async function showGitDropdown(projectPath: string): Promise<void> {
   if (gitDropdownVisible) return;
 
-  const gitStatusEl = document.querySelector('.theatre-git-status');
-  if (!gitStatusEl) return;
+  const branchZone = document.querySelector('.theatre-git-branch-zone');
+  if (!branchZone) return;
 
   // Remove any lingering dropdown elements (in case previous hide animation hasn't finished)
-  const existingDropdown = gitStatusEl.querySelector('.theatre-git-dropdown');
+  const existingDropdown = branchZone.querySelector('.theatre-git-dropdown');
   if (existingDropdown) {
     existingDropdown.remove();
   }
@@ -544,11 +541,11 @@ async function showGitDropdown(projectPath: string): Promise<void> {
   const info = await window.api.getGitDropdownInfo(projectPath);
   if (!info) return;
 
-  // Create and insert dropdown as a child of git status for proper positioning
+  // Create and insert dropdown as a child of branch zone for proper positioning
   const dropdownHtml = buildGitDropdownHtml(info);
-  gitStatusEl.insertAdjacentHTML('beforeend', dropdownHtml);
+  branchZone.insertAdjacentHTML('beforeend', dropdownHtml);
 
-  const dropdown = gitStatusEl.querySelector('.theatre-git-dropdown');
+  const dropdown = branchZone.querySelector('.theatre-git-dropdown');
   if (!dropdown) return;
 
   // Wire up click handlers for branch switching
@@ -562,16 +559,6 @@ async function showGitDropdown(projectPath: string): Promise<void> {
     });
   });
 
-  // Wire up click handler for uncommitted changes (diff viewer)
-  const uncommittedEl = dropdown.querySelector('.git-dropdown-uncommitted--clickable');
-  if (uncommittedEl) {
-    uncommittedEl.addEventListener('click', (e) => {
-      e.stopPropagation();
-      hideGitDropdown();
-      toggleDiffPanel();
-    });
-  }
-
   // Show with animation
   requestAnimationFrame(() => {
     dropdown.classList.add('visible');
@@ -582,7 +569,7 @@ async function showGitDropdown(projectPath: string): Promise<void> {
   // Set up click outside handler
   const handleClickOutside = (e: MouseEvent) => {
     const target = e.target as HTMLElement;
-    if (!target.closest('.theatre-git-status') && !target.closest('.theatre-git-dropdown')) {
+    if (!target.closest('.theatre-git-branch-zone') && !target.closest('.theatre-git-dropdown')) {
       hideGitDropdown();
     }
   };
@@ -603,8 +590,8 @@ async function showGitDropdown(projectPath: string): Promise<void> {
 function hideGitDropdown(): void {
   if (!gitDropdownVisible) return;
 
-  const gitStatusEl = document.querySelector('.theatre-git-status');
-  const dropdown = gitStatusEl?.querySelector('.theatre-git-dropdown');
+  const branchZone = document.querySelector('.theatre-git-branch-zone');
+  const dropdown = branchZone?.querySelector('.theatre-git-dropdown');
   if (dropdown) {
     dropdown.classList.remove('visible');
     // Remove after animation
@@ -633,12 +620,12 @@ async function toggleGitDropdown(projectPath: string): Promise<void> {
 /**
  * Build the theatre mode header content
  */
-function buildTheatreHeader(projectData: Project, gitStatus: GitStatus | null): string {
+function buildTheatreHeader(projectData: Project, compactStatus: CompactGitStatus | null): string {
   const icon = projectData.iconDataUrl
     ? `<img src="${projectData.iconDataUrl}" alt="" class="theatre-project-icon" />`
     : `<div class="theatre-project-icon theatre-project-icon--placeholder" style="background-color: ${stringToColor(projectData.name)}">${getInitials(projectData.name)}</div>`;
 
-  const gitStatusHtml = buildGitStatusHtml(gitStatus);
+  const gitStatusHtml = buildGitStatusHtml(compactStatus);
 
   return `
     <div class="theatre-header-content">
@@ -939,7 +926,7 @@ async function runDefaultCommand(): Promise<void> {
 /**
  * Update just the git status element in the theatre header
  */
-function updateGitStatusElement(gitStatus: GitStatus | null): void {
+function updateGitStatusElement(compactStatus: CompactGitStatus | null): void {
   const headerContent = document.querySelector('.header-content');
   if (!headerContent) return;
 
@@ -950,22 +937,34 @@ function updateGitStatusElement(gitStatus: GitStatus | null): void {
   }
 
   // If no git status, we're done
-  if (!gitStatus) return;
+  if (!compactStatus) return;
 
   // Insert new git status before the launch wrapper
   const launchWrapper = headerContent.querySelector('.theatre-launch-wrapper');
   if (launchWrapper) {
-    const gitStatusHtml = buildGitStatusHtml(gitStatus);
+    const gitStatusHtml = buildGitStatusHtml(compactStatus);
     launchWrapper.insertAdjacentHTML('beforebegin', gitStatusHtml);
     createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
 
-    // Re-wire click handler for dropdown
-    const gitStatusEl = headerContent.querySelector('.theatre-git-status');
-    if (gitStatusEl && theatreModeProjectPath) {
-      gitStatusEl.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleGitDropdown(theatreModeProjectPath!);
-      });
+    // Wire up click handlers for the two zones
+    if (theatreModeProjectPath) {
+      // Branch zone - opens branch dropdown
+      const branchZone = headerContent.querySelector('.theatre-git-branch-zone');
+      if (branchZone) {
+        branchZone.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleGitDropdown(theatreModeProjectPath!);
+        });
+      }
+
+      // Stats zone - opens diff panel (only if dirty)
+      const statsZone = headerContent.querySelector('.theatre-git-stats-zone--clickable');
+      if (statsZone) {
+        statsZone.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showDiffPanel();
+        });
+      }
     }
   }
 }
@@ -976,18 +975,18 @@ function updateGitStatusElement(gitStatus: GitStatus | null): void {
 async function refreshGitStatus(): Promise<void> {
   if (!theatreModeProjectPath) return;
 
-  const gitStatus = await window.api.getGitStatus(theatreModeProjectPath);
+  const compactStatus = await window.api.getCompactGitStatus(theatreModeProjectPath);
 
   if (gitDropdownVisible) {
-    // Only update the indicator dot while dropdown is open
-    // (full element replacement would destroy the dropdown)
-    const indicator = document.querySelector('.theatre-git-indicator');
-    if (indicator && gitStatus) {
-      indicator.classList.remove('theatre-git-indicator--dirty', 'theatre-git-indicator--clean');
-      indicator.classList.add(gitStatus.isDirty ? 'theatre-git-indicator--dirty' : 'theatre-git-indicator--clean');
+    // Only update the stats while dropdown is open (avoid destroying dropdown)
+    const aheadEl = document.querySelector('.theatre-git-ahead');
+    const dirtyEl = document.querySelector('.theatre-git-dirty');
+    if (compactStatus) {
+      if (aheadEl) aheadEl.textContent = compactStatus.commitsAheadOfMain > 0 ? `\u2191${compactStatus.commitsAheadOfMain}` : '';
+      if (dirtyEl) dirtyEl.textContent = compactStatus.dirtyFileCount > 0 ? `\u2022${compactStatus.dirtyFileCount}` : '';
     }
   } else {
-    updateGitStatusElement(gitStatus);
+    updateGitStatusElement(compactStatus);
   }
 }
 
@@ -1635,8 +1634,8 @@ export async function enterTheatreMode(
   theatreModeProjectPath = projectPath;
   theatreProjectData = existingSession?.projectData || projectData;
 
-  // Fetch git status
-  const gitStatus = projectData.hasGit ? await window.api.getGitStatus(projectPath) : null;
+  // Fetch compact git status
+  const compactStatus = projectData.hasGit ? await window.api.getCompactGitStatus(projectPath) : null;
 
   // 1. Add class to body - CSS handles the rest
   document.body.classList.add('theatre-mode');
@@ -1645,7 +1644,7 @@ export async function enterTheatreMode(
   const headerContent = document.querySelector('.header-content');
   if (headerContent) {
     originalHeaderContent = headerContent.innerHTML;
-    headerContent.innerHTML = buildTheatreHeader(theatreProjectData, gitStatus);
+    headerContent.innerHTML = buildTheatreHeader(theatreProjectData, compactStatus);
     createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
 
     // Wire up exit button
@@ -1654,12 +1653,21 @@ export async function enterTheatreMode(
       exitBtn.addEventListener('click', () => exitTheatreMode());
     }
 
-    // Wire up git status click handler
-    const gitStatusEl = headerContent.querySelector('.theatre-git-status');
-    if (gitStatusEl) {
-      gitStatusEl.addEventListener('click', (e) => {
+    // Wire up git branch zone click handler (opens branch dropdown)
+    const branchZone = headerContent.querySelector('.theatre-git-branch-zone');
+    if (branchZone) {
+      branchZone.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleGitDropdown(projectPath);
+      });
+    }
+
+    // Wire up git stats zone click handler (opens diff panel)
+    const statsZone = headerContent.querySelector('.theatre-git-stats-zone--clickable');
+    if (statsZone) {
+      statsZone.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showDiffPanel();
       });
     }
 

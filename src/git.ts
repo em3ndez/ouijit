@@ -83,6 +83,18 @@ export interface FileDiff {
 }
 
 /**
+ * Compact git status for at-a-glance display
+ */
+export interface CompactGitStatus {
+  branch: string;
+  mainBranch: string;
+  commitsAheadOfMain: number;
+  dirtyFileCount: number;
+  insertions: number;
+  deletions: number;
+}
+
+/**
  * Gets the current git branch and dirty status for a project
  * @param projectPath - Path to the project directory
  * @returns GitStatus object or null if not a git repo or commands fail
@@ -462,6 +474,78 @@ export function getFileDiff(projectPath: string, filePath: string): FileDiff | n
     return {
       path: filePath,
       hunks: parseDiff(diffOutput),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Gets compact git status for at-a-glance display in the UI
+ * Includes commits ahead of main and dirty file count (including untracked)
+ */
+export function getCompactGitStatus(projectPath: string): CompactGitStatus | null {
+  const opts = { cwd: projectPath, encoding: 'utf8' as const, stdio: ['pipe', 'pipe', 'pipe'] as const };
+
+  try {
+    // Get current branch
+    let branch: string;
+    try {
+      branch = execSync('git rev-parse --abbrev-ref HEAD', opts).toString().trim();
+    } catch {
+      return null; // Not a git repo
+    }
+
+    const mainBranch = getMainBranch(projectPath);
+
+    // Get commits ahead of main (only if not on main)
+    let commitsAheadOfMain = 0;
+    if (branch !== mainBranch) {
+      try {
+        const count = execSync(`git rev-list --count ${mainBranch}..HEAD`, opts).toString().trim();
+        commitsAheadOfMain = parseInt(count, 10) || 0;
+      } catch {
+        // May fail if branches don't share history
+        commitsAheadOfMain = 0;
+      }
+    }
+
+    // Get tracked file changes
+    let trackedCount = 0;
+    let insertions = 0;
+    let deletions = 0;
+    try {
+      const shortstat = execSync('git diff --shortstat HEAD', opts).toString().trim();
+      if (shortstat) {
+        const filesMatch = shortstat.match(/(\d+) files? changed/);
+        const insertionsMatch = shortstat.match(/(\d+) insertions?\(\+\)/);
+        const deletionsMatch = shortstat.match(/(\d+) deletions?\(-\)/);
+        trackedCount = filesMatch ? parseInt(filesMatch[1], 10) : 0;
+        insertions = insertionsMatch ? parseInt(insertionsMatch[1], 10) : 0;
+        deletions = deletionsMatch ? parseInt(deletionsMatch[1], 10) : 0;
+      }
+    } catch {
+      // Ignore errors
+    }
+
+    // Get untracked file count
+    let untrackedCount = 0;
+    try {
+      const untracked = execSync('git ls-files --others --exclude-standard', opts).toString().trim();
+      if (untracked) {
+        untrackedCount = untracked.split('\n').filter(line => line.length > 0).length;
+      }
+    } catch {
+      // Ignore errors
+    }
+
+    return {
+      branch,
+      mainBranch,
+      commitsAheadOfMain,
+      dirtyFileCount: trackedCount + untrackedCount,
+      insertions,
+      deletions,
     };
   } catch {
     return null;
