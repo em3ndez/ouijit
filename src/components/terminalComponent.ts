@@ -1,12 +1,12 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X } from 'lucide';
+import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge } from 'lucide';
 import type { PtyId, PtySpawnOptions, Project, GitStatus, CompactGitStatus, GitDropdownInfo, ChangedFile, FileDiff, RunConfig, CustomCommand } from '../types';
 import { stringToColor, getInitials } from '../utils/projectIcon';
 import { showToast } from './importDialog';
 import { showCustomCommandDialog } from './customCommandDialog';
 
-const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X };
+const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge };
 
 interface TerminalInstance {
   terminal: Terminal;
@@ -430,16 +430,28 @@ export function destroyAllTerminals(): void {
 function buildGitStatusHtml(compactStatus: CompactGitStatus | null): string {
   if (!compactStatus) return '';
 
-  const { branch, commitsAheadOfMain, dirtyFileCount, insertions, deletions } = compactStatus;
+  const {
+    branch,
+    mainBranch,
+    dirtyFileCount,
+    insertions,
+    deletions,
+    branchDiffFileCount,
+    branchDiffInsertions,
+    branchDiffDeletions,
+  } = compactStatus;
 
-  // Build stats zone content (only shown if there's something to show)
-  const hasStats = commitsAheadOfMain > 0 || dirtyFileCount > 0;
+  // Determine what stats to show:
+  // 1. If dirty (uncommitted changes): show uncommitted changes
+  // 2. Else if on feature branch with branch diff: show branch vs main with "vs main" label
+  const showUncommitted = dirtyFileCount > 0;
+  const showBranchDiff = !showUncommitted && branch !== mainBranch && branchDiffFileCount > 0;
+
   let statsContent = '';
-  if (commitsAheadOfMain > 0) {
-    statsContent += `<span class="theatre-git-ahead">\u2191${commitsAheadOfMain}</span>`;
-  }
-  if (dirtyFileCount > 0) {
-    // Build line dots visualization (max 5 dots each for +/-)
+  let statsZoneClass = 'theatre-git-stats-zone';
+
+  if (showUncommitted) {
+    // Show uncommitted changes - clickable to open diff panel
     const maxDots = 5;
     const addDots = Math.min(Math.ceil(insertions / 10), maxDots);
     const delDots = Math.min(Math.ceil(deletions / 10), maxDots);
@@ -450,11 +462,24 @@ function buildGitStatusHtml(compactStatus: CompactGitStatus | null): string {
       for (let i = 0; i < delDots; i++) dotsHtml += '<span class="dot dot--del"></span>';
       dotsHtml += '</span>';
     }
-    statsContent += `<span class="theatre-git-dirty">${dirtyFileCount}${dotsHtml}</span>`;
+    statsContent = `<span class="theatre-git-dirty">${dirtyFileCount}${dotsHtml}</span>`;
+    statsZoneClass = 'theatre-git-stats-zone theatre-git-stats-zone--clickable';
+  } else if (showBranchDiff) {
+    // Show branch vs main comparison - not clickable
+    const maxDots = 5;
+    const addDots = Math.min(Math.ceil(branchDiffInsertions / 10), maxDots);
+    const delDots = Math.min(Math.ceil(branchDiffDeletions / 10), maxDots);
+    let dotsHtml = '';
+    if (addDots > 0 || delDots > 0) {
+      dotsHtml = '<span class="theatre-git-dots">';
+      for (let i = 0; i < addDots; i++) dotsHtml += '<span class="dot dot--add"></span>';
+      for (let i = 0; i < delDots; i++) dotsHtml += '<span class="dot dot--del"></span>';
+      dotsHtml += '</span>';
+    }
+    statsContent = `<span class="theatre-git-dirty">${branchDiffFileCount}${dotsHtml}</span><span class="theatre-git-vs-main">vs ${mainBranch}</span>`;
   }
 
-  // Stats zone is clickable if dirty (opens diff panel)
-  const statsZoneClass = dirtyFileCount > 0 ? 'theatre-git-stats-zone theatre-git-stats-zone--clickable' : 'theatre-git-stats-zone';
+  const hasStats = showUncommitted || showBranchDiff;
 
   return `
     <div class="theatre-git-status">
@@ -463,7 +488,7 @@ function buildGitStatusHtml(compactStatus: CompactGitStatus | null): string {
         <span class="theatre-git-branch">${branch}</span>
         <i data-lucide="chevron-down" class="theatre-git-chevron"></i>
       </div>
-      ${hasStats ? `<div class="${statsZoneClass}" role="button" tabindex="0" title="${dirtyFileCount > 0 ? 'View changes' : ''}">${statsContent}</div>` : ''}
+      ${hasStats ? `<div class="${statsZoneClass}" role="button" tabindex="0" title="${showUncommitted ? 'View changes' : ''}">${statsContent}</div>` : ''}
     </div>
   `;
 }
@@ -555,6 +580,23 @@ async function createNewBranch(branchName: string): Promise<void> {
     await refreshGitStatus();
   } else {
     showToast(result.error || 'Failed to create branch', 'error');
+  }
+}
+
+/**
+ * Perform merge of current branch into main
+ */
+async function performMergeIntoMain(): Promise<void> {
+  if (!theatreModeProjectPath) return;
+
+  const result = await window.api.gitMergeIntoMain(theatreModeProjectPath);
+
+  if (result.success) {
+    showToast(`Merged ${result.mergedBranch} into main`, 'success');
+    // Refresh git status to update UI (will now be on main)
+    await refreshGitStatus();
+  } else {
+    showToast(result.error || 'Merge failed', 'error');
   }
 }
 
@@ -701,6 +743,19 @@ function buildTheatreHeader(projectData: Project, compactStatus: CompactGitStatu
 
   const gitStatusHtml = buildGitStatusHtml(compactStatus);
 
+  // Show merge button when: not on main, has commits ahead, and working directory is clean
+  const canMerge = compactStatus &&
+    compactStatus.branch !== compactStatus.mainBranch &&
+    compactStatus.commitsAheadOfMain > 0 &&
+    compactStatus.dirtyFileCount === 0;
+
+  const mergeButtonHtml = canMerge
+    ? `<button class="theatre-merge-btn" title="Merge into ${compactStatus.mainBranch}">
+        <i data-lucide="git-merge"></i>
+        <span>Merge into ${compactStatus.mainBranch}</span>
+      </button>`
+    : '';
+
   return `
     <div class="theatre-header-content">
       ${icon}
@@ -709,6 +764,7 @@ function buildTheatreHeader(projectData: Project, compactStatus: CompactGitStatu
         <span class="theatre-project-path">${projectData.path}</span>
       </div>
       ${gitStatusHtml}
+      ${mergeButtonHtml}
       <div class="theatre-launch-wrapper">
         <button class="theatre-launch-chevron-btn" title="More commands">
           <i data-lucide="chevron-down"></i>
@@ -1010,6 +1066,12 @@ function updateGitStatusElement(compactStatus: CompactGitStatus | null): void {
     existingGitStatus.remove();
   }
 
+  // Remove existing merge button
+  const existingMergeBtn = headerContent.querySelector('.theatre-merge-btn');
+  if (existingMergeBtn) {
+    existingMergeBtn.remove();
+  }
+
   // If no git status, we're done
   if (!compactStatus) return;
 
@@ -1018,6 +1080,29 @@ function updateGitStatusElement(compactStatus: CompactGitStatus | null): void {
   if (launchWrapper) {
     const gitStatusHtml = buildGitStatusHtml(compactStatus);
     launchWrapper.insertAdjacentHTML('beforebegin', gitStatusHtml);
+
+    // Check if merge button should be shown
+    const canMerge = compactStatus.branch !== compactStatus.mainBranch &&
+      compactStatus.commitsAheadOfMain > 0 &&
+      compactStatus.dirtyFileCount === 0;
+
+    if (canMerge) {
+      const mergeButtonHtml = `<button class="theatre-merge-btn" title="Merge into ${compactStatus.mainBranch}">
+        <i data-lucide="git-merge"></i>
+        <span>Merge into ${compactStatus.mainBranch}</span>
+      </button>`;
+      launchWrapper.insertAdjacentHTML('beforebegin', mergeButtonHtml);
+
+      // Wire up merge button
+      const mergeBtn = headerContent.querySelector('.theatre-merge-btn');
+      if (mergeBtn) {
+        mergeBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          await performMergeIntoMain();
+        });
+      }
+    }
+
     createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
 
     // Wire up click handlers for the two zones
@@ -1052,18 +1137,16 @@ async function refreshGitStatus(): Promise<void> {
   const compactStatus = await window.api.getCompactGitStatus(theatreModeProjectPath);
 
   if (gitDropdownVisible) {
-    // Only update the stats while dropdown is open (avoid destroying dropdown)
-    const aheadEl = document.querySelector('.theatre-git-ahead');
+    // Only update the file count text while dropdown is open (avoid destroying dropdown)
     const dirtyEl = document.querySelector('.theatre-git-dirty');
-    if (compactStatus) {
-      if (aheadEl) aheadEl.textContent = compactStatus.commitsAheadOfMain > 0 ? `\u2191${compactStatus.commitsAheadOfMain}` : '';
-      if (dirtyEl) {
-        // Update dirty count while preserving dots structure
-        // Find text node or create structure if needed
-        const firstChild = dirtyEl.firstChild;
-        if (firstChild?.nodeType === Node.TEXT_NODE) {
-          firstChild.textContent = compactStatus.dirtyFileCount > 0 ? `${compactStatus.dirtyFileCount}` : '';
-        }
+    if (compactStatus && dirtyEl) {
+      // Update dirty count while preserving dots structure
+      const firstChild = dirtyEl.firstChild;
+      if (firstChild?.nodeType === Node.TEXT_NODE) {
+        const count = compactStatus.dirtyFileCount > 0
+          ? compactStatus.dirtyFileCount
+          : compactStatus.branchDiffFileCount;
+        firstChild.textContent = count > 0 ? `${count}` : '';
       }
     }
   } else {
@@ -1749,6 +1832,15 @@ export async function enterTheatreMode(
       statsZone.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleDiffPanel();
+      });
+    }
+
+    // Wire up merge button (merges current branch into main)
+    const mergeBtn = headerContent.querySelector('.theatre-merge-btn');
+    if (mergeBtn) {
+      mergeBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await performMergeIntoMain();
       });
     }
 

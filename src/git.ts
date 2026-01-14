@@ -92,6 +92,10 @@ export interface CompactGitStatus {
   dirtyFileCount: number;
   insertions: number;
   deletions: number;
+  // Branch vs main comparison (total changes in this branch compared to main)
+  branchDiffFileCount: number;
+  branchDiffInsertions: number;
+  branchDiffDeletions: number;
 }
 
 /**
@@ -355,6 +359,78 @@ export function createBranch(projectPath: string, branchName: string): { success
 }
 
 /**
+ * Merge current branch into main (checkout main, merge feature branch)
+ */
+export function mergeIntoMain(projectPath: string): { success: boolean; error?: string; mergedBranch?: string } {
+  const opts = { cwd: projectPath, encoding: 'utf8' as const, stdio: ['pipe', 'pipe', 'pipe'] as const };
+
+  try {
+    // Get current branch name first
+    let currentBranch: string;
+    try {
+      currentBranch = execSync('git rev-parse --abbrev-ref HEAD', opts).toString().trim();
+    } catch {
+      return { success: false, error: 'Not a git repository' };
+    }
+
+    const mainBranch = getMainBranch(projectPath);
+
+    // Can't merge main into itself
+    if (currentBranch === mainBranch) {
+      return { success: false, error: 'Already on main branch' };
+    }
+
+    // Check for uncommitted changes
+    try {
+      const status = execSync('git status --porcelain', opts).toString();
+      if (status.length > 0) {
+        return { success: false, error: 'Uncommitted changes. Commit or stash first.' };
+      }
+    } catch {
+      return { success: false, error: 'Failed to check git status' };
+    }
+
+    // Checkout main
+    try {
+      execSync(`git checkout "${mainBranch}"`, opts);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : '';
+      if (errorMsg.includes('Your local changes')) {
+        return { success: false, error: 'Uncommitted changes would be overwritten' };
+      }
+      return { success: false, error: `Failed to checkout ${mainBranch}` };
+    }
+
+    // Merge the feature branch
+    try {
+      execSync(`git merge "${currentBranch}"`, opts);
+      return { success: true, mergedBranch: currentBranch };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : '';
+      // If merge fails, try to abort and go back
+      try {
+        execSync('git merge --abort', opts);
+      } catch {
+        // Ignore abort errors
+      }
+      // Go back to the original branch
+      try {
+        execSync(`git checkout "${currentBranch}"`, opts);
+      } catch {
+        // Ignore checkout errors
+      }
+
+      if (errorMsg.includes('CONFLICT')) {
+        return { success: false, error: 'Merge conflicts. Resolve manually.' };
+      }
+      return { success: false, error: 'Merge failed' };
+    }
+  } catch {
+    return { success: false, error: 'Merge failed' };
+  }
+}
+
+/**
  * Gets list of changed files with their status and line stats
  */
 export function getChangedFiles(projectPath: string): ChangedFile[] {
@@ -569,6 +645,26 @@ export function getCompactGitStatus(projectPath: string): CompactGitStatus | nul
       // Ignore errors
     }
 
+    // Get branch vs main diff stats (total changes in this branch compared to main)
+    let branchDiffFileCount = 0;
+    let branchDiffInsertions = 0;
+    let branchDiffDeletions = 0;
+    if (branch !== mainBranch) {
+      try {
+        const branchDiff = execSync(`git diff --shortstat ${mainBranch}...HEAD`, opts).toString().trim();
+        if (branchDiff) {
+          const filesMatch = branchDiff.match(/(\d+) files? changed/);
+          const insertionsMatch = branchDiff.match(/(\d+) insertions?\(\+\)/);
+          const deletionsMatch = branchDiff.match(/(\d+) deletions?\(-\)/);
+          branchDiffFileCount = filesMatch ? parseInt(filesMatch[1], 10) : 0;
+          branchDiffInsertions = insertionsMatch ? parseInt(insertionsMatch[1], 10) : 0;
+          branchDiffDeletions = deletionsMatch ? parseInt(deletionsMatch[1], 10) : 0;
+        }
+      } catch {
+        // Ignore errors - may fail if branches don't share history
+      }
+    }
+
     return {
       branch,
       mainBranch,
@@ -576,6 +672,9 @@ export function getCompactGitStatus(projectPath: string): CompactGitStatus | nul
       dirtyFileCount: trackedCount + untrackedCount,
       insertions,
       deletions,
+      branchDiffFileCount,
+      branchDiffInsertions,
+      branchDiffDeletions,
     };
   } catch {
     return null;

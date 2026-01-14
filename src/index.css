@@ -25,6 +25,8 @@
   --color-git-light: rgba(240, 80, 50, 0.1);
   --color-claude: #D97706;
   --color-claude-light: rgba(217, 119, 6, 0.1);
+  --color-success: #34C759;
+  --color-success-subtle: rgba(52, 199, 89, 0.1);
 
   /* Shadows */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
@@ -60,6 +62,8 @@
     --color-git-light: rgba(255, 107, 74, 0.15);
     --color-claude: #F59E0B;
     --color-claude-light: rgba(245, 158, 11, 0.15);
+    --color-success: #30D158;
+    --color-success-subtle: rgba(48, 209, 88, 0.15);
 
     /* Shadows - more subtle in dark mode */
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -1736,6 +1740,13 @@ body.is-fullscreen .theatre-header-content {
   background-color: #FF3B30;
 }
 
+.theatre-git-vs-main {
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  margin-left: 2px;
+}
+
 @media (prefers-color-scheme: dark) {
   .theatre-git-dots .dot--add {
     background-color: #30D158;
@@ -2412,6 +2423,34 @@ body.is-fullscreen .theatre-header-content {
   height: auto;
   border-radius: 0;
   border: none;
+}
+
+/* Theatre Merge Button */
+.theatre-merge-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 0 12px;
+  height: 32px;
+  background: var(--color-success-subtle);
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-md);
+  color: var(--color-success);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  transition: all var(--transition-fast);
+  margin-right: 12px;
+  -webkit-app-region: no-drag;
+}
+
+.theatre-merge-btn:hover {
+  background: var(--color-success);
+  color: white;
+}
+
+.theatre-merge-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* Theatre Launch Button & Dropdown */

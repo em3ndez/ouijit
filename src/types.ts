@@ -68,6 +68,15 @@ export interface GitCheckoutResult {
 }
 
 /**
+ * Result of git merge into main operation
+ */
+export interface GitMergeResult {
+  success: boolean;
+  error?: string;
+  mergedBranch?: string;
+}
+
+/**
  * Unique identifier for a PTY session
  */
 export type PtyId = string;
@@ -150,6 +159,10 @@ export interface ElectronAPI {
   getGitDropdownInfo(projectPath: string): Promise<import('./git').GitDropdownInfo | null>;
   /** Checkout a git branch */
   gitCheckout(projectPath: string, branchName: string): Promise<GitCheckoutResult>;
+  /** Create a new git branch */
+  gitCreateBranch(projectPath: string, branchName: string): Promise<GitCheckoutResult>;
+  /** Merge current branch into main */
+  gitMergeIntoMain(projectPath: string): Promise<GitMergeResult>;
   /** Get list of changed files */
   getChangedFiles(projectPath: string): Promise<import('./git').ChangedFile[]>;
   /** Get diff for a specific file */

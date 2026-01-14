@@ -2,7 +2,7 @@
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { Project, RunConfig, LaunchResult, PtySpawnOptions, PtySpawnResult, PtyId, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult, GitStatus, CompactGitStatus, GitDropdownInfo, GitCheckoutResult, ChangedFile, FileDiff, ProjectSettings, CustomCommand } from './types';
+import type { Project, RunConfig, LaunchResult, PtySpawnOptions, PtySpawnResult, PtyId, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult, GitStatus, CompactGitStatus, GitDropdownInfo, GitCheckoutResult, GitMergeResult, ChangedFile, FileDiff, ProjectSettings, CustomCommand } from './types';
 
 // Expose protected methods that allow the renderer process to use
 // ipcRenderer without exposing the entire object
@@ -123,6 +123,12 @@ contextBridge.exposeInMainWorld('api', {
    */
   gitCreateBranch: (projectPath: string, branchName: string): Promise<GitCheckoutResult> =>
     ipcRenderer.invoke('git-create-branch', projectPath, branchName),
+
+  /**
+   * Merge current branch into main
+   */
+  gitMergeIntoMain: (projectPath: string): Promise<GitMergeResult> =>
+    ipcRenderer.invoke('git-merge-into-main', projectPath),
 
   /**
    * Get list of changed files
