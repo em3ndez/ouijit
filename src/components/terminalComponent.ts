@@ -647,13 +647,15 @@ function buildTheatreHeader(projectData: Project, gitStatus: GitStatus | null): 
         <span class="theatre-project-name">${projectData.name}</span>
         <span class="theatre-project-path">${projectData.path}</span>
       </div>
+      ${gitStatusHtml}
       <div class="theatre-launch-wrapper">
-        <button class="theatre-launch-btn" title="Run command">
+        <button class="theatre-launch-chevron-btn" title="More commands">
+          <i data-lucide="chevron-down"></i>
+        </button>
+        <button class="theatre-play-btn" title="Run default command">
           <i data-lucide="play"></i>
-          <i data-lucide="chevron-down" class="theatre-launch-chevron"></i>
         </button>
       </div>
-      ${gitStatusHtml}
       <button class="theatre-exit-btn" title="Exit theatre mode (Esc)">
         <i data-lucide="minimize-2"></i>
       </button>
@@ -674,9 +676,24 @@ async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise<void> 
   const allConfigs = mergeRunConfigs(theatreProjectData.runConfigs, settings.customCommands);
   const defaultCommandId = settings.defaultCommandId;
 
+  // Sort default command to top
+  if (defaultCommandId) {
+    allConfigs.sort((a, b) => {
+      const aIsDefault = getConfigId(a) === defaultCommandId;
+      const bIsDefault = getConfigId(b) === defaultCommandId;
+      if (aIsDefault && !bIsDefault) return -1;
+      if (bIsDefault && !aIsDefault) return 1;
+      return 0;
+    });
+  }
+
   const explicitDefaultExists = defaultCommandId
     ? allConfigs.some(c => getConfigId(c) === defaultCommandId)
     : false;
+
+  // Create scrollable container for command list
+  const commandList = document.createElement('div');
+  commandList.className = 'launch-dropdown-commands';
 
   // Add run config options
   allConfigs.forEach((config, index) => {
@@ -741,14 +758,12 @@ async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise<void> 
       hideLaunchDropdown();
       await addTheatreTerminal(config);
     });
-    dropdown.appendChild(option);
+    commandList.appendChild(option);
   });
 
-  // Divider
+  // Only add command list section if there are commands
   if (allConfigs.length > 0) {
-    const divider = document.createElement('div');
-    divider.className = 'launch-dropdown-divider';
-    dropdown.appendChild(divider);
+    dropdown.appendChild(commandList);
   }
 
   // Custom command option
@@ -787,27 +802,6 @@ async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise<void> 
   const divider2 = document.createElement('div');
   divider2.className = 'launch-dropdown-divider';
   dropdown.appendChild(divider2);
-
-  // Close current terminal option (only when multiple terminals)
-  if (theatreTerminals.length > 1) {
-    const closeOption = document.createElement('button');
-    closeOption.className = 'launch-option launch-option--danger';
-    closeOption.innerHTML = '<i data-lucide="x" class="launch-option-icon"></i>';
-    const closeText = document.createElement('span');
-    closeText.className = 'launch-option-name';
-    closeText.textContent = 'Close current terminal';
-    closeOption.appendChild(closeText);
-    closeOption.addEventListener('click', (e) => {
-      e.stopPropagation();
-      hideLaunchDropdown();
-      closeTheatreTerminal(activeTheatreIndex);
-    });
-    dropdown.appendChild(closeOption);
-
-    const divider3 = document.createElement('div');
-    divider3.className = 'launch-dropdown-divider';
-    dropdown.appendChild(divider3);
-  }
 
   // Open in Finder option
   const finderOption = document.createElement('button');
@@ -910,6 +904,39 @@ function toggleLaunchDropdown(): void {
 }
 
 /**
+ * Run the default command immediately
+ */
+async function runDefaultCommand(): Promise<void> {
+  if (!theatreModeProjectPath || !theatreProjectData) return;
+
+  // Check if at max terminals
+  if (theatreTerminals.length >= MAX_THEATRE_TERMINALS) {
+    showToast(`Maximum ${MAX_THEATRE_TERMINALS} terminals`, 'info');
+    return;
+  }
+
+  // Fetch settings to get default command
+  const settings = await window.api.getProjectSettings(theatreModeProjectPath);
+  const allConfigs = mergeRunConfigs(theatreProjectData.runConfigs, settings.customCommands);
+
+  if (allConfigs.length === 0) {
+    showToast('No commands configured', 'info');
+    return;
+  }
+
+  // Find default command or use first available
+  let defaultConfig = allConfigs[0];
+  if (settings.defaultCommandId) {
+    const found = allConfigs.find(c => getConfigId(c) === settings.defaultCommandId);
+    if (found) {
+      defaultConfig = found;
+    }
+  }
+
+  await addTheatreTerminal(defaultConfig);
+}
+
+/**
  * Update just the git status element in the theatre header
  */
 function updateGitStatusElement(gitStatus: GitStatus | null): void {
@@ -925,11 +952,11 @@ function updateGitStatusElement(gitStatus: GitStatus | null): void {
   // If no git status, we're done
   if (!gitStatus) return;
 
-  // Insert new git status before the exit button
-  const exitBtn = headerContent.querySelector('.theatre-exit-btn');
-  if (exitBtn) {
+  // Insert new git status before the launch wrapper
+  const launchWrapper = headerContent.querySelector('.theatre-launch-wrapper');
+  if (launchWrapper) {
     const gitStatusHtml = buildGitStatusHtml(gitStatus);
-    exitBtn.insertAdjacentHTML('beforebegin', gitStatusHtml);
+    launchWrapper.insertAdjacentHTML('beforebegin', gitStatusHtml);
     createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
 
     // Re-wire click handler for dropdown
@@ -1636,10 +1663,19 @@ export async function enterTheatreMode(
       });
     }
 
-    // Wire up launch button
-    const launchBtn = headerContent.querySelector('.theatre-launch-btn');
-    if (launchBtn) {
-      launchBtn.addEventListener('click', (e) => {
+    // Wire up play button (runs default command)
+    const playBtn = headerContent.querySelector('.theatre-play-btn');
+    if (playBtn) {
+      playBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await runDefaultCommand();
+      });
+    }
+
+    // Wire up chevron button (opens dropdown)
+    const chevronBtn = headerContent.querySelector('.theatre-launch-chevron-btn');
+    if (chevronBtn) {
+      chevronBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleLaunchDropdown();
       });
