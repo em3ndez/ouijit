@@ -2398,6 +2398,7 @@ body.is-fullscreen .theatre-header-content {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   z-index: 1000;
+  -webkit-app-region: no-drag;
   opacity: 0;
   visibility: hidden;
   transform: translateY(-8px);

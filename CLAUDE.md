@@ -14,3 +14,4 @@ Native macOS desktop app for project management.
 - Don't replace `innerHTML` on elements with event listeners (destroys handlers)
 - Use targeted DOM updates instead of full rebuilds
 - Clear intervals/timeouts on cleanup
+- Use `-webkit-app-region: no-drag;` for any UI elements (dropdowns, menus) originating in the titlebar area
