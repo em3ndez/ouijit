@@ -5,6 +5,15 @@
 import { createIcons, ChevronDown } from 'lucide';
 import type { ChangedFile, FileDiff } from '../../types';
 import { theatreState } from './state';
+import {
+  projectPath,
+  terminals,
+  activeIndex,
+  diffPanelVisible,
+  diffPanelFiles,
+  diffPanelSelectedFile,
+  diffFileDropdownVisible,
+} from './signals';
 import { escapeHtml } from '../../utils/html';
 import { showToast } from '../importDialog';
 
@@ -73,17 +82,17 @@ export function buildDiffFileDropdownHtml(files: ChangedFile[], selectedPath: st
  * Show the file dropdown menu
  */
 export function showDiffFileDropdown(): void {
-  if (theatreState.diffFileDropdownVisible || !theatreState.diffPanelSelectedFile) return;
+  if (diffFileDropdownVisible.value || !diffPanelSelectedFile.value) return;
 
   const panel = document.querySelector('.diff-panel');
   const selector = panel?.querySelector('.diff-file-selector');
   if (!selector) return;
 
-  theatreState.diffFileDropdownVisible = true;
+  diffFileDropdownVisible.value = true;
   selector.classList.add('open');
 
   // Insert dropdown inside selector (like git dropdown pattern)
-  const dropdownHtml = buildDiffFileDropdownHtml(theatreState.diffPanelFiles, theatreState.diffPanelSelectedFile);
+  const dropdownHtml = buildDiffFileDropdownHtml(diffPanelFiles.value, diffPanelSelectedFile.value);
   selector.insertAdjacentHTML('beforeend', dropdownHtml);
 
   const dropdown = selector.querySelector('.diff-file-dropdown');
@@ -115,6 +124,7 @@ export function showDiffFileDropdown(): void {
 
   setTimeout(() => {
     document.addEventListener('click', handleClickOutside);
+    // Store cleanup in theatreState (non-reactive storage for cleanup functions)
     theatreState.diffFileDropdownCleanup = () => {
       document.removeEventListener('click', handleClickOutside);
     };
@@ -125,9 +135,9 @@ export function showDiffFileDropdown(): void {
  * Hide the file dropdown menu
  */
 export function hideDiffFileDropdown(): void {
-  if (!theatreState.diffFileDropdownVisible) return;
+  if (!diffFileDropdownVisible.value) return;
 
-  theatreState.diffFileDropdownVisible = false;
+  diffFileDropdownVisible.value = false;
 
   const panel = document.querySelector('.diff-panel');
   const selector = panel?.querySelector('.diff-file-selector');
@@ -148,7 +158,7 @@ export function hideDiffFileDropdown(): void {
  * Toggle the file dropdown menu
  */
 export function toggleDiffFileDropdown(): void {
-  if (theatreState.diffFileDropdownVisible) {
+  if (diffFileDropdownVisible.value) {
     hideDiffFileDropdown();
   } else {
     showDiffFileDropdown();
@@ -193,9 +203,9 @@ export function renderDiffContentHtml(diff: FileDiff): string {
  * Select a file in the diff panel and show its diff
  */
 export async function selectDiffFile(filePath: string): Promise<void> {
-  if (!theatreState.projectPath) return;
+  if (!projectPath.value) return;
 
-  theatreState.diffPanelSelectedFile = filePath;
+  diffPanelSelectedFile.value = filePath;
 
   // Close dropdown if open
   hideDiffFileDropdown();
@@ -204,7 +214,7 @@ export async function selectDiffFile(filePath: string): Promise<void> {
   if (!panel) return;
 
   // Update the selector trigger to show new file
-  const file = theatreState.diffPanelFiles.find(f => f.path === filePath);
+  const file = diffPanelFiles.value.find(f => f.path === filePath);
   if (file) {
     const selector = panel.querySelector('.diff-file-selector');
     const statusEl = selector?.querySelector('.diff-file-status');
@@ -234,7 +244,7 @@ export async function selectDiffFile(filePath: string): Promise<void> {
 
   contentBody.innerHTML = '<div class="diff-empty-state">Loading...</div>';
 
-  const diff = await window.api.getFileDiff(theatreState.projectPath, filePath);
+  const diff = await window.api.getFileDiff(projectPath.value!, filePath);
   if (diff) {
     contentBody.innerHTML = renderDiffContentHtml(diff);
 
@@ -252,10 +262,12 @@ export async function selectDiffFile(filePath: string): Promise<void> {
  * Refit the active terminal after panel animation
  */
 function refitActiveTerminal(): void {
-  if (theatreState.terminals.length > 0 && theatreState.activeIndex < theatreState.terminals.length) {
-    const activeTerminal = theatreState.terminals[theatreState.activeIndex];
-    activeTerminal.fitAddon.fit();
-    window.api.pty.resize(activeTerminal.ptyId, activeTerminal.terminal.cols, activeTerminal.terminal.rows);
+  const currentTerminals = terminals.value;
+  const currentActiveIndex = activeIndex.value;
+  if (currentTerminals.length > 0 && currentActiveIndex < currentTerminals.length) {
+    const active = currentTerminals[currentActiveIndex];
+    active.fitAddon.fit();
+    window.api.pty.resize(active.ptyId, active.terminal.cols, active.terminal.rows);
   }
 }
 
@@ -263,17 +275,17 @@ function refitActiveTerminal(): void {
  * Show the diff panel
  */
 export async function showDiffPanel(): Promise<void> {
-  if (!theatreState.projectPath || theatreState.diffPanelVisible) return;
+  if (!projectPath.value || diffPanelVisible.value) return;
 
   // Fetch changed files
-  const files = await window.api.getChangedFiles(theatreState.projectPath);
+  const files = await window.api.getChangedFiles(projectPath.value);
   if (!files.length) {
     showToast('No uncommitted changes', 'info');
     return;
   }
 
-  theatreState.diffPanelFiles = files;
-  theatreState.diffPanelVisible = true;
+  diffPanelFiles.value = files;
+  diffPanelVisible.value = true;
 
   // Create and insert panel
   const panelHtml = buildDiffPanelHtml(files);
@@ -324,7 +336,7 @@ export async function showDiffPanel(): Promise<void> {
  * Hide the diff panel
  */
 export function hideDiffPanel(): void {
-  if (!theatreState.diffPanelVisible) return;
+  if (!diffPanelVisible.value) return;
 
   // Clean up file dropdown if open
   hideDiffFileDropdown();
@@ -345,16 +357,16 @@ export function hideDiffPanel(): void {
   // Refit active theatre terminal after animation
   setTimeout(() => refitActiveTerminal(), 250);
 
-  theatreState.diffPanelVisible = false;
-  theatreState.diffPanelSelectedFile = null;
-  theatreState.diffPanelFiles = [];
+  diffPanelVisible.value = false;
+  diffPanelSelectedFile.value = null;
+  diffPanelFiles.value = [];
 }
 
 /**
  * Toggle the diff panel visibility
  */
 export async function toggleDiffPanel(): Promise<void> {
-  if (theatreState.diffPanelVisible) {
+  if (diffPanelVisible.value) {
     hideDiffPanel();
   } else {
     await showDiffPanel();

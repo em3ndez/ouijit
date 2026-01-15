@@ -5,6 +5,7 @@
 import { createIcons, ChevronDown, Play, Plus, FolderOpen, Star, X } from 'lucide';
 import type { RunConfig, CompactGitStatus } from '../../types';
 import { theatreState, MAX_THEATRE_TERMINALS } from './state';
+import { projectPath, projectData, terminals, launchDropdownVisible } from './signals';
 import { getConfigId, mergeRunConfigs } from '../../utils/runConfigs';
 import { stringToColor, getInitials } from '../../utils/projectIcon';
 import { showToast } from '../importDialog';
@@ -18,12 +19,12 @@ const launchIcons = { ChevronDown, Play, Plus, FolderOpen, Star, X };
  * Build the theatre mode header content
  */
 export function buildTheatreHeader(compactStatus: CompactGitStatus | null): string {
-  const projectData = theatreState.projectData;
-  if (!projectData) return '';
+  const project = projectData.value;
+  if (!project) return '';
 
-  const icon = projectData.iconDataUrl
-    ? `<img src="${projectData.iconDataUrl}" alt="" class="theatre-project-icon" />`
-    : `<div class="theatre-project-icon theatre-project-icon--placeholder" style="background-color: ${stringToColor(projectData.name)}">${getInitials(projectData.name)}</div>`;
+  const icon = project.iconDataUrl
+    ? `<img src="${project.iconDataUrl}" alt="" class="theatre-project-icon" />`
+    : `<div class="theatre-project-icon theatre-project-icon--placeholder" style="background-color: ${stringToColor(project.name)}">${getInitials(project.name)}</div>`;
 
   const gitStatusHtml = buildGitStatusHtml(compactStatus);
 
@@ -44,8 +45,8 @@ export function buildTheatreHeader(compactStatus: CompactGitStatus | null): stri
     <div class="theatre-header-content">
       ${icon}
       <div class="theatre-project-info">
-        <span class="theatre-project-name">${projectData.name}</span>
-        <span class="theatre-project-path">${projectData.path}</span>
+        <span class="theatre-project-name">${project.name}</span>
+        <span class="theatre-project-path">${project.path}</span>
       </div>
       <button class="theatre-tasks-btn" title="Tasks (T)">
         <i data-lucide="list-todo"></i>
@@ -71,13 +72,15 @@ export function buildTheatreHeader(compactStatus: CompactGitStatus | null): stri
  * Build the launch dropdown content
  */
 export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise<void> {
-  if (!theatreState.projectPath || !theatreState.projectData) return;
+  const path = projectPath.value;
+  const project = projectData.value;
+  if (!path || !project) return;
 
   dropdown.innerHTML = '';
 
   // Fetch fresh settings
-  const settings = await window.api.getProjectSettings(theatreState.projectPath);
-  const allConfigs = mergeRunConfigs(theatreState.projectData.runConfigs, settings.customCommands);
+  const settings = await window.api.getProjectSettings(path);
+  const allConfigs = mergeRunConfigs(project.runConfigs, settings.customCommands);
   const defaultCommandId = settings.defaultCommandId;
 
   // Sort default command to top
@@ -117,8 +120,8 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
     starBtn.innerHTML = '<i data-lucide="star"></i>';
     starBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!isExplicitDefault && theatreState.projectPath) {
-        await window.api.setDefaultCommand(theatreState.projectPath, configId);
+      if (!isExplicitDefault && path) {
+        await window.api.setDefaultCommand(path, configId);
         showToast(`Default: ${config.name}`, 'success');
         hideLaunchDropdown();
       }
@@ -144,11 +147,11 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
       deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const confirmed = confirm(`Delete "${config.name}"?`);
-        if (confirmed && theatreState.projectPath) {
-          const currentSettings = await window.api.getProjectSettings(theatreState.projectPath);
+        if (confirmed && path) {
+          const currentSettings = await window.api.getProjectSettings(path);
           const customCmd = currentSettings.customCommands.find(c => c.name === config.name);
           if (customCmd) {
-            await window.api.deleteCustomCommand(theatreState.projectPath, customCmd.id);
+            await window.api.deleteCustomCommand(path, customCmd.id);
             showToast(`Deleted: ${config.name}`, 'success');
             hideLaunchDropdown();
           }
@@ -181,8 +184,8 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
   customOption.addEventListener('click', async (e) => {
     e.stopPropagation();
     hideLaunchDropdown();
-    if (theatreState.projectPath) {
-      const result = await showCustomCommandDialog(theatreState.projectPath, undefined, {
+    if (path) {
+      const result = await showCustomCommandDialog(path, undefined, {
         defaultToDefault: allConfigs.length === 0
       });
       if (result?.saved && result.command) {
@@ -218,8 +221,8 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
   finderOption.addEventListener('click', (e) => {
     e.stopPropagation();
     hideLaunchDropdown();
-    if (theatreState.projectPath) {
-      window.api.openInFinder(theatreState.projectPath);
+    if (path) {
+      window.api.openInFinder(path);
     }
   });
   dropdown.appendChild(finderOption);
@@ -232,13 +235,13 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
  * Show the launch dropdown
  */
 export async function showLaunchDropdown(): Promise<void> {
-  if (theatreState.launchDropdownVisible) return;
+  if (launchDropdownVisible.value) return;
 
   const wrapper = document.querySelector('.theatre-launch-wrapper');
   if (!wrapper) return;
 
   // Check if at max terminals
-  if (theatreState.terminals.length >= MAX_THEATRE_TERMINALS) {
+  if (terminals.value.length >= MAX_THEATRE_TERMINALS) {
     showToast(`Maximum ${MAX_THEATRE_TERMINALS} terminals`, 'info');
     return;
   }
@@ -257,7 +260,7 @@ export async function showLaunchDropdown(): Promise<void> {
     dropdown.classList.add('visible');
   });
 
-  theatreState.launchDropdownVisible = true;
+  launchDropdownVisible.value = true;
 
   // Click outside handler
   const handleClickOutside = (e: MouseEvent) => {
@@ -280,7 +283,7 @@ export async function showLaunchDropdown(): Promise<void> {
  * Hide the launch dropdown
  */
 export function hideLaunchDropdown(): void {
-  if (!theatreState.launchDropdownVisible) return;
+  if (!launchDropdownVisible.value) return;
 
   const dropdown = document.querySelector('.theatre-launch-dropdown');
   if (dropdown) {
@@ -293,14 +296,14 @@ export function hideLaunchDropdown(): void {
     theatreState.launchDropdownCleanup = null;
   }
 
-  theatreState.launchDropdownVisible = false;
+  launchDropdownVisible.value = false;
 }
 
 /**
  * Toggle launch dropdown visibility
  */
 export function toggleLaunchDropdown(): void {
-  if (theatreState.launchDropdownVisible) {
+  if (launchDropdownVisible.value) {
     hideLaunchDropdown();
   } else {
     showLaunchDropdown();
@@ -311,17 +314,19 @@ export function toggleLaunchDropdown(): void {
  * Run the default command immediately
  */
 export async function runDefaultCommand(): Promise<void> {
-  if (!theatreState.projectPath || !theatreState.projectData) return;
+  const path = projectPath.value;
+  const project = projectData.value;
+  if (!path || !project) return;
 
   // Check if at max terminals
-  if (theatreState.terminals.length >= MAX_THEATRE_TERMINALS) {
+  if (terminals.value.length >= MAX_THEATRE_TERMINALS) {
     showToast(`Maximum ${MAX_THEATRE_TERMINALS} terminals`, 'info');
     return;
   }
 
   // Fetch settings to get default command
-  const settings = await window.api.getProjectSettings(theatreState.projectPath);
-  const allConfigs = mergeRunConfigs(theatreState.projectData.runConfigs, settings.customCommands);
+  const settings = await window.api.getProjectSettings(path);
+  const allConfigs = mergeRunConfigs(project.runConfigs, settings.customCommands);
 
   if (allConfigs.length === 0) {
     showToast('No commands configured', 'info');

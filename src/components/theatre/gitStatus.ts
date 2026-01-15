@@ -4,7 +4,9 @@
 
 import { createIcons, GitBranch, ChevronDown, Plus, GitMerge } from 'lucide';
 import type { CompactGitStatus, GitDropdownInfo } from '../../types';
-import { theatreState, theatreCallbacks, GIT_STATUS_IDLE_DELAY } from './state';
+import { theatreState, GIT_STATUS_IDLE_DELAY } from './state';
+import { projectPath, gitDropdownVisible } from './signals';
+import { toggleDiffPanel } from './diffPanel';
 import { showToast } from '../importDialog';
 
 const gitIcons = { GitBranch, ChevronDown, Plus, GitMerge };
@@ -132,12 +134,12 @@ export function buildGitDropdownHtml(info: GitDropdownInfo): string {
  * Switch to a branch using IPC git checkout
  */
 export async function switchToBranch(branchName: string): Promise<void> {
-  if (!theatreState.projectPath) return;
+  if (!projectPath.value) return;
 
   // Close dropdown immediately for responsiveness
   hideGitDropdown();
 
-  const result = await window.api.gitCheckout(theatreState.projectPath, branchName);
+  const result = await window.api.gitCheckout(projectPath.value!, branchName);
 
   if (result.success) {
     showToast(`Switched to ${branchName}`, 'success');
@@ -152,12 +154,12 @@ export async function switchToBranch(branchName: string): Promise<void> {
  * Create a new branch using IPC
  */
 export async function createNewBranch(branchName: string): Promise<void> {
-  if (!theatreState.projectPath) return;
+  if (!projectPath.value) return;
 
   // Close dropdown immediately for responsiveness
   hideGitDropdown();
 
-  const result = await window.api.gitCreateBranch(theatreState.projectPath, branchName);
+  const result = await window.api.gitCreateBranch(projectPath.value, branchName);
 
   if (result.success) {
     showToast(`Created branch ${branchName}`, 'success');
@@ -172,9 +174,9 @@ export async function createNewBranch(branchName: string): Promise<void> {
  * Perform merge of current branch into main
  */
 export async function performMergeIntoMain(): Promise<void> {
-  if (!theatreState.projectPath) return;
+  if (!projectPath.value) return;
 
-  const result = await window.api.gitMergeIntoMain(theatreState.projectPath);
+  const result = await window.api.gitMergeIntoMain(projectPath.value);
 
   if (result.success) {
     showToast(`Merged ${result.mergedBranch} into main`, 'success');
@@ -188,8 +190,8 @@ export async function performMergeIntoMain(): Promise<void> {
 /**
  * Show the git dropdown
  */
-export async function showGitDropdown(projectPath: string): Promise<void> {
-  if (theatreState.gitDropdownVisible) return;
+export async function showGitDropdown(path: string): Promise<void> {
+  if (gitDropdownVisible.value) return;
 
   const branchZone = document.querySelector('.theatre-git-branch-zone');
   if (!branchZone) return;
@@ -201,7 +203,7 @@ export async function showGitDropdown(projectPath: string): Promise<void> {
   }
 
   // Fetch dropdown info
-  const info = await window.api.getGitDropdownInfo(projectPath);
+  const info = await window.api.getGitDropdownInfo(path);
   if (!info) return;
 
   // Create and insert dropdown as a child of branch zone for proper positioning
@@ -265,7 +267,7 @@ export async function showGitDropdown(projectPath: string): Promise<void> {
     dropdown.classList.add('visible');
   });
 
-  theatreState.gitDropdownVisible = true;
+  gitDropdownVisible.value = true;
 
   // Set up click outside handler
   const handleClickOutside = (e: MouseEvent) => {
@@ -289,7 +291,7 @@ export async function showGitDropdown(projectPath: string): Promise<void> {
  * Hide the git dropdown
  */
 export function hideGitDropdown(): void {
-  if (!theatreState.gitDropdownVisible) return;
+  if (!gitDropdownVisible.value) return;
 
   const branchZone = document.querySelector('.theatre-git-branch-zone');
   const dropdown = branchZone?.querySelector('.theatre-git-dropdown');
@@ -304,17 +306,17 @@ export function hideGitDropdown(): void {
     theatreState.gitDropdownCleanup = null;
   }
 
-  theatreState.gitDropdownVisible = false;
+  gitDropdownVisible.value = false;
 }
 
 /**
  * Toggle git dropdown visibility
  */
-export async function toggleGitDropdown(projectPath: string): Promise<void> {
-  if (theatreState.gitDropdownVisible) {
+export async function toggleGitDropdown(path: string): Promise<void> {
+  if (gitDropdownVisible.value) {
     hideGitDropdown();
   } else {
-    await showGitDropdown(projectPath);
+    await showGitDropdown(path);
   }
 }
 
@@ -371,22 +373,23 @@ export function updateGitStatusElement(compactStatus: CompactGitStatus | null): 
     createIcons({ icons: gitIcons, nodes: [headerContent as HTMLElement] });
 
     // Wire up click handlers for the two zones
-    if (theatreState.projectPath) {
+    const currentProjectPath = projectPath.value;
+    if (currentProjectPath) {
       // Branch zone - opens branch dropdown
       const branchZone = headerContent.querySelector('.theatre-git-branch-zone');
       if (branchZone) {
         branchZone.addEventListener('click', (e) => {
           e.stopPropagation();
-          toggleGitDropdown(theatreState.projectPath!);
+          toggleGitDropdown(currentProjectPath);
         });
       }
 
       // Stats zone - toggles diff panel (only if dirty)
       const statsZone = headerContent.querySelector('.theatre-git-stats-zone--clickable');
-      if (statsZone && theatreCallbacks.toggleDiffPanel) {
+      if (statsZone) {
         statsZone.addEventListener('click', (e) => {
           e.stopPropagation();
-          theatreCallbacks.toggleDiffPanel!();
+          toggleDiffPanel();
         });
       }
     }
@@ -397,11 +400,11 @@ export function updateGitStatusElement(compactStatus: CompactGitStatus | null): 
  * Refresh git status for the current theatre mode project
  */
 export async function refreshGitStatus(): Promise<void> {
-  if (!theatreState.projectPath) return;
+  if (!projectPath.value) return;
 
-  const compactStatus = await window.api.getCompactGitStatus(theatreState.projectPath);
+  const compactStatus = await window.api.getCompactGitStatus(projectPath.value);
 
-  if (theatreState.gitDropdownVisible) {
+  if (gitDropdownVisible.value) {
     // Only update the file count text while dropdown is open (avoid destroying dropdown)
     const dirtyEl = document.querySelector('.theatre-git-dirty');
     if (compactStatus && dirtyEl) {

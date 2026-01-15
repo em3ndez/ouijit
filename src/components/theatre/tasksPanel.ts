@@ -4,7 +4,14 @@
 
 import { createIcons, CheckSquare, Square, Play, Trash2 } from 'lucide';
 import type { Task, RunConfig } from '../../types';
-import { theatreState, taskTerminalMap, TheatreTerminal } from './state';
+import { taskTerminalMap, TheatreTerminal } from './state';
+import {
+  projectPath,
+  terminals,
+  activeIndex,
+  tasksPanelVisible,
+  tasksList,
+} from './signals';
 import { escapeHtml } from '../../utils/html';
 import { addTheatreTerminal, switchToTheatreTerminal } from './terminalCards';
 
@@ -16,7 +23,7 @@ const taskIcons = { CheckSquare, Square, Play, Trash2 };
 export function getTaskTerminal(taskId: string): TheatreTerminal | undefined {
   const ptyId = taskTerminalMap.get(taskId);
   if (!ptyId) return undefined;
-  return theatreState.terminals.find(t => t.ptyId === ptyId);
+  return terminals.value.find(t => t.ptyId === ptyId);
 }
 
 /**
@@ -68,12 +75,12 @@ export function buildTaskItemHtml(task: Task): string {
  * Launch Claude Code in a new theatre terminal for a task
  */
 export async function launchClaudeForTask(task: Task): Promise<void> {
-  if (!theatreState.projectPath) return;
+  if (!projectPath.value) return;
 
   // Check if this task already has a terminal - if so, switch to it
   const existingTerminal = getTaskTerminal(task.id);
   if (existingTerminal) {
-    const index = theatreState.terminals.indexOf(existingTerminal);
+    const index = terminals.value.indexOf(existingTerminal);
     if (index !== -1) {
       switchToTheatreTerminal(index);
       return;
@@ -95,7 +102,8 @@ export async function launchClaudeForTask(task: Task): Promise<void> {
 
   if (success) {
     // Get the newly added terminal and store the mapping
-    const claudeTerminal = theatreState.terminals[theatreState.terminals.length - 1];
+    const currentTerminals = terminals.value;
+    const claudeTerminal = currentTerminals[currentTerminals.length - 1];
     taskTerminalMap.set(task.id, claudeTerminal.ptyId);
 
     // Re-render tasks to show the status indicator
@@ -118,13 +126,15 @@ export function renderTasksList(): void {
   const listEl = document.querySelector('.tasks-panel-list');
   if (!listEl) return;
 
-  if (theatreState.tasksList.length === 0) {
+  const currentTasks = tasksList.value;
+
+  if (currentTasks.length === 0) {
     listEl.innerHTML = '<div class="tasks-panel-empty">No tasks yet</div>';
     return;
   }
 
   // Sort: incomplete tasks first, then completed
-  const sortedTasks = [...theatreState.tasksList].sort((a, b) => {
+  const sortedTasks = [...currentTasks].sort((a, b) => {
     if (a.completed !== b.completed) return a.completed ? 1 : -1;
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
@@ -138,8 +148,9 @@ export function renderTasksList(): void {
       e.stopPropagation();
       const item = (btn as HTMLElement).closest('.tasks-panel-item') as HTMLElement;
       const taskId = item?.dataset.taskId;
-      if (taskId && theatreState.projectPath) {
-        await window.api.toggleTask(theatreState.projectPath, taskId);
+      const currentProjectPath = projectPath.value;
+      if (taskId && currentProjectPath) {
+        await window.api.toggleTask(currentProjectPath, taskId);
         await refreshTasksList();
       }
     });
@@ -151,8 +162,9 @@ export function renderTasksList(): void {
       e.stopPropagation();
       const item = (btn as HTMLElement).closest('.tasks-panel-item') as HTMLElement;
       const taskId = item?.dataset.taskId;
-      if (taskId && theatreState.projectPath) {
-        await window.api.deleteTask(theatreState.projectPath, taskId);
+      const currentProjectPath = projectPath.value;
+      if (taskId && currentProjectPath) {
+        await window.api.deleteTask(currentProjectPath, taskId);
         await refreshTasksList();
       }
     });
@@ -164,8 +176,9 @@ export function renderTasksList(): void {
       e.stopPropagation();
       const item = (btn as HTMLElement).closest('.tasks-panel-item') as HTMLElement;
       const taskId = item?.dataset.taskId;
-      const task = theatreState.tasksList.find(t => t.id === taskId);
-      if (task && theatreState.projectPath) {
+      const task = tasksList.value.find(t => t.id === taskId);
+      const currentProjectPath = projectPath.value;
+      if (task && currentProjectPath) {
         await launchClaudeForTask(task);
       }
     });
@@ -176,8 +189,8 @@ export function renderTasksList(): void {
  * Refresh the tasks list from the API
  */
 export async function refreshTasksList(): Promise<void> {
-  if (!theatreState.projectPath) return;
-  theatreState.tasksList = await window.api.getTasks(theatreState.projectPath);
+  if (!projectPath.value) return;
+  tasksList.value = await window.api.getTasks(projectPath.value);
   renderTasksList();
 }
 
@@ -185,10 +198,12 @@ export async function refreshTasksList(): Promise<void> {
  * Refit the active terminal after panel animation
  */
 function refitActiveTerminal(): void {
-  if (theatreState.terminals.length > 0 && theatreState.activeIndex < theatreState.terminals.length) {
-    const activeTerminal = theatreState.terminals[theatreState.activeIndex];
-    activeTerminal.fitAddon.fit();
-    window.api.pty.resize(activeTerminal.ptyId, activeTerminal.terminal.cols, activeTerminal.terminal.rows);
+  const currentTerminals = terminals.value;
+  const currentActiveIndex = activeIndex.value;
+  if (currentTerminals.length > 0 && currentActiveIndex < currentTerminals.length) {
+    const active = currentTerminals[currentActiveIndex];
+    active.fitAddon.fit();
+    window.api.pty.resize(active.ptyId, active.terminal.cols, active.terminal.rows);
   }
 }
 
@@ -196,9 +211,9 @@ function refitActiveTerminal(): void {
  * Show the tasks panel
  */
 export async function showTasksPanel(): Promise<void> {
-  if (theatreState.tasksPanelVisible) return;
+  if (tasksPanelVisible.value) return;
 
-  theatreState.tasksPanelVisible = true;
+  tasksPanelVisible.value = true;
 
   // Create and insert panel
   const panelHtml = buildTasksPanelHtml();
@@ -232,8 +247,9 @@ export async function showTasksPanel(): Promise<void> {
       if (e.key === 'Enter') {
         e.preventDefault();
         const title = input.value.trim();
-        if (title && theatreState.projectPath) {
-          await window.api.addTask(theatreState.projectPath, title);
+        const currentProjectPath = projectPath.value;
+        if (title && currentProjectPath) {
+          await window.api.addTask(currentProjectPath, title);
           input.value = '';
           await refreshTasksList();
         }
@@ -257,7 +273,7 @@ export async function showTasksPanel(): Promise<void> {
  * Hide the tasks panel
  */
 export function hideTasksPanel(): void {
-  if (!theatreState.tasksPanelVisible) return;
+  if (!tasksPanelVisible.value) return;
 
   const panel = document.querySelector('.tasks-panel');
   if (panel) {
@@ -280,15 +296,15 @@ export function hideTasksPanel(): void {
   // Refit active theatre terminal after animation
   setTimeout(() => refitActiveTerminal(), 250);
 
-  theatreState.tasksPanelVisible = false;
-  theatreState.tasksList = [];
+  tasksPanelVisible.value = false;
+  tasksList.value = [];
 }
 
 /**
  * Toggle the tasks panel visibility
  */
 export async function toggleTasksPanel(): Promise<void> {
-  if (theatreState.tasksPanelVisible) {
+  if (tasksPanelVisible.value) {
     hideTasksPanel();
   } else {
     await showTasksPanel();

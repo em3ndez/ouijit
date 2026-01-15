@@ -5,7 +5,7 @@
 
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import type { PtyId, Project, ChangedFile, Task } from '../../types';
+import type { PtyId, Project, ChangedFile } from '../../types';
 
 // Summary type for terminal status indication
 export type SummaryType = 'error' | 'listening' | 'building' | 'watching' | 'thinking' | 'idle';
@@ -49,41 +49,27 @@ export const HIDDEN_SESSIONS_CONTAINER_ID = 'hidden-theatre-sessions';
 export const GIT_STATUS_IDLE_DELAY = 500;
 export const GIT_STATUS_PERIODIC_INTERVAL = 5000;
 
-// Theatre mode core state
+/**
+ * Non-reactive theatre mode state
+ * Items that don't need reactive updates (handlers, timers, cleanup functions)
+ * Reactive state is now in signals.ts
+ */
 export const theatreState = {
-  // Core theatre mode
-  projectPath: null as string | null,
-  projectData: null as Project | null,
+  // Header content for restoration on exit
   originalHeaderContent: null as string | null,
+
+  // Keyboard handler reference
   escapeKeyHandler: null as ((e: KeyboardEvent) => void) | null,
 
-  // Terminal management
-  terminals: [] as TheatreTerminal[],
-  activeIndex: 0,
-
-  // Git status refresh state
+  // Git status refresh timers
   gitStatusIdleTimeout: null as ReturnType<typeof setTimeout> | null,
   gitStatusPeriodicInterval: null as ReturnType<typeof setInterval> | null,
   lastTerminalOutputTime: 0,
 
-  // Git dropdown state
-  gitDropdownVisible: false,
+  // Cleanup functions for dropdowns (not reactive)
   gitDropdownCleanup: null as (() => void) | null,
-
-  // Diff panel state
-  diffPanelVisible: false,
-  diffPanelSelectedFile: null as string | null,
-  diffPanelFiles: [] as ChangedFile[],
-  diffFileDropdownVisible: false,
   diffFileDropdownCleanup: null as (() => void) | null,
-
-  // Launch dropdown state
-  launchDropdownVisible: false,
   launchDropdownCleanup: null as (() => void) | null,
-
-  // Tasks panel state
-  tasksPanelVisible: false,
-  tasksList: [] as Task[],
 };
 
 // Session storage for preserved sessions
@@ -91,17 +77,6 @@ export const projectSessions = new Map<string, StoredTheatreSession>();
 
 // Task-terminal association: maps task ID to ptyId
 export const taskTerminalMap = new Map<string, PtyId>();
-
-/**
- * Cross-module callback registry
- * Used to avoid circular dependencies between theatre modules.
- * Callbacks are set by theatreMode.ts during initialization.
- */
-export const theatreCallbacks = {
-  exitTheatreMode: null as (() => void) | null,
-  renderTasksList: null as (() => void) | null,
-  toggleDiffPanel: null as (() => Promise<void>) | null,
-};
 
 /**
  * Ensures the hidden container for storing detached theatre sessions exists
@@ -122,19 +97,3 @@ export function ensureHiddenSessionsContainer(): HTMLElement {
   return container;
 }
 
-/**
- * Reset theatre state to initial values
- */
-export function resetTheatreState(): void {
-  theatreState.projectPath = null;
-  theatreState.projectData = null;
-  theatreState.originalHeaderContent = null;
-  theatreState.escapeKeyHandler = null;
-  theatreState.terminals = [];
-  theatreState.activeIndex = 0;
-  theatreState.diffPanelVisible = false;
-  theatreState.diffPanelSelectedFile = null;
-  theatreState.diffPanelFiles = [];
-  theatreState.tasksPanelVisible = false;
-  theatreState.tasksList = [];
-}

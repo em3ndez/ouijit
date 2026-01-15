@@ -7,10 +7,21 @@ import type { Project, RunConfig, ChangedFile } from '../../types';
 import {
   theatreState,
   projectSessions,
-  theatreCallbacks,
   ensureHiddenSessionsContainer,
   GIT_STATUS_PERIODIC_INTERVAL,
 } from './state';
+import {
+  projectPath,
+  projectData,
+  terminals,
+  activeIndex,
+  diffPanelVisible,
+  diffPanelFiles,
+  diffPanelSelectedFile,
+  tasksPanelVisible,
+  resetSignals,
+} from './signals';
+import { initializeEffects } from './effects';
 import {
   toggleGitDropdown,
   hideGitDropdown,
@@ -27,6 +38,7 @@ import {
 import {
   addTheatreTerminal,
   updateCardStack,
+  setExitTheatreModeCallback,
 } from './terminalCards';
 import {
   showTasksPanel,
@@ -43,31 +55,29 @@ import {
 
 const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge, ListTodo };
 
-// Initialize cross-module callbacks in state (avoids circular dependencies)
-theatreCallbacks.toggleDiffPanel = toggleDiffPanel;
-theatreCallbacks.renderTasksList = renderTasksList;
-// Note: exitTheatreMode is set after function definition below
-
 /**
  * Enter theatre mode for the specified project
  * If a preserved session exists, it will be restored instead of creating a new one
  */
 export async function enterTheatreMode(
-  projectPath: string,
-  projectData: Project,
+  path: string,
+  project: Project,
   runConfig?: RunConfig
 ): Promise<void> {
-  if (theatreState.projectPath) return; // Already in theatre mode
+  if (projectPath.value) return; // Already in theatre mode
 
   // Check for preserved session
-  const existingSession = projectSessions.get(projectPath);
+  const existingSession = projectSessions.get(path);
 
-  // Store project data for later use
-  theatreState.projectPath = projectPath;
-  theatreState.projectData = existingSession?.projectData || projectData;
+  // Store project data for later use in signals
+  projectPath.value = path;
+  projectData.value = existingSession?.projectData || project;
+
+  // Initialize reactive effects
+  initializeEffects();
 
   // Fetch compact git status
-  const compactStatus = projectData.hasGit ? await window.api.getCompactGitStatus(projectPath) : null;
+  const compactStatus = project.hasGit ? await window.api.getCompactGitStatus(path) : null;
 
   // 1. Add class to body - CSS handles the rest
   document.body.classList.add('theatre-mode');
@@ -90,7 +100,7 @@ export async function enterTheatreMode(
     if (branchZone) {
       branchZone.addEventListener('click', (e) => {
         e.stopPropagation();
-        toggleGitDropdown(projectPath);
+        toggleGitDropdown(path);
       });
     }
 
@@ -144,15 +154,15 @@ export async function enterTheatreMode(
   const mainContent = document.querySelector('.main-content');
   if (mainContent) {
     if (existingSession) {
-      // Restore existing session
-      theatreState.terminals = existingSession.terminals;
-      theatreState.activeIndex = existingSession.activeIndex;
+      // Restore existing session into signals
+      terminals.value = existingSession.terminals;
+      activeIndex.value = existingSession.activeIndex;
 
       // Move stack from hidden container back to main content
       mainContent.appendChild(existingSession.stackElement);
 
       // Reconnect resize observers and refit terminals
-      for (const term of theatreState.terminals) {
+      for (const term of terminals.value) {
         const xtermContainer = term.container.querySelector('.terminal-xterm-container') as HTMLElement;
         if (xtermContainer) {
           term.resizeObserver = new ResizeObserver(() => {
@@ -169,10 +179,12 @@ export async function enterTheatreMode(
         });
       }
 
-      // Focus the active terminal
-      if (theatreState.terminals.length > 0) {
+      // Focus the active terminal (effect will handle this too, but ensure immediate focus)
+      const currentTerminals = terminals.value;
+      const currentActiveIndex = activeIndex.value;
+      if (currentTerminals.length > 0) {
         requestAnimationFrame(() => {
-          theatreState.terminals[theatreState.activeIndex].terminal.focus();
+          currentTerminals[currentActiveIndex].terminal.focus();
         });
       }
 
@@ -182,9 +194,9 @@ export async function enterTheatreMode(
         selectedFile: existingSession.diffSelectedFile,
         files: existingSession.diffFiles,
       };
-      projectSessions.delete(projectPath);
+      projectSessions.delete(path);
 
-      // Update card stack positions
+      // Update card stack positions (effect handles this, but call for immediate update)
       updateCardStack();
 
       // Restore tasks panel if it was open
@@ -195,8 +207,8 @@ export async function enterTheatreMode(
       // Restore diff panel if it was open
       if (savedDiffState.wasOpen && savedDiffState.files.length > 0) {
         // Restore diff panel state and show it
-        theatreState.diffPanelFiles = savedDiffState.files;
-        theatreState.diffPanelVisible = true;
+        diffPanelFiles.value = savedDiffState.files;
+        diffPanelVisible.value = true;
 
         // Create and insert panel
         const panelHtml = buildDiffPanelHtml(savedDiffState.files);
@@ -240,9 +252,9 @@ export async function enterTheatreMode(
         }
       }
     } else {
-      // Create new session
-      theatreState.terminals = [];
-      theatreState.activeIndex = 0;
+      // Create new session - signals start with empty arrays
+      terminals.value = [];
+      activeIndex.value = 0;
 
       const stack = document.createElement('div');
       stack.className = 'theatre-stack';
@@ -265,28 +277,33 @@ export async function enterTheatreMode(
   document.addEventListener('keydown', theatreState.escapeKeyHandler);
 
   // 5. Start periodic git status refresh (for long-running commands)
-  if (projectData.hasGit) {
+  if (project.hasGit) {
     theatreState.gitStatusPeriodicInterval = setInterval(() => {
       refreshGitStatus();
     }, GIT_STATUS_PERIODIC_INTERVAL);
   }
+
+  // Set up callback for when all terminals are closed
+  setExitTheatreModeCallback(exitTheatreMode);
 }
 
 /**
  * Exit theatre mode - preserves sessions for later restoration
  */
 export function exitTheatreMode(): void {
-  if (!theatreState.projectPath) return;
+  const currentProjectPath = projectPath.value;
+  if (!currentProjectPath) return;
 
-  const projectPath = theatreState.projectPath;
+  const currentTerminals = terminals.value;
+  const currentProjectData = projectData.value;
 
   // 1. Handle session preservation or cleanup
   const stack = document.querySelector('.theatre-stack') as HTMLElement;
   if (stack) {
-    if (theatreState.terminals.length > 0 && theatreState.projectData) {
+    if (currentTerminals.length > 0 && currentProjectData) {
       // Store session for later restoration
       // Disconnect resize observers while hidden (will reconnect on restore)
-      for (const term of theatreState.terminals) {
+      for (const term of currentTerminals) {
         if (term.resizeObserver) {
           term.resizeObserver.disconnect();
         }
@@ -297,25 +314,21 @@ export function exitTheatreMode(): void {
       hiddenContainer.appendChild(stack);
 
       // Store session data including diff panel and tasks panel state
-      projectSessions.set(projectPath, {
-        terminals: [...theatreState.terminals],
-        activeIndex: theatreState.activeIndex,
-        projectData: theatreState.projectData,
+      projectSessions.set(currentProjectPath, {
+        terminals: [...currentTerminals],
+        activeIndex: activeIndex.value,
+        projectData: currentProjectData,
         stackElement: stack,
-        diffPanelWasOpen: theatreState.diffPanelVisible,
-        diffSelectedFile: theatreState.diffPanelSelectedFile,
-        diffFiles: [...theatreState.diffPanelFiles],
-        tasksPanelWasOpen: theatreState.tasksPanelVisible,
+        diffPanelWasOpen: diffPanelVisible.value,
+        diffSelectedFile: diffPanelSelectedFile.value,
+        diffFiles: [...diffPanelFiles.value],
+        tasksPanelWasOpen: tasksPanelVisible.value,
       });
     } else {
       // No terminals to preserve - just remove the stack
       stack.remove();
     }
   }
-
-  // Clear current session state
-  theatreState.terminals = [];
-  theatreState.activeIndex = 0;
 
   // 2. Remove class from body
   document.body.classList.remove('theatre-mode');
@@ -383,12 +396,10 @@ export function exitTheatreMode(): void {
   hideTasksPanel();
 
   theatreState.originalHeaderContent = null;
-  theatreState.projectPath = null;
-  theatreState.projectData = null;
-}
 
-// Set the exitTheatreMode callback now that function is defined
-theatreCallbacks.exitTheatreMode = exitTheatreMode;
+  // Reset all signals to initial values
+  resetSignals();
+}
 
 /**
  * Permanently destroy all theatre sessions for a project
@@ -433,5 +444,5 @@ export function hasPreservedSession(projectPath: string): boolean {
  * Check if we're currently in theatre mode
  */
 export function isInTheatreMode(): boolean {
-  return theatreState.projectPath !== null;
+  return projectPath.value !== null;
 }

@@ -3,14 +3,12 @@
  * Re-exports all theatre module functionality for external use
  */
 
-// State
+// State (non-reactive)
 export {
   theatreState,
   projectSessions,
   taskTerminalMap,
-  theatreCallbacks,
   ensureHiddenSessionsContainer,
-  resetTheatreState,
   MAX_THEATRE_TERMINALS,
   HIDDEN_SESSIONS_CONTAINER_ID,
   GIT_STATUS_IDLE_DELAY,
@@ -19,6 +17,31 @@ export {
   type StoredTheatreSession,
   type SummaryType,
 } from './state';
+
+// Signals (reactive state)
+export {
+  projectPath,
+  projectData,
+  terminals,
+  activeIndex,
+  activeTerminal,
+  isInTheatreMode as isInTheatreModeSignal,
+  diffPanelVisible,
+  diffPanelFiles,
+  diffPanelSelectedFile,
+  tasksPanelVisible,
+  tasksList,
+  gitDropdownVisible,
+  launchDropdownVisible,
+  diffFileDropdownVisible,
+  resetSignals,
+} from './signals';
+
+// Effects
+export {
+  initializeEffects,
+  cleanupEffects,
+} from './effects';
 
 // Git status
 export {
@@ -33,7 +56,6 @@ export {
   updateGitStatusElement,
   refreshGitStatus,
   scheduleGitStatusRefresh,
-  // Note: setToggleDiffPanel removed - use theatreCallbacks instead
 } from './gitStatus';
 
 // Diff panel
@@ -64,6 +86,7 @@ export {
   switchToTheatreTerminal,
   addTheatreTerminal,
   closeTheatreTerminal,
+  setExitTheatreModeCallback,
 } from './terminalCards';
 
 // Tasks panel

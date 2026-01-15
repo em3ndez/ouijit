@@ -6,13 +6,18 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import type { PtyId, PtySpawnOptions, RunConfig } from '../../types';
 import {
-  theatreState,
   taskTerminalMap,
-  theatreCallbacks,
   TheatreTerminal,
   SummaryType,
   MAX_THEATRE_TERMINALS,
 } from './state';
+import {
+  projectPath,
+  terminals,
+  activeIndex,
+  activeTerminal,
+  tasksPanelVisible,
+} from './signals';
 import { showToast } from '../importDialog';
 import { scheduleGitStatusRefresh } from './gitStatus';
 
@@ -204,7 +209,7 @@ export function updateTaskStatusIndicator(ptyId: PtyId): void {
   }
   if (!linkedTaskId) return;
 
-  const terminal = theatreState.terminals.find(t => t.ptyId === ptyId);
+  const terminal = terminals.value.find(t => t.ptyId === ptyId);
   if (!terminal) return;
 
   const taskItem = document.querySelector(`.tasks-panel-item[data-task-id="${linkedTaskId}"]`);
@@ -254,7 +259,7 @@ export function updateTerminalCardLabel(term: TheatreTerminal): void {
   }
 
   // Update linked task status indicator if tasks panel is visible
-  if (theatreState.tasksPanelVisible) {
+  if (tasksPanelVisible.value) {
     updateTaskStatusIndicator(term.ptyId);
   }
 }
@@ -315,21 +320,24 @@ export function updateCardStack(): void {
   const stack = document.querySelector('.theatre-stack') as HTMLElement;
   if (!stack) return;
 
+  const currentTerminals = terminals.value;
+  const currentActiveIndex = activeIndex.value;
+
   // Calculate number of back cards and adjust stack position
   // Each back card needs 24px of space for its visible tab
-  const backCardCount = Math.min(theatreState.terminals.length - 1, 4);
+  const backCardCount = Math.min(currentTerminals.length - 1, 4);
   const tabSpace = backCardCount * 24;
   stack.style.top = `${82 + tabSpace}px`;
 
-  theatreState.terminals.forEach((term, index) => {
+  currentTerminals.forEach((term, index) => {
     // Remove all position classes
     term.container.classList.remove('theatre-card--active', 'theatre-card--back-1', 'theatre-card--back-2', 'theatre-card--back-3', 'theatre-card--back-4');
 
-    if (index === theatreState.activeIndex) {
+    if (index === currentActiveIndex) {
       term.container.classList.add('theatre-card--active');
     } else {
       // Calculate back position relative to active
-      const diff = index < theatreState.activeIndex ? theatreState.activeIndex - index : theatreState.terminals.length - index + theatreState.activeIndex;
+      const diff = index < currentActiveIndex ? currentActiveIndex - index : currentTerminals.length - index + currentActiveIndex;
       const backClass = `theatre-card--back-${Math.min(diff, 4)}`;
       term.container.classList.add(backClass);
     }
@@ -340,17 +348,16 @@ export function updateCardStack(): void {
  * Switch to a specific theatre terminal
  */
 export function switchToTheatreTerminal(index: number): void {
-  if (index < 0 || index >= theatreState.terminals.length || index === theatreState.activeIndex) return;
+  const currentTerminals = terminals.value;
+  if (index < 0 || index >= currentTerminals.length || index === activeIndex.value) return;
 
-  theatreState.activeIndex = index;
-  updateCardStack();
+  // Set the new active index - effects will handle updateCardStack and focus
+  activeIndex.value = index;
 
-  // Focus the active terminal
-  const activeTerminal = theatreState.terminals[theatreState.activeIndex];
+  // Resize PTY to match terminal dimensions
+  const term = currentTerminals[index];
   requestAnimationFrame(() => {
-    activeTerminal.fitAddon.fit();
-    window.api.pty.resize(activeTerminal.ptyId, activeTerminal.terminal.cols, activeTerminal.terminal.rows);
-    activeTerminal.terminal.focus();
+    window.api.pty.resize(term.ptyId, term.terminal.cols, term.terminal.rows);
   });
 }
 
@@ -358,8 +365,11 @@ export function switchToTheatreTerminal(index: number): void {
  * Add a new theatre terminal
  */
 export async function addTheatreTerminal(runConfig?: RunConfig): Promise<boolean> {
-  if (!theatreState.projectPath || theatreState.terminals.length >= MAX_THEATRE_TERMINALS) {
-    if (theatreState.terminals.length >= MAX_THEATRE_TERMINALS) {
+  const currentProjectPath = projectPath.value;
+  const currentTerminals = terminals.value;
+
+  if (!currentProjectPath || currentTerminals.length >= MAX_THEATRE_TERMINALS) {
+    if (currentTerminals.length >= MAX_THEATRE_TERMINALS) {
       showToast(`Maximum ${MAX_THEATRE_TERMINALS} terminals`, 'info');
     }
     return false;
@@ -370,7 +380,7 @@ export async function addTheatreTerminal(runConfig?: RunConfig): Promise<boolean
 
   const label = runConfig?.name || 'Shell';
   const command = runConfig?.command;
-  const index = theatreState.terminals.length;
+  const index = currentTerminals.length;
 
   // Create card element
   const card = createTheatreCard(label, index);
@@ -400,7 +410,7 @@ export async function addTheatreTerminal(runConfig?: RunConfig): Promise<boolean
 
   // Spawn PTY
   const spawnOptions: PtySpawnOptions = {
-    cwd: theatreState.projectPath,
+    cwd: currentProjectPath,
     command,
     cols: terminal.cols,
     rows: terminal.rows,
@@ -418,7 +428,7 @@ export async function addTheatreTerminal(runConfig?: RunConfig): Promise<boolean
 
     const theatreTerminal: TheatreTerminal = {
       ptyId: result.ptyId,
-      projectPath: theatreState.projectPath,
+      projectPath: currentProjectPath,
       command,
       label,
       terminal,
@@ -455,7 +465,7 @@ export async function addTheatreTerminal(runConfig?: RunConfig): Promise<boolean
 
       scheduleTerminalSummaryUpdate(theatreTerminal);
 
-      if (theatreState.projectPath) {
+      if (projectPath.value) {
         scheduleGitStatusRefresh();
       }
     });
@@ -480,23 +490,23 @@ export async function addTheatreTerminal(runConfig?: RunConfig): Promise<boolean
     // Close button handler
     closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const currentIndex = theatreState.terminals.indexOf(theatreTerminal);
-      if (currentIndex !== -1) {
-        closeTheatreTerminal(currentIndex);
+      const idx = terminals.value.indexOf(theatreTerminal);
+      if (idx !== -1) {
+        closeTheatreTerminal(idx);
       }
     });
 
     // Card click handler (to bring to front)
     card.addEventListener('click', () => {
-      const currentIndex = theatreState.terminals.indexOf(theatreTerminal);
-      if (currentIndex !== -1 && currentIndex !== theatreState.activeIndex) {
-        switchToTheatreTerminal(currentIndex);
+      const idx = terminals.value.indexOf(theatreTerminal);
+      if (idx !== -1 && idx !== activeIndex.value) {
+        switchToTheatreTerminal(idx);
       }
     });
 
-    theatreState.terminals.push(theatreTerminal);
-    theatreState.activeIndex = theatreState.terminals.length - 1;
-    updateCardStack();
+    // Add terminal to list and set as active - effects will handle updateCardStack
+    terminals.value = [...terminals.value, theatreTerminal];
+    activeIndex.value = terminals.value.length - 1;
 
     terminal.focus();
     return true;
@@ -508,24 +518,29 @@ export async function addTheatreTerminal(runConfig?: RunConfig): Promise<boolean
   }
 }
 
+// Callback for exiting theatre mode (set by theatreMode.ts to avoid circular deps)
+let exitTheatreModeCallback: (() => void) | null = null;
+
+export function setExitTheatreModeCallback(callback: () => void): void {
+  exitTheatreModeCallback = callback;
+}
+
 /**
  * Close a theatre terminal
  */
 export function closeTheatreTerminal(index: number): void {
-  if (index < 0 || index >= theatreState.terminals.length) return;
+  const currentTerminals = terminals.value;
+  if (index < 0 || index >= currentTerminals.length) return;
 
-  const term = theatreState.terminals[index];
+  const term = currentTerminals[index];
 
   // Kill PTY
   window.api.pty.kill(term.ptyId);
 
-  // Clean up task-terminal mapping and re-render tasks
+  // Clean up task-terminal mapping (tasks list will re-render via effect)
   for (const [taskId, ptyId] of taskTerminalMap) {
     if (ptyId === term.ptyId) {
       taskTerminalMap.delete(taskId);
-      if (theatreState.tasksPanelVisible && theatreCallbacks.renderTasksList) {
-        theatreCallbacks.renderTasksList();
-      }
       break;
     }
   }
@@ -537,27 +552,25 @@ export function closeTheatreTerminal(index: number): void {
   term.terminal.dispose();
   term.container.remove();
 
-  theatreState.terminals.splice(index, 1);
+  // Remove terminal from list (immutable update)
+  const newTerminals = currentTerminals.filter((_, i) => i !== index);
+  terminals.value = newTerminals;
 
   // If no terminals left, exit theatre mode
-  if (theatreState.terminals.length === 0) {
-    if (theatreCallbacks.exitTheatreMode) {
-      theatreCallbacks.exitTheatreMode();
+  if (newTerminals.length === 0) {
+    if (exitTheatreModeCallback) {
+      exitTheatreModeCallback();
     }
     return;
   }
 
   // Adjust active index
-  if (theatreState.activeIndex >= theatreState.terminals.length) {
-    theatreState.activeIndex = theatreState.terminals.length - 1;
-  } else if (index < theatreState.activeIndex) {
-    theatreState.activeIndex--;
+  const currentActiveIndex = activeIndex.value;
+  if (currentActiveIndex >= newTerminals.length) {
+    activeIndex.value = newTerminals.length - 1;
+  } else if (index < currentActiveIndex) {
+    activeIndex.value = currentActiveIndex - 1;
   }
 
-  updateCardStack();
-
-  // Focus the now-active terminal
-  if (theatreState.terminals.length > 0) {
-    theatreState.terminals[theatreState.activeIndex].terminal.focus();
-  }
+  // Effects will handle updateCardStack and focus
 }
