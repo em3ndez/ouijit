@@ -8,6 +8,7 @@ export {
   theatreState,
   projectSessions,
   taskTerminalMap,
+  theatreCallbacks,
   ensureHiddenSessionsContainer,
   resetTheatreState,
   MAX_THEATRE_TERMINALS,
@@ -32,6 +33,7 @@ export {
   updateGitStatusElement,
   refreshGitStatus,
   scheduleGitStatusRefresh,
+  // Note: setToggleDiffPanel removed - use theatreCallbacks instead
 } from './gitStatus';
 
 // Diff panel

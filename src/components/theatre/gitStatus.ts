@@ -4,16 +4,10 @@
 
 import { createIcons, GitBranch, ChevronDown, Plus, GitMerge } from 'lucide';
 import type { CompactGitStatus, GitDropdownInfo } from '../../types';
-import { theatreState, GIT_STATUS_IDLE_DELAY } from './state';
+import { theatreState, theatreCallbacks, GIT_STATUS_IDLE_DELAY } from './state';
 import { showToast } from '../importDialog';
 
 const gitIcons = { GitBranch, ChevronDown, Plus, GitMerge };
-
-// Forward declaration for circular dependency with diffPanel
-let toggleDiffPanelFn: (() => Promise<void>) | null = null;
-export function setToggleDiffPanel(fn: () => Promise<void>): void {
-  toggleDiffPanelFn = fn;
-}
 
 /**
  * Build git status HTML (pill with two click zones)
@@ -389,10 +383,10 @@ export function updateGitStatusElement(compactStatus: CompactGitStatus | null): 
 
       // Stats zone - toggles diff panel (only if dirty)
       const statsZone = headerContent.querySelector('.theatre-git-stats-zone--clickable');
-      if (statsZone && toggleDiffPanelFn) {
+      if (statsZone && theatreCallbacks.toggleDiffPanel) {
         statsZone.addEventListener('click', (e) => {
           e.stopPropagation();
-          toggleDiffPanelFn!();
+          theatreCallbacks.toggleDiffPanel!();
         });
       }
     }

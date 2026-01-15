@@ -23,8 +23,7 @@ import {
   toggleTask,
   deleteTask,
 } from './projectSettings';
-import type { RunConfig, LaunchResult, PtySpawnOptions, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult, CustomCommand, ProjectSettings, Task } from './types';
-import type { GitStatus, CompactGitStatus, GitDropdownInfo, ChangedFile, FileDiff } from './git';
+import type { RunConfig, LaunchResult, PtySpawnOptions, ExportResult, PreviewResult, ImportResult, CreateProjectOptions, CreateProjectResult, CustomCommand, ProjectSettings, Task, GitStatus, CompactGitStatus, GitDropdownInfo, ChangedFile, FileDiff } from './types';
 
 /**
  * Escapes a string for use in AppleScript

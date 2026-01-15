@@ -8,24 +8,13 @@ import type { PtyId, PtySpawnOptions, RunConfig } from '../../types';
 import {
   theatreState,
   taskTerminalMap,
+  theatreCallbacks,
   TheatreTerminal,
   SummaryType,
   MAX_THEATRE_TERMINALS,
 } from './state';
 import { showToast } from '../importDialog';
 import { scheduleGitStatusRefresh } from './gitStatus';
-
-// Forward declarations for circular dependencies
-let exitTheatreModeFn: (() => void) | null = null;
-let renderTasksListFn: (() => void) | null = null;
-
-export function setExitTheatreMode(fn: () => void): void {
-  exitTheatreModeFn = fn;
-}
-
-export function setRenderTasksList(fn: () => void): void {
-  renderTasksListFn = fn;
-}
 
 // Track pending summary updates (debounced)
 const pendingSummaryUpdates = new Map<PtyId, ReturnType<typeof setTimeout>>();
@@ -534,8 +523,8 @@ export function closeTheatreTerminal(index: number): void {
   for (const [taskId, ptyId] of taskTerminalMap) {
     if (ptyId === term.ptyId) {
       taskTerminalMap.delete(taskId);
-      if (theatreState.tasksPanelVisible && renderTasksListFn) {
-        renderTasksListFn();
+      if (theatreState.tasksPanelVisible && theatreCallbacks.renderTasksList) {
+        theatreCallbacks.renderTasksList();
       }
       break;
     }
@@ -552,8 +541,8 @@ export function closeTheatreTerminal(index: number): void {
 
   // If no terminals left, exit theatre mode
   if (theatreState.terminals.length === 0) {
-    if (exitTheatreModeFn) {
-      exitTheatreModeFn();
+    if (theatreCallbacks.exitTheatreMode) {
+      theatreCallbacks.exitTheatreMode();
     }
     return;
   }

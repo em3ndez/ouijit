@@ -4,3 +4,4 @@ export * from './runConfigs';
 export * from './formatDate';
 export * from './html';
 export * from './dropdown';
+export * from './toast';

@@ -7,6 +7,7 @@ import type { Project, RunConfig, ChangedFile } from '../../types';
 import {
   theatreState,
   projectSessions,
+  theatreCallbacks,
   ensureHiddenSessionsContainer,
   GIT_STATUS_PERIODIC_INTERVAL,
 } from './state';
@@ -14,7 +15,6 @@ import {
   toggleGitDropdown,
   hideGitDropdown,
   refreshGitStatus,
-  setToggleDiffPanel,
   performMergeIntoMain,
 } from './gitStatus';
 import {
@@ -27,8 +27,6 @@ import {
 import {
   addTheatreTerminal,
   updateCardStack,
-  setExitTheatreMode,
-  setRenderTasksList,
 } from './terminalCards';
 import {
   showTasksPanel,
@@ -45,10 +43,10 @@ import {
 
 const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge, ListTodo };
 
-// Initialize cross-module dependencies
-setToggleDiffPanel(toggleDiffPanel);
-setExitTheatreMode(exitTheatreMode);
-setRenderTasksList(renderTasksList);
+// Initialize cross-module callbacks in state (avoids circular dependencies)
+theatreCallbacks.toggleDiffPanel = toggleDiffPanel;
+theatreCallbacks.renderTasksList = renderTasksList;
+// Note: exitTheatreMode is set after function definition below
 
 /**
  * Enter theatre mode for the specified project
@@ -388,6 +386,9 @@ export function exitTheatreMode(): void {
   theatreState.projectPath = null;
   theatreState.projectData = null;
 }
+
+// Set the exitTheatreMode callback now that function is defined
+theatreCallbacks.exitTheatreMode = exitTheatreMode;
 
 /**
  * Permanently destroy all theatre sessions for a project

@@ -93,6 +93,17 @@ export const projectSessions = new Map<string, StoredTheatreSession>();
 export const taskTerminalMap = new Map<string, PtyId>();
 
 /**
+ * Cross-module callback registry
+ * Used to avoid circular dependencies between theatre modules.
+ * Callbacks are set by theatreMode.ts during initialization.
+ */
+export const theatreCallbacks = {
+  exitTheatreMode: null as (() => void) | null,
+  renderTasksList: null as (() => void) | null,
+  toggleDiffPanel: null as (() => Promise<void>) | null,
+};
+
+/**
  * Ensures the hidden container for storing detached theatre sessions exists
  */
 export function ensureHiddenSessionsContainer(): HTMLElement {

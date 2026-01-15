@@ -1,13 +1,5 @@
-/**
- * Git status information for a project
- */
-export interface GitStatus {
-  branch: string;
-  isDirty: boolean;
-}
-
-// Re-export extended git types from git.ts
-export type { GitDropdownInfo, ExtendedGitStatus, RecentBranch, UncommittedChanges, ChangedFile, DiffLine, DiffHunk, FileDiff, CompactGitStatus } from './git';
+// Re-export all git types from git.ts (single source of truth)
+export type { GitStatus, GitDropdownInfo, ExtendedGitStatus, RecentBranch, UncommittedChanges, ChangedFile, DiffLine, DiffHunk, FileDiff, CompactGitStatus } from './git';
 
 /**
  * Represents a run configuration for launching a project
