@@ -5,7 +5,7 @@ import { showCustomCommandDialog } from './customCommandDialog';
 import { stringToColor, getInitials } from '../utils/projectIcon';
 import { getConfigId, mergeRunConfigs } from '../utils/runConfigs';
 import { formatRelativeTime } from '../utils/formatDate';
-import { enterTheatreMode } from './terminalComponent';
+import { enterTheatreMode } from './theatre';
 
 /**
  * Creates a project icon element (image or placeholder)
