@@ -27,6 +27,7 @@ export interface TheatreTerminal {
   summaryType: SummaryType;
   outputBuffer: string;
   lastOscTitle: string;  // Last seen OSC terminal title
+  oscTitleHistory: Array<{ title: string; timestamp: number }>;  // Debug: history of OSC titles
   // Worktree support
   isWorktree: boolean;
   worktreePath?: string;
@@ -65,6 +66,12 @@ export const GIT_STATUS_PERIODIC_INTERVAL = 5000;
 export const theatreState = {
   // Header content for restoration on exit
   originalHeaderContent: null as string | null,
+
+  // Keyboard handler reference
+  escapeKeyHandler: null as ((e: KeyboardEvent) => void) | null,
+
+  // Debug: show OSC title overlay
+  oscDebugEnabled: false,
 
   // Git status refresh timers
   gitStatusIdleTimeout: null as ReturnType<typeof setTimeout> | null,

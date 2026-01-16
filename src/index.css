@@ -1577,6 +1577,42 @@ body.is-fullscreen .theatre-header-content {
   text-overflow: ellipsis;
 }
 
+.theatre-debug-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  transition: all var(--transition-fast);
+  -webkit-app-region: no-drag;
+  margin-left: 12px;
+}
+
+.theatre-debug-btn:hover {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+}
+
+.theatre-debug-btn--active {
+  background: rgba(218, 119, 242, 0.15);
+  border-color: rgba(218, 119, 242, 0.4);
+  color: #da77f2;
+  opacity: 1;
+}
+
+.theatre-debug-btn--active:hover {
+  background: rgba(218, 119, 242, 0.25);
+}
+
+.theatre-debug-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
 .theatre-exit-btn {
   width: 32px;
   height: 32px;
@@ -2459,6 +2495,123 @@ body > .diff-panel--visible {
 @keyframes terminal-status-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+
+/* OSC Title Debug Overlay */
+.osc-debug-overlay {
+  display: none;
+  flex-direction: column;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 320px;
+  max-height: calc(100% - 16px);
+  background: rgba(0, 0, 0, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  font-family: SF Mono, Monaco, Menlo, monospace;
+  font-size: 11px;
+  z-index: 100;
+  overflow: hidden;
+}
+
+.osc-debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.osc-debug-title {
+  color: #da77f2;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.osc-debug-close {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.osc-debug-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.osc-debug-current {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.osc-debug-label {
+  display: block;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.osc-debug-value {
+  display: block;
+  color: #69db7c;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.osc-debug-history {
+  padding: 10px 12px;
+  overflow-y: auto;
+  max-height: 300px;
+}
+
+.osc-debug-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.osc-debug-history-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.osc-debug-history-item:last-child {
+  border-bottom: none;
+}
+
+.osc-debug-time {
+  color: rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
+  font-size: 10px;
+}
+
+.osc-debug-history-item code {
+  color: #74c0fc;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.osc-debug-history-empty {
+  color: rgba(255, 255, 255, 0.3);
+  font-style: italic;
 }
 
 .theatre-card-close {

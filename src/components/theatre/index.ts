@@ -82,6 +82,7 @@ export {
   buildEmptyStateHtml,
   showStackEmptyState,
   hideStackEmptyState,
+  toggleOscDebug,
 } from './terminalCards';
 
 // Launch dropdown
