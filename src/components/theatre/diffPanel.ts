@@ -42,23 +42,20 @@ export function buildDiffPanelHtml(files: ChangedFile[], worktreeBranch?: string
   const fileName = firstFile.path.split('/').pop() || firstFile.path;
   const stats = formatDiffStats(firstFile.additions, firstFile.deletions);
 
-  // Context label for worktree mode
-  const contextLabel = worktreeBranch
-    ? `<span class="diff-context-label">${escapeHtml(worktreeBranch)} vs main</span>`
-    : '';
+  // Pre-populate header info for worktree mode
+  const headerInfo = worktreeBranch ? 'vs main' : '';
 
   return `
-    <div class="diff-panel">
+    <div class="diff-panel"${worktreeBranch ? ' data-worktree="true"' : ''}>
       <div class="diff-content">
         <div class="diff-content-header">
-          ${contextLabel}
           <div class="diff-file-selector" title="${escapeHtml(firstFile.path)}" data-additions="${firstFile.additions}" data-deletions="${firstFile.deletions}">
             <span class="diff-file-status diff-file-status--${statusLabel}">${statusLabel}</span>
             <span class="diff-file-selector-name">${escapeHtml(fileName)}</span>
             <span class="diff-file-selector-stats">${stats}</span>
             <i data-lucide="chevron-down" class="diff-file-selector-chevron"></i>
           </div>
-          <span class="diff-header-info"></span>
+          <span class="diff-header-info">${headerInfo}</span>
           <button class="diff-panel-close" title="Close diff panel">&times;</button>
         </div>
         <div class="diff-content-body"></div>
@@ -88,12 +85,45 @@ export function buildDiffFileDropdownHtml(files: ChangedFile[], selectedPath: st
 }
 
 /**
+ * Find the diff panel - either in the active terminal's card or in the document
+ */
+function findDiffPanel(): Element | null {
+  const currentTerminals = terminals.value;
+  const currentActiveIndex = activeIndex.value;
+
+  // First try to find panel in active terminal's card
+  if (currentTerminals.length > 0 && currentActiveIndex < currentTerminals.length) {
+    const activeTerm = currentTerminals[currentActiveIndex];
+    const panel = activeTerm.container.querySelector('.diff-panel');
+    if (panel) return panel;
+  }
+
+  // Fallback to document-level panel (legacy)
+  return document.querySelector('.diff-panel');
+}
+
+/**
+ * Get the active terminal if it has a diff panel open
+ */
+function getActiveTerminalWithDiff(): TheatreTerminal | null {
+  const currentTerminals = terminals.value;
+  const currentActiveIndex = activeIndex.value;
+
+  if (currentTerminals.length > 0 && currentActiveIndex < currentTerminals.length) {
+    const activeTerm = currentTerminals[currentActiveIndex];
+    if (activeTerm.diffPanelOpen) return activeTerm;
+  }
+
+  return null;
+}
+
+/**
  * Show the file dropdown menu
  */
 export function showDiffFileDropdown(): void {
   if (diffFileDropdownVisible.value || !diffPanelSelectedFile.value) return;
 
-  const panel = document.querySelector('.diff-panel');
+  const panel = findDiffPanel();
   const selector = panel?.querySelector('.diff-file-selector');
   if (!selector) return;
 
@@ -112,13 +142,23 @@ export function showDiffFileDropdown(): void {
     dropdown.classList.add('visible');
   });
 
+  // Get terminal context for proper file selection
+  const activeTerm = getActiveTerminalWithDiff();
+  const isWorktreeMode = activeTerm?.diffPanelMode === 'worktree' || diffPanelMode.value === 'worktree';
+
   // Wire up item clicks
   dropdown.querySelectorAll('.diff-file-dropdown-item').forEach(item => {
     item.addEventListener('click', (e) => {
       e.stopPropagation();
       const filePath = (item as HTMLElement).dataset.path;
       if (filePath) {
-        selectDiffFile(filePath);
+        if (isWorktreeMode && activeTerm) {
+          selectTerminalWorktreeDiffFile(activeTerm, filePath);
+        } else if (activeTerm) {
+          selectTerminalDiffFile(activeTerm, filePath);
+        } else {
+          selectDiffFile(filePath);
+        }
       }
     });
   });
@@ -148,7 +188,7 @@ export function hideDiffFileDropdown(): void {
 
   diffFileDropdownVisible.value = false;
 
-  const panel = document.querySelector('.diff-panel');
+  const panel = findDiffPanel();
   const selector = panel?.querySelector('.diff-file-selector');
   const dropdown = selector?.querySelector('.diff-file-dropdown');
 
@@ -243,9 +283,11 @@ export async function selectDiffFile(filePath: string): Promise<void> {
     }
   }
 
-  // Clear header info while loading
+  // Clear header info while loading (but preserve "vs main" for worktree mode)
   const headerInfo = panel.querySelector('.diff-header-info');
-  if (headerInfo) headerInfo.textContent = '';
+  if (headerInfo && diffPanelMode.value !== 'worktree') {
+    headerInfo.textContent = '';
+  }
 
   // Fetch and render diff
   const contentBody = panel.querySelector('.diff-content-body');
@@ -268,8 +310,8 @@ export async function selectDiffFile(filePath: string): Promise<void> {
   if (diff) {
     contentBody.innerHTML = renderDiffContentHtml(diff);
 
-    // Update header info with hunk count
-    if (headerInfo && diff.hunks.length > 0) {
+    // Update header info with hunk count (but keep "vs main" for worktree mode)
+    if (headerInfo && diff.hunks.length > 0 && diffPanelMode.value !== 'worktree') {
       const hunkText = diff.hunks.length === 1 ? '1 change' : `${diff.hunks.length} changes`;
       headerInfo.textContent = hunkText;
     }
@@ -551,9 +593,11 @@ export async function selectTerminalDiffFile(term: TheatreTerminal, filePath: st
     }
   }
 
-  // Clear header info while loading
+  // Clear header info while loading (but preserve "vs main" for worktree mode)
   const headerInfo = panel.querySelector('.diff-header-info');
-  if (headerInfo) headerInfo.textContent = '';
+  if (headerInfo && term.diffPanelMode !== 'worktree') {
+    headerInfo.textContent = '';
+  }
 
   // Fetch and render diff
   const contentBody = panel.querySelector('.diff-content-body');
@@ -567,8 +611,8 @@ export async function selectTerminalDiffFile(term: TheatreTerminal, filePath: st
   if (diff) {
     contentBody.innerHTML = renderDiffContentHtml(diff);
 
-    // Update header info with hunk count
-    if (headerInfo && diff.hunks.length > 0) {
+    // Update header info with hunk count (but keep "vs main" for worktree mode)
+    if (headerInfo && diff.hunks.length > 0 && term.diffPanelMode !== 'worktree') {
       const hunkText = diff.hunks.length === 1 ? '1 change' : `${diff.hunks.length} changes`;
       headerInfo.textContent = hunkText;
     }
@@ -786,10 +830,6 @@ export async function selectTerminalWorktreeDiffFile(term: TheatreTerminal, file
     }
   }
 
-  // Clear header info while loading
-  const headerInfo = panel.querySelector('.diff-header-info');
-  if (headerInfo) headerInfo.textContent = '';
-
   // Fetch and render diff
   const contentBody = panel.querySelector('.diff-content-body');
   if (!contentBody) return;
@@ -801,12 +841,7 @@ export async function selectTerminalWorktreeDiffFile(term: TheatreTerminal, file
 
   if (diff) {
     contentBody.innerHTML = renderDiffContentHtml(diff);
-
-    // Update header info with hunk count
-    if (headerInfo && diff.hunks.length > 0) {
-      const hunkText = diff.hunks.length === 1 ? '1 change' : `${diff.hunks.length} changes`;
-      headerInfo.textContent = hunkText;
-    }
+    // Keep header info as "vs main" for worktree diffs
   } else {
     contentBody.innerHTML = '<div class="diff-empty-state">Unable to load diff</div>';
   }

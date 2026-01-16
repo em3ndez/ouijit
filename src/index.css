@@ -3085,6 +3085,7 @@ body > .diff-panel--visible {
 .theatre-worktree-wrapper {
   position: relative;
   -webkit-app-region: no-drag;
+  margin-left: 12px;
 }
 
 .theatre-worktree-btn {
