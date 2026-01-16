@@ -8,6 +8,7 @@ import { theatreState, MAX_THEATRE_TERMINALS } from './state';
 import { projectPath, terminals, worktreeDropdownVisible } from './signals';
 import { showToast } from '../importDialog';
 import { addTheatreTerminal } from './terminalCards';
+import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../../utils/hotkeys';
 
 const worktreeIcons = { GitBranchPlus, Terminal, Trash2 };
 
@@ -73,6 +74,9 @@ function showWorktreeNamePrompt(): Promise<string | null> {
     const createBtn = dialog.querySelector('[data-action="create"]') as HTMLButtonElement;
 
     const cleanup = () => {
+      unregisterHotkey('escape', Scopes.MODAL);
+      unregisterHotkey('enter', Scopes.MODAL);
+      popScope();
       dialog.classList.remove('import-dialog--visible');
       overlay.classList.remove('modal-overlay--visible');
       setTimeout(() => overlay.remove(), 150);
@@ -95,10 +99,10 @@ function showWorktreeNamePrompt(): Promise<string | null> {
       if (e.target === overlay) handleCancel();
     });
 
-    nameInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') handleCreate();
-      if (e.key === 'Escape') handleCancel();
-    });
+    // Set up hotkey scope for modal
+    pushScope(Scopes.MODAL);
+    registerHotkey('escape', Scopes.MODAL, handleCancel);
+    registerHotkey('enter', Scopes.MODAL, handleCreate);
 
     // Animate in and focus
     requestAnimationFrame(() => {
@@ -107,6 +111,22 @@ function showWorktreeNamePrompt(): Promise<string | null> {
       nameInput.focus();
     });
   });
+}
+
+/**
+ * Create a new agent shell (worktree) - can be called from keyboard shortcut
+ */
+export async function createNewAgentShell(): Promise<void> {
+  // Check if at max terminals
+  if (terminals.value.length >= MAX_THEATRE_TERMINALS) {
+    showToast(`Maximum ${MAX_THEATRE_TERMINALS} terminals`, 'info');
+    return;
+  }
+
+  const name = await showWorktreeNamePrompt();
+  if (name !== null) {
+    await addTheatreTerminal(undefined, { useWorktree: true, worktreeName: name || undefined });
+  }
 }
 
 /**
@@ -125,17 +145,14 @@ export async function buildWorktreeDropdownContent(dropdown: HTMLElement): Promi
   agentText.className = 'launch-option-name';
   agentText.textContent = 'New Agent Shell';
   agentOption.appendChild(agentText);
-  const agentDesc = document.createElement('span');
-  agentDesc.className = 'launch-option-source';
-  agentDesc.textContent = 'isolated worktree';
-  agentOption.appendChild(agentDesc);
+  const agentKbd = document.createElement('kbd');
+  agentKbd.className = 'launch-option-kbd';
+  agentKbd.textContent = '⌘N';
+  agentOption.appendChild(agentKbd);
   agentOption.addEventListener('click', async (e) => {
     e.stopPropagation();
     hideWorktreeDropdown();
-    const name = await showWorktreeNamePrompt();
-    if (name !== null) {
-      await addTheatreTerminal(undefined, { useWorktree: true, worktreeName: name || undefined });
-    }
+    await createNewAgentShell();
   });
   dropdown.appendChild(agentOption);
 

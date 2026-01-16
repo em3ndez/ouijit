@@ -1,0 +1,88 @@
+/**
+ * Centralized hotkey management using hotkeys-js
+ * Provides scoped keyboard shortcuts that don't conflict across contexts
+ */
+
+import hotkeys from 'hotkeys-js';
+
+// Define all scopes
+export const Scopes = {
+  APP: 'app',
+  PROJECT_LIST: 'project-list',
+  THEATRE: 'theatre',
+  MODAL: 'modal',
+  DROPDOWN: 'dropdown',
+} as const;
+
+type Scope = (typeof Scopes)[keyof typeof Scopes];
+
+// Scope stack for nested contexts (modal on top of theatre, etc.)
+const scopeStack: Scope[] = [Scopes.APP];
+
+/**
+ * Push a new scope onto the stack and activate it
+ */
+export function pushScope(scope: Scope): void {
+  scopeStack.push(scope);
+  hotkeys.setScope(scope);
+}
+
+/**
+ * Pop the current scope and return to the previous one
+ */
+export function popScope(): void {
+  if (scopeStack.length > 1) {
+    scopeStack.pop();
+    hotkeys.setScope(scopeStack[scopeStack.length - 1]);
+  }
+}
+
+/**
+ * Get the current active scope
+ */
+export function getCurrentScope(): Scope {
+  return scopeStack[scopeStack.length - 1];
+}
+
+/**
+ * Register a hotkey for a specific scope
+ */
+export function registerHotkey(
+  keys: string,
+  scope: Scope,
+  callback: (event: KeyboardEvent) => void
+): void {
+  hotkeys(keys, { scope }, (event) => {
+    event.preventDefault();
+    callback(event);
+  });
+}
+
+/**
+ * Unregister a hotkey
+ */
+export function unregisterHotkey(keys: string, scope: Scope): void {
+  hotkeys.unbind(keys, scope);
+}
+
+/**
+ * Configure hotkeys-js to work in input fields when needed
+ * By default, hotkeys-js ignores events from input/textarea/select
+ */
+export function initHotkeys(): void {
+  // Allow hotkeys in inputs only for specific keys (Escape, Enter)
+  hotkeys.filter = (event) => {
+    const target = event.target as HTMLElement;
+    const tagName = target.tagName;
+    const isInput =
+      tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
+
+    // Always allow Escape and Enter in inputs (for modal dismissal/submission)
+    if (event.key === 'Escape' || event.key === 'Enter') {
+      return true;
+    }
+
+    // Block other hotkeys when in input fields
+    return !isInput;
+  };
+}

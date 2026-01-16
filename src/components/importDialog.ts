@@ -1,4 +1,5 @@
 import type { OuijitPackage } from '../types';
+import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../utils/hotkeys';
 
 /**
  * Formats file size in human readable format
@@ -80,6 +81,8 @@ export function showImportDialog(pkg: OuijitPackage): Promise<boolean> {
     });
 
     const cleanup = () => {
+      unregisterHotkey('escape', Scopes.MODAL);
+      popScope();
       overlay.classList.remove('modal-overlay--visible');
       dialog.classList.remove('import-dialog--visible');
       setTimeout(() => overlay.remove(), 200);
@@ -102,15 +105,12 @@ export function showImportDialog(pkg: OuijitPackage): Promise<boolean> {
       }
     });
 
-    // Handle escape key
-    const handleKeydown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        cleanup();
-        resolve(false);
-        document.removeEventListener('keydown', handleKeydown);
-      }
-    };
-    document.addEventListener('keydown', handleKeydown);
+    // Set up hotkey scope for modal
+    pushScope(Scopes.MODAL);
+    registerHotkey('escape', Scopes.MODAL, () => {
+      cleanup();
+      resolve(false);
+    });
   });
 }
 

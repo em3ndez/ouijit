@@ -1,4 +1,5 @@
 import type { CustomCommand } from '../types';
+import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../utils/hotkeys';
 
 export interface CustomCommandDialogResult {
   saved: boolean;
@@ -104,6 +105,9 @@ export function showCustomCommandDialog(
     });
 
     const cleanup = () => {
+      unregisterHotkey('escape', Scopes.MODAL);
+      unregisterHotkey('enter', Scopes.MODAL);
+      popScope();
       overlay.classList.remove('modal-overlay--visible');
       dialog.classList.remove('import-dialog--visible');
       setTimeout(() => overlay.remove(), 200);
@@ -156,16 +160,14 @@ export function showCustomCommandDialog(
       }
     });
 
-    // Handle escape key and enter key
-    const handleKeydown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        cleanup();
-        resolve(null);
-        document.removeEventListener('keydown', handleKeydown);
-      } else if (e.key === 'Enter' && !saveBtn.disabled) {
-        saveBtn.click();
-      }
-    };
-    document.addEventListener('keydown', handleKeydown);
+    // Set up hotkey scope for modal
+    pushScope(Scopes.MODAL);
+    registerHotkey('escape', Scopes.MODAL, () => {
+      cleanup();
+      resolve(null);
+    });
+    registerHotkey('enter', Scopes.MODAL, () => {
+      if (!saveBtn.disabled) saveBtn.click();
+    });
   });
 }

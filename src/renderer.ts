@@ -12,6 +12,7 @@ import { renderProjects } from './components/projectGrid';
 import { setupSearch } from './components/searchBar';
 import { showImportDialog, showToast } from './components/importDialog';
 import { showNewProjectDialog } from './components/newProjectDialog';
+import { initHotkeys } from './utils/hotkeys';
 
 // Declare the global window.api interface
 declare global {
@@ -230,6 +231,9 @@ async function initialize(): Promise<void> {
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
+  // Initialize hotkey system
+  initHotkeys();
+
   // Initialize Lucide icons
   createIcons({
     icons: { Search, FolderOpen, Download, RefreshCw, Plus },

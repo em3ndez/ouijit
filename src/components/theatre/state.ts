@@ -66,9 +66,6 @@ export const theatreState = {
   // Header content for restoration on exit
   originalHeaderContent: null as string | null,
 
-  // Keyboard handler reference
-  escapeKeyHandler: null as ((e: KeyboardEvent) => void) | null,
-
   // Git status refresh timers
   gitStatusIdleTimeout: null as ReturnType<typeof setTimeout> | null,
   gitStatusPeriodicInterval: null as ReturnType<typeof setInterval> | null,

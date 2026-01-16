@@ -698,20 +698,22 @@ export function buildEmptyStateHtml(): string {
   return `
     <div class="theatre-stack-empty">
       <i data-lucide="git-branch-plus" class="theatre-stack-empty-icon"></i>
-      <h3 class="theatre-stack-empty-title">No terminals open</h3>
+      <h3 class="theatre-stack-empty-title">New Agent Shell</h3>
       <p class="theatre-stack-empty-description">
-        Launch a command or create an agent shell to get started.
+        Create an isolated worktree for your agent to work in.
       </p>
-      <div class="theatre-stack-empty-actions">
-        <button class="theatre-stack-empty-btn theatre-stack-empty-btn--primary" data-action="new-agent-shell">
-          <i data-lucide="git-branch-plus"></i>
-          New Agent Shell
+      <form class="theatre-stack-empty-form">
+        <input
+          type="text"
+          class="theatre-stack-empty-input"
+          placeholder="Task name, e.g. fix login bug"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button type="submit" class="theatre-stack-empty-btn theatre-stack-empty-btn--primary">
+          Create
         </button>
-        <button class="theatre-stack-empty-btn theatre-stack-empty-btn--secondary" data-action="run-command">
-          <i data-lucide="play"></i>
-          Run Command
-        </button>
-      </div>
+      </form>
       <p class="theatre-stack-empty-hint">
         Press <kbd>Esc</kbd> to exit theatre mode
       </p>
@@ -729,9 +731,11 @@ export function showStackEmptyState(): void {
   // Check if empty state already exists
   let emptyState = stack.querySelector('.theatre-stack-empty') as HTMLElement;
   if (emptyState) {
-    // Already exists, just make it visible
+    // Already exists, just make it visible and focus input
     requestAnimationFrame(() => {
       emptyState.classList.add('theatre-stack-empty--visible');
+      const input = emptyState.querySelector('.theatre-stack-empty-input') as HTMLInputElement;
+      if (input) input.focus();
     });
     return;
   }
@@ -741,29 +745,24 @@ export function showStackEmptyState(): void {
   emptyState = stack.querySelector('.theatre-stack-empty') as HTMLElement;
 
   // Initialize icons
-  createIcons({ icons: { GitBranchPlus, Play }, nodes: [emptyState] });
+  createIcons({ icons: { GitBranchPlus }, nodes: [emptyState] });
 
-  // Wire up button handlers
-  const newAgentShellBtn = emptyState.querySelector('[data-action="new-agent-shell"]');
-  if (newAgentShellBtn) {
-    newAgentShellBtn.addEventListener('click', async () => {
-      const { toggleWorktreeDropdown } = await import('./worktreeDropdown');
-      toggleWorktreeDropdown();
+  // Wire up form submission
+  const form = emptyState.querySelector('.theatre-stack-empty-form') as HTMLFormElement;
+  const input = emptyState.querySelector('.theatre-stack-empty-input') as HTMLInputElement;
+
+  if (form && input) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = input.value.trim() || undefined;
+      await addTheatreTerminal(undefined, { useWorktree: true, worktreeName: name });
     });
   }
 
-  const runCommandBtn = emptyState.querySelector('[data-action="run-command"]');
-  if (runCommandBtn) {
-    runCommandBtn.addEventListener('click', async () => {
-      // Import dynamically to avoid circular dependencies
-      const { toggleLaunchDropdown } = await import('./launchDropdown');
-      toggleLaunchDropdown();
-    });
-  }
-
-  // Animate in
+  // Animate in and focus input
   requestAnimationFrame(() => {
     emptyState.classList.add('theatre-stack-empty--visible');
+    if (input) input.focus();
   });
 }
 

@@ -680,6 +680,18 @@ textarea,
   transition: margin-right var(--transition-fast);
 }
 
+.launch-option-kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  margin-left: auto;
+  font-family: 'SF Mono', Monaco, Menlo, monospace;
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
 /* Slide source text left when delete button appears */
 .launch-option:hover .launch-option-source:has(+ .launch-option-delete) {
   margin-right: calc(18px + var(--spacing-sm));
@@ -2869,22 +2881,48 @@ body > .diff-panel--visible {
   margin-bottom: var(--spacing-xl);
 }
 
-.theatre-stack-empty-actions {
+.theatre-stack-empty-form {
   display: flex;
   gap: var(--spacing-sm);
+  width: 100%;
+  max-width: 360px;
+}
+
+.theatre-stack-empty-input {
+  flex: 1;
+  padding: 10px 14px;
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: all var(--transition-fast);
+}
+
+.theatre-stack-empty-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.theatre-stack-empty-input:focus {
+  border-color: var(--color-accent);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
 }
 
 .theatre-stack-empty-btn {
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-xs);
-  padding: 10px 16px;
+  padding: 10px 20px;
   font-family: var(--font-family);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   border: none;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-md);
   transition: all var(--transition-fast);
+  flex-shrink: 0;
 }
 
 .theatre-stack-empty-btn--primary {
@@ -2900,22 +2938,6 @@ body > .diff-panel--visible {
 
 .theatre-stack-empty-btn--primary:active {
   transform: translateY(0);
-}
-
-.theatre-stack-empty-btn--secondary {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.theatre-stack-empty-btn--secondary:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.theatre-stack-empty-btn svg {
-  width: 16px;
-  height: 16px;
 }
 
 .theatre-stack-empty-hint {
@@ -2954,15 +2976,19 @@ body > .diff-panel--visible {
     color: rgba(0, 0, 0, 0.45);
   }
 
-  .theatre-stack-empty-btn--secondary {
+  .theatre-stack-empty-input {
+    color: rgba(0, 0, 0, 0.9);
     background: rgba(0, 0, 0, 0.04);
-    color: rgba(0, 0, 0, 0.6);
     border-color: rgba(0, 0, 0, 0.1);
   }
 
-  .theatre-stack-empty-btn--secondary:hover {
-    background: rgba(0, 0, 0, 0.08);
-    color: rgba(0, 0, 0, 0.8);
+  .theatre-stack-empty-input::placeholder {
+    color: rgba(0, 0, 0, 0.35);
+  }
+
+  .theatre-stack-empty-input:focus {
+    background: rgba(0, 0, 0, 0.06);
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12);
   }
 
   .theatre-stack-empty-hint {

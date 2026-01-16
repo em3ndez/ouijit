@@ -44,7 +44,8 @@ import {
   hideLaunchDropdown,
   runDefaultCommand,
 } from './launchDropdown';
-import { toggleWorktreeDropdown } from './worktreeDropdown';
+import { toggleWorktreeDropdown, createNewAgentShell } from './worktreeDropdown';
+import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../../utils/hotkeys';
 
 const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch, GitBranchPlus, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge, Terminal };
 
@@ -236,11 +237,10 @@ export async function enterTheatreMode(
     }
   }
 
-  // 4. Keyboard handler (Escape to exit)
-  theatreState.escapeKeyHandler = (e) => {
-    if (e.key === 'Escape') exitTheatreMode();
-  };
-  document.addEventListener('keydown', theatreState.escapeKeyHandler);
+  // 4. Set up keyboard shortcuts for theatre mode
+  pushScope(Scopes.THEATRE);
+  registerHotkey('escape', Scopes.THEATRE, () => exitTheatreMode());
+  registerHotkey('command+n', Scopes.THEATRE, () => createNewAgentShell());
 
   // 5. Start periodic git status refresh (for long-running commands)
   // This now refreshes all terminals' git status
@@ -338,11 +338,10 @@ export function exitTheatreMode(): void {
     }
   }
 
-  // 4. Remove escape handler
-  if (theatreState.escapeKeyHandler) {
-    document.removeEventListener('keydown', theatreState.escapeKeyHandler);
-    theatreState.escapeKeyHandler = null;
-  }
+  // 4. Remove keyboard shortcuts and pop scope
+  unregisterHotkey('escape', Scopes.THEATRE);
+  unregisterHotkey('command+n', Scopes.THEATRE);
+  popScope();
 
   // 5. Clear git status timers
   if (theatreState.gitStatusIdleTimeout) {
