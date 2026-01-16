@@ -43,19 +43,16 @@ export {
   cleanupEffects,
 } from './effects';
 
-// Git status
+// Git status (per-terminal)
 export {
-  buildGitStatusHtml,
-  buildGitDropdownHtml,
-  switchToBranch,
-  createNewBranch,
-  performMergeIntoMain,
-  showGitDropdown,
   hideGitDropdown,
-  toggleGitDropdown,
-  updateGitStatusElement,
   refreshGitStatus,
   scheduleGitStatusRefresh,
+  getTerminalGitPath,
+  scheduleTerminalGitStatusRefresh,
+  refreshTerminalGitStatus,
+  refreshAllTerminalGitStatus,
+  buildCardGitStatusHtml,
 } from './gitStatus';
 
 // Diff panel
