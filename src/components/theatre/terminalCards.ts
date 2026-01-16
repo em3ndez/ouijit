@@ -313,8 +313,6 @@ export function createTheatreCard(label: string, index: number): HTMLElement {
     </div>
     <div class="theatre-card-label-right">
       <button class="theatre-card-action theatre-card-action--worktree" data-action="run" title="Run default command" style="display: none;"><i data-lucide="play"></i></button>
-      <button class="theatre-card-action theatre-card-action--worktree" data-action="diff" title="View diff vs main" style="display: none;"><i data-lucide="git-compare"></i></button>
-      <button class="theatre-card-action theatre-card-action--worktree" data-action="merge" title="Merge into main" style="display: none;"><i data-lucide="git-merge"></i></button>
       <div class="theatre-card-git-wrapper"></div>
       <button class="theatre-card-close" title="Close terminal">&times;</button>
     </div>
@@ -359,27 +357,11 @@ export function setupWorktreeCardActions(term: TheatreTerminal): void {
 
   // Wire up action buttons
   const runBtn = labelEl.querySelector('[data-action="run"]');
-  const diffBtn = labelEl.querySelector('[data-action="diff"]');
-  const mergeBtn = labelEl.querySelector('[data-action="merge"]');
 
   if (runBtn) {
     runBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       await runDefaultInWorktreeCard(term);
-    });
-  }
-
-  if (diffBtn) {
-    diffBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await toggleTerminalWorktreeDiffPanel(term);
-    });
-  }
-
-  if (mergeBtn) {
-    mergeBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await mergeWorktreeFromCard(term);
     });
   }
 }
@@ -417,25 +399,6 @@ async function runDefaultInWorktreeCard(term: TheatreTerminal): Promise<void> {
   };
 
   await addTheatreTerminal(defaultConfig, { existingWorktree: worktreeInfo });
-}
-
-/**
- * Merge worktree branch into main from a card action
- */
-async function mergeWorktreeFromCard(term: TheatreTerminal): Promise<void> {
-  const path = projectPath.value;
-  if (!path || !term.worktreeBranch) return;
-
-  const confirmed = confirm(`Merge "${term.worktreeBranch}" into main?`);
-  if (!confirmed) return;
-
-  const result = await window.api.worktree.merge(path, term.worktreeBranch);
-  if (result.success) {
-    showToast(`Merged ${term.worktreeBranch} into main`, 'success');
-    await refreshGitStatus();
-  } else {
-    showToast(result.error || 'Merge failed', 'error');
-  }
 }
 
 /**
