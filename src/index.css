@@ -3076,21 +3076,16 @@ body > .diff-panel--visible {
   border-radius: var(--radius-md);
   transition: all var(--transition-fast);
   flex-shrink: 0;
-}
-
-.theatre-stack-empty-btn--primary {
   background: var(--color-accent);
   color: white;
 }
 
-.theatre-stack-empty-btn--primary:hover {
+.theatre-stack-empty-btn:hover {
   background: var(--color-accent-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
 }
 
-.theatre-stack-empty-btn--primary:active {
-  transform: translateY(0);
+.theatre-stack-empty-btn:active {
+  opacity: 0.9;
 }
 
 .theatre-stack-empty-hint {

@@ -2,7 +2,7 @@
  * Theatre mode orchestration - enter/exit, session management
  */
 
-import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch, GitBranchPlus, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge, Terminal, Bug } from 'lucide';
+import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch, ListTodo, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge, Terminal, Bug } from 'lucide';
 import type { Project, RunConfig, ChangedFile } from '../../types';
 import {
   theatreState,
@@ -48,7 +48,7 @@ import {
 import { toggleWorktreeDropdown, createNewAgentShell } from './worktreeDropdown';
 import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../../utils/hotkeys';
 
-const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch, GitBranchPlus, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge, Terminal, Bug };
+const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch, ListTodo, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge, Terminal, Bug };
 
 /**
  * Enter theatre mode for the specified project

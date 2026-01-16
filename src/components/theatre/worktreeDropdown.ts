@@ -47,7 +47,7 @@ function showWorktreeNamePrompt(): Promise<string | null> {
     dialog.style.maxWidth = '340px';
 
     dialog.innerHTML = `
-      <h2 class="import-dialog-title">New Agent Shell</h2>
+      <h2 class="import-dialog-title">New Task</h2>
       <div class="new-project-form">
         <div class="form-group">
           <label class="form-label" for="worktree-name">Task name</label>
@@ -143,7 +143,7 @@ export async function buildWorktreeDropdownContent(dropdown: HTMLElement): Promi
   agentOption.className = 'launch-option';
   const agentText = document.createElement('span');
   agentText.className = 'launch-option-name';
-  agentText.textContent = 'New Agent Shell';
+  agentText.textContent = 'New Task';
   agentOption.appendChild(agentText);
   const agentKbd = document.createElement('kbd');
   agentKbd.className = 'launch-option-kbd';
@@ -165,7 +165,7 @@ export async function buildWorktreeDropdownContent(dropdown: HTMLElement): Promi
 
     const worktreeLabel = document.createElement('div');
     worktreeLabel.className = 'launch-dropdown-section-label';
-    worktreeLabel.textContent = 'Existing Worktrees';
+    worktreeLabel.textContent = 'Previous Tasks';
     dropdown.appendChild(worktreeLabel);
 
     for (const wt of worktrees) {
@@ -191,15 +191,15 @@ export async function buildWorktreeDropdownContent(dropdown: HTMLElement): Promi
       // Remove button
       const removeBtn = document.createElement('button');
       removeBtn.className = 'launch-option-action launch-option-action--danger';
-      removeBtn.title = 'Remove worktree';
+      removeBtn.title = 'Delete task';
       removeBtn.innerHTML = '<i data-lucide="trash-2"></i>';
       removeBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const confirmed = confirm(`Remove worktree "${wt.branch}"? This will delete the branch.`);
+        const confirmed = confirm(`Delete "${formatBranchNameForDisplay(wt.branch)}"?`);
         if (confirmed && path) {
           const result = await window.api.worktree.remove(path, wt.path);
           if (result.success) {
-            showToast('Worktree removed', 'success');
+            showToast('Task deleted', 'success');
             await buildWorktreeDropdownContent(dropdown); // Refresh list
           } else {
             showToast(result.error || 'Failed to remove', 'error');

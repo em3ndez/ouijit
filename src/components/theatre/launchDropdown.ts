@@ -2,7 +2,7 @@
  * Launch dropdown for theatre mode - command selection and project actions
  */
 
-import { createIcons, ChevronDown, Play, Plus, FolderOpen, Star, X, GitBranchPlus, Bug } from 'lucide';
+import { createIcons, ChevronDown, Play, Plus, FolderOpen, Star, X, ListTodo, Bug } from 'lucide';
 import type { RunConfig } from '../../types';
 import { theatreState, MAX_THEATRE_TERMINALS } from './state';
 import { projectPath, projectData, terminals, launchDropdownVisible } from './signals';
@@ -12,7 +12,7 @@ import { showToast } from '../importDialog';
 import { showCustomCommandDialog } from '../customCommandDialog';
 import { addTheatreTerminal } from './terminalCards';
 
-const launchIcons = { ChevronDown, Play, Plus, FolderOpen, Star, X, GitBranchPlus, Bug };
+const launchIcons = { ChevronDown, Play, Plus, FolderOpen, Star, X, ListTodo, Bug };
 
 /**
  * Build the theatre mode header content
@@ -34,8 +34,8 @@ export function buildTheatreHeader(): string {
         <span class="theatre-project-path">${project.path}</span>
       </div>
       <div class="theatre-worktree-wrapper">
-        <button class="theatre-worktree-btn" title="Agent Worktrees">
-          <i data-lucide="git-branch-plus"></i>
+        <button class="theatre-worktree-btn" title="Tasks">
+          <i data-lucide="list-todo"></i>
         </button>
       </div>
       <div class="theatre-launch-wrapper">

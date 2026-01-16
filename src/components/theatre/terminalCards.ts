@@ -4,7 +4,7 @@
 
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { createIcons, Terminal as TerminalIcon, Play, GitCompare, GitMerge, GitBranch, GitBranchPlus } from 'lucide';
+import { createIcons, Terminal as TerminalIcon, Play, GitCompare, GitMerge, GitBranch } from 'lucide';
 import type { PtyId, PtySpawnOptions, RunConfig, WorktreeInfo } from '../../types';
 import {
   TheatreTerminal,
@@ -822,26 +822,16 @@ export function closeTheatreTerminal(index: number): void {
 export function buildEmptyStateHtml(): string {
   return `
     <div class="theatre-stack-empty">
-      <i data-lucide="git-branch-plus" class="theatre-stack-empty-icon"></i>
-      <h3 class="theatre-stack-empty-title">New Agent Shell</h3>
-      <p class="theatre-stack-empty-description">
-        Create an isolated worktree for your agent to work in.
-      </p>
       <form class="theatre-stack-empty-form">
         <input
           type="text"
           class="theatre-stack-empty-input"
-          placeholder="Task name, e.g. fix login bug"
+          placeholder="fix login bug, add dark mode..."
           autocomplete="off"
           spellcheck="false"
         />
-        <button type="submit" class="theatre-stack-empty-btn theatre-stack-empty-btn--primary">
-          Create
-        </button>
+        <button type="submit" class="theatre-stack-empty-btn">Start</button>
       </form>
-      <p class="theatre-stack-empty-hint">
-        Press <kbd>Esc</kbd> to exit theatre mode
-      </p>
     </div>
   `;
 }
@@ -868,9 +858,6 @@ export function showStackEmptyState(): void {
   // Create and insert empty state
   stack.insertAdjacentHTML('beforeend', buildEmptyStateHtml());
   emptyState = stack.querySelector('.theatre-stack-empty') as HTMLElement;
-
-  // Initialize icons
-  createIcons({ icons: { GitBranchPlus }, nodes: [emptyState] });
 
   // Wire up form submission
   const form = emptyState.querySelector('.theatre-stack-empty-form') as HTMLFormElement;
