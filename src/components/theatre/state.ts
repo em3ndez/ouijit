@@ -5,7 +5,7 @@
 
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import type { PtyId, Project, ChangedFile } from '../../types';
+import type { PtyId, Project, ChangedFile, CompactGitStatus } from '../../types';
 
 // Summary type for terminal status indication
 export type SummaryType = 'error' | 'listening' | 'building' | 'watching' | 'thinking' | 'idle';
@@ -31,6 +31,12 @@ export interface TheatreTerminal {
   isWorktree: boolean;
   worktreePath?: string;
   worktreeBranch?: string;
+  // Per-terminal git status and diff panel state
+  gitStatus: CompactGitStatus | null;
+  diffPanelOpen: boolean;
+  diffPanelFiles: ChangedFile[];
+  diffPanelSelectedFile: string | null;
+  diffPanelMode: 'uncommitted' | 'worktree';  // What the diff panel is showing
 }
 
 // Per-project session storage for preserving theatre mode across project switches

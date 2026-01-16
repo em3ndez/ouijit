@@ -4,7 +4,7 @@
 
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { createIcons, Terminal as TerminalIcon, Play, GitCompare, GitMerge } from 'lucide';
+import { createIcons, Terminal as TerminalIcon, Play, GitCompare, GitMerge, GitBranch } from 'lucide';
 import type { PtyId, PtySpawnOptions, RunConfig, WorktreeInfo } from '../../types';
 import {
   taskTerminalMap,
@@ -21,11 +21,11 @@ import {
   tasksPanelVisible,
 } from './signals';
 import { showToast } from '../importDialog';
-import { scheduleGitStatusRefresh, refreshGitStatus } from './gitStatus';
-import { showWorktreeDiffPanel } from './diffPanel';
+import { scheduleGitStatusRefresh, refreshGitStatus, refreshTerminalGitStatus, buildCardGitStatusHtml, getTerminalGitPath, scheduleTerminalGitStatusRefresh } from './gitStatus';
+import { toggleTerminalDiffPanel, toggleTerminalWorktreeDiffPanel } from './diffPanel';
 import { mergeRunConfigs, getConfigId } from '../../utils/runConfigs';
 
-const cardIcons = { Play, GitCompare, GitMerge };
+const cardIcons = { Play, GitCompare, GitMerge, GitBranch };
 
 // Track pending summary updates (debounced)
 const pendingSummaryUpdates = new Map<PtyId, ReturnType<typeof setTimeout>>();
@@ -264,6 +264,34 @@ export function updateTerminalCardLabel(term: TheatreTerminal): void {
     labelText.textContent = display;
   }
 
+  // Update git status display
+  const gitWrapper = labelEl.querySelector('.theatre-card-git-wrapper') as HTMLElement;
+  if (gitWrapper) {
+    const gitHtml = buildCardGitStatusHtml(term.gitStatus);
+    gitWrapper.innerHTML = gitHtml;
+
+    // Initialize icons
+    if (gitHtml) {
+      createIcons({ icons: cardIcons, nodes: [gitWrapper] });
+
+      // Wire up click handler for stats (only if clickable)
+      const statsEl = gitWrapper.querySelector('.theatre-card-git-stats--clickable') as HTMLElement;
+      if (statsEl) {
+        statsEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const diffType = statsEl.dataset.diffType;
+          // For worktree terminals with branch diff, show worktree vs main
+          // Otherwise show uncommitted changes
+          if (term.isWorktree && diffType === 'branch') {
+            toggleTerminalWorktreeDiffPanel(term);
+          } else {
+            toggleTerminalDiffPanel(term);
+          }
+        });
+      }
+    }
+  }
+
   // Update linked task status indicator if tasks panel is visible
   if (tasksPanelVisible.value) {
     updateTaskStatusIndicator(term.ptyId);
@@ -301,16 +329,23 @@ export function createTheatreCard(label: string, index: number): HTMLElement {
   labelEl.className = 'theatre-card-label';
 
   labelEl.innerHTML = `
-    <span class="theatre-card-status-dot" data-status="idle"></span>
-    <span class="theatre-card-label-text">${label}</span>
-    <div class="theatre-card-worktree-actions" style="display: none;">
-      <button class="theatre-card-action" data-action="run" title="Run default command"><i data-lucide="play"></i></button>
-      <button class="theatre-card-action" data-action="diff" title="View diff vs main"><i data-lucide="git-compare"></i></button>
-      <button class="theatre-card-action" data-action="merge" title="Merge into main"><i data-lucide="git-merge"></i></button>
+    <div class="theatre-card-label-left">
+      <span class="theatre-card-status-dot" data-status="idle"></span>
+      <span class="theatre-card-label-text">${label}</span>
     </div>
-    <button class="theatre-card-close" title="Close terminal">&times;</button>
+    <div class="theatre-card-label-right">
+      <button class="theatre-card-action theatre-card-action--worktree" data-action="run" title="Run default command" style="display: none;"><i data-lucide="play"></i></button>
+      <button class="theatre-card-action theatre-card-action--worktree" data-action="diff" title="View diff vs main" style="display: none;"><i data-lucide="git-compare"></i></button>
+      <button class="theatre-card-action theatre-card-action--worktree" data-action="merge" title="Merge into main" style="display: none;"><i data-lucide="git-merge"></i></button>
+      <div class="theatre-card-git-wrapper"></div>
+      <button class="theatre-card-close" title="Close terminal">&times;</button>
+    </div>
   `;
   card.appendChild(labelEl);
+
+  // Card body - flex container for terminal viewport and diff panel
+  const cardBody = document.createElement('div');
+  cardBody.className = 'theatre-card-body';
 
   // Terminal viewport
   const viewport = document.createElement('div');
@@ -320,7 +355,8 @@ export function createTheatreCard(label: string, index: number): HTMLElement {
   xtermContainer.className = 'terminal-xterm-container';
   viewport.appendChild(xtermContainer);
 
-  card.appendChild(viewport);
+  cardBody.appendChild(viewport);
+  card.appendChild(cardBody);
 
   return card;
 }
@@ -331,19 +367,22 @@ export function createTheatreCard(label: string, index: number): HTMLElement {
 export function setupWorktreeCardActions(term: TheatreTerminal): void {
   if (!term.isWorktree || !term.worktreeBranch) return;
 
-  const actionsEl = term.container.querySelector('.theatre-card-worktree-actions') as HTMLElement;
-  if (!actionsEl) return;
+  const labelEl = term.container.querySelector('.theatre-card-label');
+  if (!labelEl) return;
 
-  // Show the actions container
-  actionsEl.style.display = 'flex';
+  // Show and wire up the worktree action buttons
+  const worktreeButtons = labelEl.querySelectorAll('.theatre-card-action--worktree') as NodeListOf<HTMLElement>;
+  worktreeButtons.forEach(btn => {
+    btn.style.display = 'flex';
+  });
 
   // Initialize lucide icons
-  createIcons({ icons: cardIcons, nodes: [actionsEl] });
+  createIcons({ icons: cardIcons, nodes: [labelEl as Element] });
 
   // Wire up action buttons
-  const runBtn = actionsEl.querySelector('[data-action="run"]');
-  const diffBtn = actionsEl.querySelector('[data-action="diff"]');
-  const mergeBtn = actionsEl.querySelector('[data-action="merge"]');
+  const runBtn = labelEl.querySelector('[data-action="run"]');
+  const diffBtn = labelEl.querySelector('[data-action="diff"]');
+  const mergeBtn = labelEl.querySelector('[data-action="merge"]');
 
   if (runBtn) {
     runBtn.addEventListener('click', async (e) => {
@@ -355,9 +394,7 @@ export function setupWorktreeCardActions(term: TheatreTerminal): void {
   if (diffBtn) {
     diffBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (term.worktreeBranch) {
-        await showWorktreeDiffPanel(term.worktreeBranch);
-      }
+      await toggleTerminalWorktreeDiffPanel(term);
     });
   }
 
@@ -580,6 +617,12 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
       isWorktree: !!worktreeInfo,
       worktreePath: worktreeInfo?.path,
       worktreeBranch: worktreeInfo?.branch,
+      // Per-terminal git status and diff panel state
+      gitStatus: null,
+      diffPanelOpen: false,
+      diffPanelFiles: [],
+      diffPanelSelectedFile: null,
+      diffPanelMode: 'uncommitted',
     };
 
     // Set up resize observer
@@ -606,6 +649,8 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
 
       if (projectPath.value) {
         scheduleGitStatusRefresh();
+        // Also schedule a refresh of this terminal's git status
+        scheduleTerminalGitStatusRefresh(theatreTerminal);
       }
     });
 
@@ -645,6 +690,11 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
 
     // Set up worktree action buttons if this is a worktree terminal
     setupWorktreeCardActions(theatreTerminal);
+
+    // Fetch initial git status for this terminal
+    refreshTerminalGitStatus(theatreTerminal).then(() => {
+      updateTerminalCardLabel(theatreTerminal);
+    });
 
     // Add terminal to list and set as active - effects will handle updateCardStack
     terminals.value = [...terminals.value, theatreTerminal];

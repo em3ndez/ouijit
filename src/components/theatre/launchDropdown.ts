@@ -3,7 +3,7 @@
  */
 
 import { createIcons, ChevronDown, Play, Plus, FolderOpen, Star, X, GitBranchPlus, Terminal } from 'lucide';
-import type { RunConfig, CompactGitStatus } from '../../types';
+import type { RunConfig } from '../../types';
 import { theatreState, MAX_THEATRE_TERMINALS } from './state';
 import { projectPath, projectData, terminals, launchDropdownVisible } from './signals';
 import { getConfigId, mergeRunConfigs } from '../../utils/runConfigs';
@@ -11,35 +11,20 @@ import { stringToColor, getInitials } from '../../utils/projectIcon';
 import { showToast } from '../importDialog';
 import { showCustomCommandDialog } from '../customCommandDialog';
 import { addTheatreTerminal } from './terminalCards';
-import { buildGitStatusHtml } from './gitStatus';
 
 const launchIcons = { ChevronDown, Play, Plus, FolderOpen, Star, X, GitBranchPlus, Terminal };
 
 /**
  * Build the theatre mode header content
+ * Note: Git status is now displayed per-terminal on card labels, not in the header
  */
-export function buildTheatreHeader(compactStatus: CompactGitStatus | null): string {
+export function buildTheatreHeader(): string {
   const project = projectData.value;
   if (!project) return '';
 
   const icon = project.iconDataUrl
     ? `<img src="${project.iconDataUrl}" alt="" class="theatre-project-icon" />`
     : `<div class="theatre-project-icon theatre-project-icon--placeholder" style="background-color: ${stringToColor(project.name)}">${getInitials(project.name)}</div>`;
-
-  const gitStatusHtml = buildGitStatusHtml(compactStatus);
-
-  // Show merge button when: not on main, has commits ahead, and working directory is clean
-  const canMerge = compactStatus &&
-    compactStatus.branch !== compactStatus.mainBranch &&
-    compactStatus.commitsAheadOfMain > 0 &&
-    compactStatus.dirtyFileCount === 0;
-
-  const mergeButtonHtml = canMerge
-    ? `<button class="theatre-merge-btn" title="Merge into ${compactStatus.mainBranch}">
-        <i data-lucide="git-merge"></i>
-        <span>Merge into ${compactStatus.mainBranch}</span>
-      </button>`
-    : '';
 
   return `
     <div class="theatre-header-content">
@@ -51,8 +36,6 @@ export function buildTheatreHeader(compactStatus: CompactGitStatus | null): stri
       <button class="theatre-tasks-btn" title="Tasks (T)">
         <i data-lucide="list-todo"></i>
       </button>
-      ${gitStatusHtml}
-      ${mergeButtonHtml}
       <div class="theatre-worktree-wrapper">
         <button class="theatre-worktree-btn" title="Agent Worktrees">
           <i data-lucide="git-branch-plus"></i>

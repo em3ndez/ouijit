@@ -23,10 +23,9 @@ import {
 } from './signals';
 import { initializeEffects } from './effects';
 import {
-  toggleGitDropdown,
   hideGitDropdown,
   refreshGitStatus,
-  performMergeIntoMain,
+  refreshAllTerminalGitStatus,
 } from './gitStatus';
 import {
   toggleDiffPanel,
@@ -77,50 +76,21 @@ export async function enterTheatreMode(
   // Initialize reactive effects
   initializeEffects();
 
-  // Fetch compact git status
-  const compactStatus = project.hasGit ? await window.api.getCompactGitStatus(path) : null;
-
   // 1. Add class to body - CSS handles the rest
   document.body.classList.add('theatre-mode');
 
   // 2. Update header content
+  // Note: Git status is now displayed per-terminal on card labels, not in the header
   const headerContent = document.querySelector('.header-content');
   if (headerContent) {
     theatreState.originalHeaderContent = headerContent.innerHTML;
-    headerContent.innerHTML = buildTheatreHeader(compactStatus);
+    headerContent.innerHTML = buildTheatreHeader();
     createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
 
     // Wire up exit button
     const exitBtn = headerContent.querySelector('.theatre-exit-btn');
     if (exitBtn) {
       exitBtn.addEventListener('click', () => exitTheatreMode());
-    }
-
-    // Wire up git branch zone click handler (opens branch dropdown)
-    const branchZone = headerContent.querySelector('.theatre-git-branch-zone');
-    if (branchZone) {
-      branchZone.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleGitDropdown(path);
-      });
-    }
-
-    // Wire up git stats zone click handler (toggles diff panel)
-    const statsZone = headerContent.querySelector('.theatre-git-stats-zone--clickable');
-    if (statsZone) {
-      statsZone.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleDiffPanel();
-      });
-    }
-
-    // Wire up merge button (merges current branch into main)
-    const mergeBtn = headerContent.querySelector('.theatre-merge-btn');
-    if (mergeBtn) {
-      mergeBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        await performMergeIntoMain();
-      });
     }
 
     // Wire up play button (runs default command)
@@ -208,11 +178,6 @@ export async function enterTheatreMode(
       }
 
       // Remove from preserved sessions (now active)
-      const savedDiffState = {
-        wasOpen: existingSession.diffPanelWasOpen,
-        selectedFile: existingSession.diffSelectedFile,
-        files: existingSession.diffFiles,
-      };
       projectSessions.delete(path);
 
       // Update card stack positions (effect handles this, but call for immediate update)
@@ -223,52 +188,64 @@ export async function enterTheatreMode(
         await showTasksPanel();
       }
 
-      // Restore diff panel if it was open
-      if (savedDiffState.wasOpen && savedDiffState.files.length > 0) {
-        // Restore diff panel state and show it
-        diffPanelFiles.value = savedDiffState.files;
-        diffPanelVisible.value = true;
+      // Restore diff panels for terminals that had them open
+      // Diff panels are now inside each card, so we rebuild them
+      for (const term of currentTerminals) {
+        if (term.diffPanelOpen && term.diffPanelFiles.length > 0) {
+          // Re-create the diff panel inside this terminal's card
+          const cardBody = term.container.querySelector('.theatre-card-body');
+          if (cardBody) {
+            const panelHtml = buildDiffPanelHtml(term.diffPanelFiles);
+            cardBody.insertAdjacentHTML('beforeend', panelHtml);
 
-        // Create and insert panel
-        const panelHtml = buildDiffPanelHtml(savedDiffState.files);
-        document.body.insertAdjacentHTML('beforeend', panelHtml);
+            const panel = cardBody.querySelector('.diff-panel');
+            if (panel) {
+              createIcons({ icons: theatreIcons, nodes: [panel as Element] });
 
-        const panel = document.querySelector('.diff-panel');
-        if (panel) {
-          createIcons({ icons: theatreIcons });
+              // Wire up file selector dropdown toggle
+              const fileSelector = panel.querySelector('.diff-file-selector');
+              if (fileSelector) {
+                fileSelector.addEventListener('click', (e) => {
+                  e.stopPropagation();
+                  toggleDiffFileDropdown();
+                });
+              }
 
-          // Wire up file selector dropdown toggle
-          const fileSelector = panel.querySelector('.diff-file-selector');
-          if (fileSelector) {
-            fileSelector.addEventListener('click', (e) => {
-              e.stopPropagation();
-              toggleDiffFileDropdown();
-            });
-          }
+              // Wire up close button
+              const closeBtn = panel.querySelector('.diff-panel-close');
+              if (closeBtn) {
+                const termRef = term; // Capture for closure
+                closeBtn.addEventListener('click', async () => {
+                  const { hideTerminalDiffPanel } = await import('./diffPanel');
+                  hideTerminalDiffPanel(termRef);
+                });
+              }
 
-          // Wire up close button
-          const closeBtn = panel.querySelector('.diff-panel-close');
-          if (closeBtn) {
-            closeBtn.addEventListener('click', () => hideDiffPanel());
-          }
+              // Add class to card
+              term.container.classList.add('diff-panel-open');
 
-          // Add class to theatre stack to shrink it
-          const stackEl = document.querySelector('.theatre-stack');
-          if (stackEl) {
-            stackEl.classList.add('diff-panel-open');
-          }
+              // Animate panel in
+              requestAnimationFrame(() => {
+                panel.classList.add('diff-panel--visible');
+              });
 
-          // Animate panel in
-          requestAnimationFrame(() => {
-            panel.classList.add('diff-panel--visible');
-          });
-
-          // Select the previously selected file (or first file)
-          const fileToSelect = savedDiffState.selectedFile || savedDiffState.files[0]?.path;
-          if (fileToSelect) {
-            selectDiffFile(fileToSelect);
+              // Select the previously selected file (or first file)
+              const fileToSelect = term.diffPanelSelectedFile || term.diffPanelFiles[0]?.path;
+              if (fileToSelect) {
+                const { selectTerminalDiffFile } = await import('./diffPanel');
+                selectTerminalDiffFile(term, fileToSelect);
+              }
+            }
           }
         }
+      }
+
+      // Update global signals for active terminal
+      const activeTerm = currentTerminals[currentActiveIndex];
+      if (activeTerm?.diffPanelOpen) {
+        diffPanelFiles.value = activeTerm.diffPanelFiles;
+        diffPanelSelectedFile.value = activeTerm.diffPanelSelectedFile;
+        diffPanelVisible.value = true;
       }
     } else {
       // Create new session - signals start with empty arrays
@@ -301,9 +278,18 @@ export async function enterTheatreMode(
   document.addEventListener('keydown', theatreState.escapeKeyHandler);
 
   // 5. Start periodic git status refresh (for long-running commands)
+  // This now refreshes all terminals' git status
   if (project.hasGit) {
     theatreState.gitStatusPeriodicInterval = setInterval(() => {
       refreshGitStatus();
+      refreshAllTerminalGitStatus().then(() => {
+        // Import dynamically to update card labels
+        import('./terminalCards').then(({ updateTerminalCardLabel }) => {
+          for (const term of terminals.value) {
+            updateTerminalCardLabel(term);
+          }
+        });
+      });
     }, GIT_STATUS_PERIODIC_INTERVAL);
   }
 }

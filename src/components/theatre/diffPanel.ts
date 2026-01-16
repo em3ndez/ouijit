@@ -4,7 +4,7 @@
 
 import { createIcons, ChevronDown } from 'lucide';
 import type { ChangedFile, FileDiff } from '../../types';
-import { theatreState } from './state';
+import { theatreState, TheatreTerminal } from './state';
 import {
   projectPath,
   terminals,
@@ -18,6 +18,7 @@ import {
 } from './signals';
 import { escapeHtml } from '../../utils/html';
 import { showToast } from '../importDialog';
+import { getTerminalGitPath } from './gitStatus';
 
 const diffIcons = { ChevronDown };
 
@@ -395,7 +396,220 @@ export async function toggleDiffPanel(): Promise<void> {
 }
 
 /**
- * Show the diff panel for a worktree branch (branch comparison mode)
+ * Show the diff panel for a specific terminal
+ */
+export async function showTerminalDiffPanel(term: TheatreTerminal): Promise<void> {
+  if (term.diffPanelOpen) return;
+
+  const gitPath = getTerminalGitPath(term);
+
+  // Fetch changed files for this terminal's git context
+  const files = await window.api.getChangedFiles(gitPath);
+  if (!files.length) {
+    showToast('No uncommitted changes', 'info');
+    return;
+  }
+
+  // Store state on the terminal
+  term.diffPanelOpen = true;
+  term.diffPanelFiles = files;
+  term.diffPanelMode = 'uncommitted';
+
+  // Also update global signals for compatibility
+  diffPanelFiles.value = files;
+  diffPanelVisible.value = true;
+  diffPanelMode.value = 'uncommitted';
+
+  // Find the card body to insert the diff panel as a sibling of terminal viewport
+  const cardBody = term.container.querySelector('.theatre-card-body');
+  if (!cardBody) return;
+
+  // Create and insert panel inside the card body
+  const panelHtml = buildDiffPanelHtml(files);
+  cardBody.insertAdjacentHTML('beforeend', panelHtml);
+
+  const panel = cardBody.querySelector('.diff-panel');
+  if (!panel) return;
+
+  // Add class to card to indicate diff is open
+  term.container.classList.add('diff-panel-open');
+
+  // Initialize lucide icons for the chevron
+  createIcons({ icons: diffIcons, nodes: [panel as Element] });
+
+  // Wire up file selector dropdown toggle
+  const fileSelector = panel.querySelector('.diff-file-selector');
+  if (fileSelector) {
+    fileSelector.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleDiffFileDropdown();
+    });
+  }
+
+  // Wire up close button
+  const closeBtn = panel.querySelector('.diff-panel-close');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => hideTerminalDiffPanel(term));
+  }
+
+  // Animate panel in
+  requestAnimationFrame(() => {
+    panel.classList.add('diff-panel--visible');
+  });
+
+  // Refit terminal after animation
+  setTimeout(() => refitActiveTerminal(), 250);
+
+  // Select first file
+  if (files.length > 0) {
+    await selectTerminalDiffFile(term, files[0].path);
+  }
+}
+
+/**
+ * Hide the diff panel for a specific terminal
+ */
+export function hideTerminalDiffPanel(term: TheatreTerminal): void {
+  if (!term.diffPanelOpen) return;
+
+  // Clean up file dropdown if open
+  hideDiffFileDropdown();
+
+  // Find the panel inside the card
+  const panel = term.container.querySelector('.diff-panel');
+  if (panel) {
+    panel.classList.remove('diff-panel--visible');
+    // Remove after animation
+    setTimeout(() => panel.remove(), 250);
+  }
+
+  // Remove class from card
+  term.container.classList.remove('diff-panel-open');
+
+  // Refit terminal after animation
+  setTimeout(() => refitActiveTerminal(), 250);
+
+  // Update terminal state
+  term.diffPanelOpen = false;
+  term.diffPanelSelectedFile = null;
+  term.diffPanelFiles = [];
+  term.diffPanelMode = 'uncommitted';
+
+  // Update global signals
+  diffPanelVisible.value = false;
+  diffPanelSelectedFile.value = null;
+  diffPanelFiles.value = [];
+  diffPanelMode.value = 'uncommitted';
+  diffPanelWorktreeBranch.value = null;
+}
+
+/**
+ * Toggle the diff panel for a specific terminal
+ */
+export async function toggleTerminalDiffPanel(term: TheatreTerminal): Promise<void> {
+  if (term.diffPanelOpen) {
+    hideTerminalDiffPanel(term);
+  } else {
+    await showTerminalDiffPanel(term);
+  }
+}
+
+/**
+ * Select a file in the diff panel for a specific terminal
+ */
+export async function selectTerminalDiffFile(term: TheatreTerminal, filePath: string): Promise<void> {
+  const gitPath = getTerminalGitPath(term);
+
+  term.diffPanelSelectedFile = filePath;
+  diffPanelSelectedFile.value = filePath;
+
+  // Close dropdown if open
+  hideDiffFileDropdown();
+
+  // Find the panel inside the terminal's card
+  const panel = term.container.querySelector('.diff-panel');
+  if (!panel) return;
+
+  // Update the selector trigger to show new file
+  const file = term.diffPanelFiles.find(f => f.path === filePath);
+  if (file) {
+    const selector = panel.querySelector('.diff-file-selector');
+    const statusEl = selector?.querySelector('.diff-file-status');
+    const nameEl = selector?.querySelector('.diff-file-selector-name');
+    const statsEl = selector?.querySelector('.diff-file-selector-stats');
+
+    if (statusEl && nameEl && selector) {
+      const statusLabel = file.status === '?' ? 'U' : file.status;
+      statusEl.className = `diff-file-status diff-file-status--${statusLabel}`;
+      statusEl.textContent = statusLabel;
+      nameEl.textContent = file.path.split('/').pop() || file.path;
+      (selector as HTMLElement).title = file.path;
+
+      if (statsEl) {
+        statsEl.innerHTML = formatDiffStats(file.additions, file.deletions);
+      }
+    }
+  }
+
+  // Clear header info while loading
+  const headerInfo = panel.querySelector('.diff-header-info');
+  if (headerInfo) headerInfo.textContent = '';
+
+  // Fetch and render diff
+  const contentBody = panel.querySelector('.diff-content-body');
+  if (!contentBody) return;
+
+  contentBody.innerHTML = '<div class="diff-empty-state">Loading...</div>';
+
+  // Use the terminal's git path
+  const diff = await window.api.getFileDiff(gitPath, filePath);
+
+  if (diff) {
+    contentBody.innerHTML = renderDiffContentHtml(diff);
+
+    // Update header info with hunk count
+    if (headerInfo && diff.hunks.length > 0) {
+      const hunkText = diff.hunks.length === 1 ? '1 change' : `${diff.hunks.length} changes`;
+      headerInfo.textContent = hunkText;
+    }
+  } else {
+    contentBody.innerHTML = '<div class="diff-empty-state">Unable to load diff</div>';
+  }
+}
+
+/**
+ * Sync the diff panel visibility based on the active terminal's state
+ * Called when switching terminals - updates global signals to reflect active terminal
+ * The diff panel DOM is now inside each card, so it moves with the card
+ */
+export function syncDiffPanelToActiveTerminal(): void {
+  const currentTerminals = terminals.value;
+  const currentActiveIndex = activeIndex.value;
+
+  if (currentTerminals.length === 0 || currentActiveIndex >= currentTerminals.length) {
+    return;
+  }
+
+  const activeTerm = currentTerminals[currentActiveIndex];
+
+  // Update global signals to match active terminal's state
+  if (activeTerm.diffPanelOpen) {
+    diffPanelFiles.value = activeTerm.diffPanelFiles;
+    diffPanelSelectedFile.value = activeTerm.diffPanelSelectedFile;
+    diffPanelVisible.value = true;
+  } else {
+    diffPanelVisible.value = false;
+    diffPanelFiles.value = [];
+    diffPanelSelectedFile.value = null;
+  }
+
+  // Refit terminal
+  setTimeout(() => refitActiveTerminal(), 50);
+}
+
+/**
+ * Show the diff panel for a worktree branch (branch comparison mode) - LEGACY global version
+ * @deprecated Use showTerminalWorktreeDiffPanel for per-terminal worktree diff
  */
 export async function showWorktreeDiffPanel(worktreeBranch: string): Promise<void> {
   if (!projectPath.value || diffPanelVisible.value) return;
@@ -455,5 +669,156 @@ export async function showWorktreeDiffPanel(worktreeBranch: string): Promise<voi
   // Select first file
   if (diffSummary.files.length > 0) {
     selectDiffFile(diffSummary.files[0].path);
+  }
+}
+
+/**
+ * Show the worktree diff panel for a specific terminal (branch vs main comparison)
+ * Shows changes between the worktree branch and main, inside the terminal's card
+ */
+export async function showTerminalWorktreeDiffPanel(term: TheatreTerminal): Promise<void> {
+  if (term.diffPanelOpen || !term.isWorktree || !term.worktreeBranch) return;
+
+  const basePath = projectPath.value;
+  if (!basePath) return;
+
+  // Fetch worktree diff (branch vs main)
+  const diffSummary = await window.api.worktree.getDiff(basePath, term.worktreeBranch);
+  if (!diffSummary || !diffSummary.files.length) {
+    showToast('No changes in worktree branch', 'info');
+    return;
+  }
+
+  // Store state on the terminal
+  term.diffPanelOpen = true;
+  term.diffPanelFiles = diffSummary.files;
+  term.diffPanelMode = 'worktree';
+
+  // Also update global signals for compatibility
+  diffPanelFiles.value = diffSummary.files;
+  diffPanelVisible.value = true;
+  diffPanelMode.value = 'worktree';
+  diffPanelWorktreeBranch.value = term.worktreeBranch;
+
+  // Find the card body to insert the diff panel as a sibling of terminal viewport
+  const cardBody = term.container.querySelector('.theatre-card-body');
+  if (!cardBody) return;
+
+  // Create and insert panel inside the card body (with worktree context label)
+  const panelHtml = buildDiffPanelHtml(diffSummary.files, term.worktreeBranch);
+  cardBody.insertAdjacentHTML('beforeend', panelHtml);
+
+  const panel = cardBody.querySelector('.diff-panel');
+  if (!panel) return;
+
+  // Add class to card to indicate diff is open
+  term.container.classList.add('diff-panel-open');
+
+  // Initialize lucide icons for the chevron
+  createIcons({ icons: diffIcons, nodes: [panel as Element] });
+
+  // Wire up file selector dropdown toggle
+  const fileSelector = panel.querySelector('.diff-file-selector');
+  if (fileSelector) {
+    fileSelector.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleDiffFileDropdown();
+    });
+  }
+
+  // Wire up close button
+  const closeBtn = panel.querySelector('.diff-panel-close');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => hideTerminalDiffPanel(term));
+  }
+
+  // Animate panel in
+  requestAnimationFrame(() => {
+    panel.classList.add('diff-panel--visible');
+  });
+
+  // Refit terminal after animation
+  setTimeout(() => refitActiveTerminal(), 250);
+
+  // Select first file
+  if (diffSummary.files.length > 0) {
+    await selectTerminalWorktreeDiffFile(term, diffSummary.files[0].path);
+  }
+}
+
+/**
+ * Select a file in the worktree diff panel for a specific terminal
+ */
+export async function selectTerminalWorktreeDiffFile(term: TheatreTerminal, filePath: string): Promise<void> {
+  if (!term.isWorktree || !term.worktreeBranch) return;
+
+  const basePath = projectPath.value;
+  if (!basePath) return;
+
+  term.diffPanelSelectedFile = filePath;
+  diffPanelSelectedFile.value = filePath;
+
+  // Close dropdown if open
+  hideDiffFileDropdown();
+
+  // Find the panel inside the terminal's card
+  const panel = term.container.querySelector('.diff-panel');
+  if (!panel) return;
+
+  // Update the selector trigger to show new file
+  const file = term.diffPanelFiles.find(f => f.path === filePath);
+  if (file) {
+    const selector = panel.querySelector('.diff-file-selector');
+    const statusEl = selector?.querySelector('.diff-file-status');
+    const nameEl = selector?.querySelector('.diff-file-selector-name');
+    const statsEl = selector?.querySelector('.diff-file-selector-stats');
+
+    if (statusEl && nameEl && selector) {
+      const statusLabel = file.status === '?' ? 'U' : file.status;
+      statusEl.className = `diff-file-status diff-file-status--${statusLabel}`;
+      statusEl.textContent = statusLabel;
+      nameEl.textContent = file.path.split('/').pop() || file.path;
+      (selector as HTMLElement).title = file.path;
+
+      if (statsEl) {
+        statsEl.innerHTML = formatDiffStats(file.additions, file.deletions);
+      }
+    }
+  }
+
+  // Clear header info while loading
+  const headerInfo = panel.querySelector('.diff-header-info');
+  if (headerInfo) headerInfo.textContent = '';
+
+  // Fetch and render diff
+  const contentBody = panel.querySelector('.diff-content-body');
+  if (!contentBody) return;
+
+  contentBody.innerHTML = '<div class="diff-empty-state">Loading...</div>';
+
+  // Use worktree API to get diff vs main
+  const diff = await window.api.worktree.getFileDiff(basePath, term.worktreeBranch, filePath);
+
+  if (diff) {
+    contentBody.innerHTML = renderDiffContentHtml(diff);
+
+    // Update header info with hunk count
+    if (headerInfo && diff.hunks.length > 0) {
+      const hunkText = diff.hunks.length === 1 ? '1 change' : `${diff.hunks.length} changes`;
+      headerInfo.textContent = hunkText;
+    }
+  } else {
+    contentBody.innerHTML = '<div class="diff-empty-state">Unable to load diff</div>';
+  }
+}
+
+/**
+ * Toggle the worktree diff panel for a specific terminal
+ */
+export async function toggleTerminalWorktreeDiffPanel(term: TheatreTerminal): Promise<void> {
+  if (term.diffPanelOpen) {
+    hideTerminalDiffPanel(term);
+  } else {
+    await showTerminalWorktreeDiffPanel(term);
   }
 }

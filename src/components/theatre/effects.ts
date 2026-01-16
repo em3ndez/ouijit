@@ -15,6 +15,7 @@ import {
 // Direct imports - these modules import from signals.ts, not effects.ts, so no circular dep
 import { updateCardStack, updateTerminalCardLabel, showStackEmptyState, hideStackEmptyState } from './terminalCards';
 import { renderTasksList } from './tasksPanel';
+import { syncDiffPanelToActiveTerminal } from './diffPanel';
 
 // Track whether effects are initialized
 let effectsInitialized = false;
@@ -85,6 +86,26 @@ export function initializeEffects(): void {
       // Update all terminal card labels
       for (const term of _terminals) {
         updateTerminalCardLabel(term);
+      }
+    })
+  );
+
+  // Effect: Sync diff panel visibility when active terminal changes
+  // Store previous active index to detect actual changes
+  let previousActiveIndex = activeIndex.value;
+  cleanupFunctions.push(
+    effect(() => {
+      const _terminals = terminals.value;
+      const currentActiveIndex = activeIndex.value;
+      const _projectPath = projectPath.value;
+
+      // Only sync if we're in theatre mode and the index actually changed
+      if (_projectPath && _terminals.length > 0 && currentActiveIndex !== previousActiveIndex) {
+        previousActiveIndex = currentActiveIndex;
+        // Sync after a brief delay to allow terminal switch animation
+        requestAnimationFrame(() => {
+          syncDiffPanelToActiveTerminal();
+        });
       }
     })
   );

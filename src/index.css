@@ -1856,17 +1856,20 @@ body.is-fullscreen .theatre-header-content {
    Diff Panel (Theatre Mode)
    ========================================== */
 
-/* Diff Panel Container */
-.diff-panel {
+/* Diff Panel Container - default styles for fixed position (legacy/global mode) */
+body > .diff-panel {
   position: fixed;
   top: 82px;
   right: 16px;
   bottom: 16px;
   width: 0;
-  background: var(--color-surface);
+  background: var(--color-terminal-bg, #1a1a1a);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-lg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.05),
+    0 4px 12px rgba(0, 0, 0, 0.15),
+    0 20px 40px rgba(0, 0, 0, 0.2);
   z-index: 101;
   display: flex;
   overflow: hidden;
@@ -1874,7 +1877,7 @@ body.is-fullscreen .theatre-header-content {
   transition: width 0.25s ease, opacity 0.15s ease;
 }
 
-.diff-panel--visible {
+body > .diff-panel--visible {
   width: 50%;
   opacity: 1;
 }
@@ -2258,10 +2261,7 @@ body.is-fullscreen .theatre-header-content {
   transition: left 0.25s ease, right 0.25s ease, top 0.2s ease;
 }
 
-/* Adjust stack when diff panel is open */
-.theatre-stack.diff-panel-open {
-  right: calc(50% + 24px);
-}
+/* No adjustment needed - diff panel is now inside the card */
 
 .theatre-card {
   position: absolute;
@@ -2355,6 +2355,18 @@ body.is-fullscreen .theatre-header-content {
   min-height: 36px;
 }
 
+.theatre-card-label-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.theatre-card-label-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .theatre-card-label-text {
   font-family: 'SF Mono', Monaco, Menlo, monospace;
   font-size: var(--font-size-xs);
@@ -2440,21 +2452,7 @@ body.is-fullscreen .theatre-header-content {
   color: rgba(255, 255, 255, 0.9);
 }
 
-/* Worktree card action buttons */
-.theatre-card-worktree-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  margin-right: 8px;
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-}
-
-.theatre-card--active .theatre-card-worktree-actions {
-  opacity: 1;
-}
-
+/* Worktree card action buttons - now siblings in label */
 .theatre-card-action {
   width: 22px;
   height: 22px;
@@ -2465,7 +2463,7 @@ body.is-fullscreen .theatre-header-content {
   border: none;
   border-radius: var(--radius-sm);
   color: rgba(255, 255, 255, 0.5);
-  transition: background-color var(--transition-fast), color var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
 }
 
 .theatre-card-action:hover {
@@ -2478,13 +2476,122 @@ body.is-fullscreen .theatre-header-content {
   height: 14px;
 }
 
+/* Worktree-specific action buttons */
+.theatre-card-action--worktree {
+  opacity: 0;
+}
+
+.theatre-card--active .theatre-card-action--worktree {
+  opacity: 1;
+}
+
+/* Card Git Status Display */
+.theatre-card-git-wrapper {
+  margin-right: 8px;
+}
+
+.theatre-card-git-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.theatre-card-git-branch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'SF Mono', Monaco, Menlo, monospace;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.5);
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theatre-card-git-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.theatre-card-git-stats {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: 'SF Mono', Monaco, Menlo, monospace;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.theatre-card-git-stats--clickable {
+  transition: background-color var(--transition-fast);
+}
+
+.theatre-card-git-stats--clickable:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.theatre-card-git-stats--clickable:active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.theatre-card-git-count {
+  font-weight: var(--font-weight-medium);
+}
+
+/* Card body - flex container for terminal and diff panel */
+.theatre-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* Card viewport */
 .theatre-card .terminal-viewport {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   height: auto;
   border-radius: 0;
   border: none;
+  transition: flex 0.25s ease;
+}
+
+/* When diff panel is open, terminal takes less space */
+.theatre-card.diff-panel-open .terminal-viewport {
+  flex: 1;
+}
+
+/* Diff panel inside card */
+.theatre-card .diff-panel {
+  position: relative;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  width: 0;
+  flex-shrink: 0;
+  background: var(--color-terminal-bg, #1a1a1a);
+  border-radius: 0;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+  z-index: 1;
+  display: flex;
+  overflow: hidden;
+  opacity: 0;
+  transition: width 0.25s ease, opacity 0.15s ease;
+}
+
+.theatre-card .diff-panel--visible {
+  width: 50%;
+  opacity: 1;
 }
 
 /* Theatre Merge Button */
