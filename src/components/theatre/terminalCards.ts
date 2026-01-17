@@ -20,7 +20,7 @@ import {
 } from './signals';
 import { showToast } from '../importDialog';
 import { scheduleGitStatusRefresh, refreshGitStatus, refreshTerminalGitStatus, buildCardGitStatusHtml, getTerminalGitPath, scheduleTerminalGitStatusRefresh } from './gitStatus';
-import { toggleTerminalDiffPanel, toggleTerminalWorktreeDiffPanel } from './diffPanel';
+import { toggleTerminalDiffPanel, toggleTerminalWorktreeDiffPanel, hideTerminalDiffPanel } from './diffPanel';
 import { mergeRunConfigs, getConfigId } from '../../utils/runConfigs';
 
 const cardIcons = { Play, GitCompare, GitMerge, GitBranch };
@@ -435,8 +435,14 @@ export function createTheatreCard(label: string, index: number): HTMLElement {
       <span class="theatre-card-label-text">${label}</span>
     </div>
     <div class="theatre-card-label-right">
-      <button class="theatre-card-action theatre-card-action--worktree" data-action="run" title="Run default command" style="display: none;"><i data-lucide="play"></i></button>
       <div class="theatre-card-git-wrapper"></div>
+      <div class="runner-pill theatre-card-action--worktree" style="display: none;">
+        <button class="runner-pill-play" data-action="run" title="Run default command"><i data-lucide="play"></i></button>
+        <div class="runner-pill-status">
+          <span class="runner-pill-light"></span>
+          <span class="runner-pill-label"></span>
+        </div>
+      </div>
       <button class="theatre-card-close" title="Close terminal">&times;</button>
     </div>
   `;
@@ -469,33 +475,264 @@ export function setupWorktreeCardActions(term: TheatreTerminal): void {
   const labelEl = term.container.querySelector('.theatre-card-label');
   if (!labelEl) return;
 
-  // Show and wire up the worktree action buttons
-  const worktreeButtons = labelEl.querySelectorAll('.theatre-card-action--worktree') as NodeListOf<HTMLElement>;
-  worktreeButtons.forEach(btn => {
-    btn.style.display = 'flex';
-  });
+  // Show runner pill for worktree terminals
+  const runnerPill = labelEl.querySelector('.runner-pill') as HTMLElement;
+  if (runnerPill) {
+    runnerPill.style.display = 'flex';
+  }
 
   // Initialize lucide icons
   createIcons({ icons: cardIcons, nodes: [labelEl as Element] });
 
-  // Wire up action buttons
-  const runBtn = labelEl.querySelector('[data-action="run"]');
+  // Wire up runner pill click handlers
+  const runBtn = labelEl.querySelector('.runner-pill-play');
+  const pillStatus = labelEl.querySelector('.runner-pill-status');
 
   if (runBtn) {
     runBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      await runDefaultInWorktreeCard(term);
+      // If runner is already active, toggle the panel instead of starting new run
+      if (term.runnerPtyId) {
+        toggleRunnerPanel(term);
+      } else {
+        await runDefaultInWorktreeCard(term);
+      }
+    });
+  }
+
+  // Clicking the status part of the pill also toggles the panel
+  if (pillStatus) {
+    pillStatus.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (term.runnerPtyId) {
+        toggleRunnerPanel(term);
+      }
     });
   }
 }
 
 /**
- * Run the default command in the worktree from a card action
+ * Update the runner pill appearance based on runner state
+ */
+export function updateRunnerPill(term: TheatreTerminal): void {
+  const pill = term.container.querySelector('.runner-pill') as HTMLElement;
+  if (!pill) return;
+
+  const light = pill.querySelector('.runner-pill-light') as HTMLElement;
+  const label = pill.querySelector('.runner-pill-label') as HTMLElement;
+
+  if (term.runnerPtyId) {
+    // Runner is active - expand the pill
+    pill.classList.add('runner-pill--expanded');
+
+    // Update label
+    if (label) {
+      label.textContent = term.runnerLabel || 'Running...';
+    }
+
+    // Update status light
+    if (light) {
+      light.className = 'runner-pill-light';
+      switch (term.runnerStatus) {
+        case 'running':
+          light.classList.add('runner-pill-light--running');
+          break;
+        case 'success':
+          light.classList.add('runner-pill-light--success');
+          break;
+        case 'error':
+          light.classList.add('runner-pill-light--error');
+          break;
+        default:
+          // idle - no extra class
+          break;
+      }
+    }
+  } else {
+    // No runner - collapse the pill
+    pill.classList.remove('runner-pill--expanded');
+  }
+}
+
+/**
+ * Build HTML for the runner panel
+ */
+function buildRunnerPanelHtml(label: string): string {
+  return `
+    <div class="runner-panel">
+      <div class="runner-panel-header">
+        <span class="runner-panel-title">${label}</span>
+        <div class="runner-panel-actions">
+          <button class="runner-panel-collapse" title="Collapse panel">−</button>
+          <button class="runner-panel-kill" title="Stop runner">&times;</button>
+        </div>
+      </div>
+      <div class="runner-panel-body">
+        <div class="runner-xterm-container"></div>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Show the runner panel for a terminal
+ */
+export function showRunnerPanel(term: TheatreTerminal): void {
+  if (term.runnerPanelOpen || !term.runnerPtyId) return;
+
+  // Close diff panel if open (mutual exclusivity)
+  if (term.diffPanelOpen) {
+    hideTerminalDiffPanel(term);
+  }
+
+  const cardBody = term.container.querySelector('.theatre-card-body');
+  if (!cardBody) return;
+
+  // Check if panel already exists
+  let panel = cardBody.querySelector('.runner-panel') as HTMLElement;
+  if (!panel) {
+    // Create panel (insert at end so it appears on the right)
+    cardBody.insertAdjacentHTML('beforeend', buildRunnerPanelHtml(term.runnerLabel || 'Runner'));
+    panel = cardBody.querySelector('.runner-panel') as HTMLElement;
+    if (!panel) return;
+
+    // Wire up collapse button (hides panel but keeps runner alive)
+    const collapseBtn = panel.querySelector('.runner-panel-collapse');
+    if (collapseBtn) {
+      collapseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hideRunnerPanel(term);
+      });
+    }
+
+    // Wire up kill button (stops runner and removes panel)
+    const killBtn = panel.querySelector('.runner-panel-kill');
+    if (killBtn) {
+      killBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        killRunner(term);
+      });
+    }
+
+    // Attach xterm if we have a runner terminal
+    if (term.runnerTerminal) {
+      const xtermContainer = panel.querySelector('.runner-xterm-container') as HTMLElement;
+      if (xtermContainer) {
+        term.runnerTerminal.open(xtermContainer);
+        if (term.runnerFitAddon) {
+          requestAnimationFrame(() => {
+            term.runnerFitAddon!.fit();
+          });
+        }
+      }
+    }
+  }
+
+  // Add class to card
+  term.container.classList.add('runner-panel-open');
+  term.runnerPanelOpen = true;
+
+  // Animate panel in
+  requestAnimationFrame(() => {
+    panel.classList.add('runner-panel--visible');
+  });
+
+  // Refit terminals after animation
+  setTimeout(() => {
+    term.fitAddon.fit();
+    window.api.pty.resize(term.ptyId, term.terminal.cols, term.terminal.rows);
+    if (term.runnerFitAddon && term.runnerPtyId) {
+      term.runnerFitAddon.fit();
+      window.api.pty.resize(term.runnerPtyId, term.runnerTerminal!.cols, term.runnerTerminal!.rows);
+    }
+  }, 250);
+}
+
+/**
+ * Hide the runner panel (does NOT kill the runner process)
+ */
+export function hideRunnerPanel(term: TheatreTerminal): void {
+  if (!term.runnerPanelOpen) return;
+
+  const panel = term.container.querySelector('.runner-panel');
+  if (panel) {
+    panel.classList.remove('runner-panel--visible');
+  }
+
+  term.container.classList.remove('runner-panel-open');
+  term.runnerPanelOpen = false;
+
+  // Refit main terminal after animation
+  setTimeout(() => {
+    term.fitAddon.fit();
+    window.api.pty.resize(term.ptyId, term.terminal.cols, term.terminal.rows);
+  }, 250);
+}
+
+/**
+ * Toggle the runner panel visibility
+ */
+export function toggleRunnerPanel(term: TheatreTerminal): void {
+  if (term.runnerPanelOpen) {
+    hideRunnerPanel(term);
+  } else {
+    showRunnerPanel(term);
+  }
+}
+
+/**
+ * Kill the runner process and clean up resources
+ */
+export function killRunner(term: TheatreTerminal): void {
+  if (!term.runnerPtyId) return;
+
+  // Hide panel first
+  hideRunnerPanel(term);
+
+  // Kill PTY
+  window.api.pty.kill(term.runnerPtyId);
+
+  // Clean up listeners
+  if (term.runnerCleanupData) term.runnerCleanupData();
+  if (term.runnerCleanupExit) term.runnerCleanupExit();
+
+  // Dispose terminal
+  if (term.runnerTerminal) {
+    term.runnerTerminal.dispose();
+  }
+
+  // Remove panel DOM
+  const panel = term.container.querySelector('.runner-panel');
+  if (panel) {
+    panel.remove();
+  }
+
+  // Reset state
+  term.runnerPtyId = null;
+  term.runnerTerminal = null;
+  term.runnerFitAddon = null;
+  term.runnerLabel = '';
+  term.runnerStatus = 'idle';
+  term.runnerCleanupData = null;
+  term.runnerCleanupExit = null;
+
+  // Collapse the pill
+  updateRunnerPill(term);
+}
+
+
+/**
+ * Run the default command in the worktree as a hidden runner
  */
 async function runDefaultInWorktreeCard(term: TheatreTerminal): Promise<void> {
   const path = projectPath.value;
   const project = projectData.value;
   if (!path || !project || !term.worktreePath || !term.worktreeBranch) return;
+
+  // If runner already active, kill it first
+  if (term.runnerPtyId) {
+    killRunner(term);
+  }
 
   // Fetch settings to get default command
   const settings = await window.api.getProjectSettings(path);
@@ -515,13 +752,92 @@ async function runDefaultInWorktreeCard(term: TheatreTerminal): Promise<void> {
     }
   }
 
-  const worktreeInfo: WorktreeInfo = {
-    path: term.worktreePath,
-    branch: term.worktreeBranch,
-    createdAt: '',
+  // Set initial runner state
+  term.runnerLabel = defaultConfig.name;
+  term.runnerStatus = 'running';
+
+  // Create hidden terminal for runner output
+  const runnerTerminal = new Terminal({
+    theme: getTerminalTheme(),
+    fontFamily: 'SF Mono, Monaco, Menlo, monospace',
+    fontSize: 13,
+    lineHeight: 1.2,
+    cursorBlink: false,
+    cursorStyle: 'bar',
+    allowTransparency: true,
+    scrollback: 10000,
+  });
+
+  const runnerFitAddon = new FitAddon();
+  runnerTerminal.loadAddon(runnerFitAddon);
+
+  term.runnerTerminal = runnerTerminal;
+  term.runnerFitAddon = runnerFitAddon;
+
+  // Spawn PTY for the runner
+  const spawnOptions: PtySpawnOptions = {
+    cwd: term.worktreePath,
+    command: defaultConfig.command,
+    cols: 80,  // Default size, will be resized when panel opens
+    rows: 24,
   };
 
-  await addTheatreTerminal(defaultConfig, { existingWorktree: worktreeInfo });
+  try {
+    const result = await window.api.pty.spawn(spawnOptions);
+
+    if (!result.success || !result.ptyId) {
+      runnerTerminal.writeln(`\x1b[31mFailed to start runner: ${result.error || 'Unknown error'}\x1b[0m`);
+      term.runnerStatus = 'error';
+      updateRunnerPill(term);
+      return;
+    }
+
+    term.runnerPtyId = result.ptyId;
+
+    // Set up data listener
+    term.runnerCleanupData = window.api.pty.onData(result.ptyId, (data) => {
+      runnerTerminal.write(data);
+
+      // Extract OSC title sequences to update runner label
+      const oscMatches = data.matchAll(/\x1b\]0;([^\x07]*)\x07/g);
+      for (const match of oscMatches) {
+        if (match[1]) {
+          term.runnerLabel = match[1];
+          updateRunnerPill(term);
+          // Update panel title if visible
+          const panelTitle = term.container.querySelector('.runner-panel-title');
+          if (panelTitle) {
+            panelTitle.textContent = match[1];
+          }
+        }
+      }
+    });
+
+    // Set up exit listener
+    term.runnerCleanupExit = window.api.pty.onExit(result.ptyId, (exitCode) => {
+      runnerTerminal.writeln('');
+      const exitColor = exitCode === 0 ? '32' : '31';
+      runnerTerminal.writeln(`\x1b[${exitColor}m● Process exited with code ${exitCode}\x1b[0m`);
+
+      term.runnerStatus = exitCode === 0 ? 'success' : 'error';
+      updateRunnerPill(term);
+    });
+
+    // Forward terminal input to PTY
+    runnerTerminal.onData((data) => {
+      if (term.runnerPtyId) {
+        window.api.pty.write(term.runnerPtyId, data);
+      }
+    });
+
+    // Update pill to show running state
+    updateRunnerPill(term);
+
+  } catch (error) {
+    runnerTerminal.writeln(`\x1b[31mError: ${error instanceof Error ? error.message : 'Unknown error'}\x1b[0m`);
+    term.runnerStatus = 'error';
+    updateRunnerPill(term);
+  }
 }
 
 /**
@@ -689,6 +1005,15 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
       diffPanelFiles: [],
       diffPanelSelectedFile: null,
       diffPanelMode: 'uncommitted',
+      // Runner panel state
+      runnerPanelOpen: false,
+      runnerPtyId: null,
+      runnerTerminal: null,
+      runnerFitAddon: null,
+      runnerLabel: '',
+      runnerStatus: 'idle',
+      runnerCleanupData: null,
+      runnerCleanupExit: null,
     };
 
     // Set up resize observer
@@ -786,14 +1111,23 @@ export function closeTheatreTerminal(index: number): void {
 
   const term = currentTerminals[index];
 
-  // Kill PTY
+  // Kill main PTY
   window.api.pty.kill(term.ptyId);
 
-  // Clean up
+  // Clean up main terminal
   if (term.cleanupData) term.cleanupData();
   if (term.cleanupExit) term.cleanupExit();
   if (term.resizeObserver) term.resizeObserver.disconnect();
   term.terminal.dispose();
+
+  // Clean up runner if active
+  if (term.runnerPtyId) {
+    window.api.pty.kill(term.runnerPtyId);
+    if (term.runnerCleanupData) term.runnerCleanupData();
+    if (term.runnerCleanupExit) term.runnerCleanupExit();
+    if (term.runnerTerminal) term.runnerTerminal.dispose();
+  }
+
   term.container.remove();
 
   // Remove terminal from list (immutable update)

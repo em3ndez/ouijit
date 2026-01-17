@@ -38,6 +38,15 @@ export interface TheatreTerminal {
   diffPanelFiles: ChangedFile[];
   diffPanelSelectedFile: string | null;
   diffPanelMode: 'uncommitted' | 'worktree';  // What the diff panel is showing
+  // Runner panel state
+  runnerPanelOpen: boolean;
+  runnerPtyId: PtyId | null;
+  runnerTerminal: Terminal | null;
+  runnerFitAddon: FitAddon | null;
+  runnerLabel: string;           // OCS title or command name
+  runnerStatus: 'running' | 'success' | 'error' | 'idle';
+  runnerCleanupData: (() => void) | null;
+  runnerCleanupExit: (() => void) | null;
 }
 
 // Per-project session storage for preserving theatre mode across project switches

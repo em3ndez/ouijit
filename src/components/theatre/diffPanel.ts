@@ -443,6 +443,12 @@ export async function toggleDiffPanel(): Promise<void> {
 export async function showTerminalDiffPanel(term: TheatreTerminal): Promise<void> {
   if (term.diffPanelOpen) return;
 
+  // Close runner panel if open (mutual exclusivity)
+  if (term.runnerPanelOpen) {
+    const { hideRunnerPanel } = await import('./terminalCards');
+    hideRunnerPanel(term);
+  }
+
   const gitPath = getTerminalGitPath(term);
 
   // Fetch changed files for this terminal's git context
@@ -722,6 +728,12 @@ export async function showWorktreeDiffPanel(worktreeBranch: string): Promise<voi
  */
 export async function showTerminalWorktreeDiffPanel(term: TheatreTerminal): Promise<void> {
   if (term.diffPanelOpen || !term.isWorktree || !term.worktreeBranch) return;
+
+  // Close runner panel if open (mutual exclusivity)
+  if (term.runnerPanelOpen) {
+    const { hideRunnerPanel } = await import('./terminalCards');
+    hideRunnerPanel(term);
+  }
 
   const basePath = projectPath.value;
   if (!basePath) return;
