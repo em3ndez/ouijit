@@ -4,6 +4,9 @@ import started from 'electron-squirrel-startup';
 import fixPath from 'fix-path';
 import { registerIpcHandlers, cleanupIpc } from './ipc';
 
+// Suppress Chromium/DevTools errors for features not available in Electron
+app.commandLine.appendSwitch('disable-features', 'Autofill,AutofillServerCommunication');
+
 // Fix PATH for packaged apps launched from Finder/Dock
 // This sources the user's shell PATH so npm/node are available in PTY
 fixPath();
