@@ -777,9 +777,16 @@ async function runDefaultInWorktreeCard(term: TheatreTerminal): Promise<void> {
   // Spawn PTY for the runner
   const spawnOptions: PtySpawnOptions = {
     cwd: term.worktreePath,
+    projectPath: path,  // Use main project path for session grouping during restore
     command: defaultConfig.command,
     cols: 80,  // Default size, will be resized when panel opens
     rows: 24,
+    label: defaultConfig.name,
+    isWorktree: true,
+    worktreePath: term.worktreePath,
+    worktreeBranch: term.worktreeBranch,
+    isRunner: true,
+    parentPtyId: term.ptyId,
   };
 
   try {

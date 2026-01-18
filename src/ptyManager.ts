@@ -11,6 +11,9 @@ interface ManagedPty {
   isWorktree: boolean;
   worktreePath?: string;
   worktreeBranch?: string;
+  // Runner identification
+  isRunner: boolean;
+  parentPtyId?: PtyId;
   // Always buffer recent output for scroll history preservation
   outputBuffer: string;
   maxBufferSize: number;
@@ -24,6 +27,8 @@ export interface ActiveSession {
   isWorktree: boolean;
   worktreePath?: string;
   worktreeBranch?: string;
+  isRunner?: boolean;
+  parentPtyId?: PtyId;
 }
 
 const activePtys = new Map<PtyId, ManagedPty>();
@@ -114,6 +119,8 @@ export async function spawnPty(
       isWorktree: options.isWorktree || false,
       worktreePath: options.worktreePath,
       worktreeBranch: options.worktreeBranch,
+      isRunner: options.isRunner || false,
+      parentPtyId: options.parentPtyId,
       outputBuffer: '',
       maxBufferSize: MAX_BUFFER_SIZE,
     };
@@ -191,6 +198,8 @@ export function getActiveSessions(): ActiveSession[] {
     isWorktree: managed.isWorktree,
     worktreePath: managed.worktreePath,
     worktreeBranch: managed.worktreeBranch,
+    isRunner: managed.isRunner,
+    parentPtyId: managed.parentPtyId,
   }));
 }
 

@@ -248,9 +248,27 @@ export async function enterTheatreMode(
         console.log('[Theatre] Found orphaned PTY sessions, reconnecting:', orphaned);
         orphanedSessions.delete(path); // Consume them
         window.api.pty.setWindow();
-        for (const session of orphaned) {
+
+        // Separate main terminals from runners
+        const mainSessions = orphaned.filter(s => !s.isRunner);
+        const runnerSessions = orphaned.filter(s => s.isRunner);
+
+        // First reconnect main terminals
+        for (const session of mainSessions) {
           await reconnectTheatreTerminal(session);
         }
+
+        // Then reconnect runners to their parent terminals
+        for (const runnerSession of runnerSessions) {
+          // Find parent terminal by matching parentPtyId
+          const parentTerminal = terminals.value.find(t => t.ptyId === runnerSession.parentPtyId);
+          if (parentTerminal) {
+            await reconnectRunnerToParent(runnerSession, parentTerminal);
+          } else {
+            console.warn('[Theatre] Could not find parent terminal for runner:', runnerSession.ptyId, 'parent:', runnerSession.parentPtyId);
+          }
+        }
+
         if (terminals.value.length > 0) {
           updateCardStack();
         } else {
@@ -530,9 +548,23 @@ export async function restoreTheatreMode(
     stack.className = 'theatre-stack';
     mainContent.appendChild(stack);
 
-    // Reconnect to each active session
-    for (const session of activeSessions) {
+    // Separate main terminals from runners
+    const mainSessions = activeSessions.filter(s => !s.isRunner);
+    const runnerSessions = activeSessions.filter(s => s.isRunner);
+
+    // First reconnect main terminals
+    for (const session of mainSessions) {
       await reconnectTheatreTerminal(session);
+    }
+
+    // Then reconnect runners to their parent terminals
+    for (const runnerSession of runnerSessions) {
+      const parentTerminal = terminals.value.find(t => t.ptyId === runnerSession.parentPtyId);
+      if (parentTerminal) {
+        await reconnectRunnerToParent(runnerSession, parentTerminal);
+      } else {
+        console.warn('[Theatre] Could not find parent terminal for runner:', runnerSession.ptyId, 'parent:', runnerSession.parentPtyId);
+      }
     }
 
     if (terminals.value.length > 0) {
@@ -658,6 +690,15 @@ async function reconnectTheatreTerminal(session: ActiveSession): Promise<void> {
     diffPanelFiles: [],
     diffPanelSelectedFile: null,
     diffPanelMode: session.isWorktree ? 'worktree' : 'uncommitted',
+    // Runner panel state
+    runnerPanelOpen: false,
+    runnerPtyId: null,
+    runnerTerminal: null,
+    runnerFitAddon: null,
+    runnerLabel: '',
+    runnerStatus: 'idle',
+    runnerCleanupData: null,
+    runnerCleanupExit: null,
   };
 
   // Set up close button handler
@@ -712,6 +753,13 @@ async function reconnectTheatreTerminal(session: ActiveSession): Promise<void> {
   // Add to terminals array
   terminals.value = [...terminals.value, theatreTerminal];
 
+  // Set up worktree action buttons (play button / runner pill) if this is a worktree terminal
+  if (session.isWorktree) {
+    import('./terminalCards').then(({ setupWorktreeCardActions }) => {
+      setupWorktreeCardActions(theatreTerminal);
+    });
+  }
+
   // Update card label
   updateTerminalCardLabel(theatreTerminal);
 
@@ -719,4 +767,94 @@ async function reconnectTheatreTerminal(session: ActiveSession): Promise<void> {
   if (terminals.value.length === 1) {
     terminal.focus();
   }
+}
+
+/**
+ * Reconnect a runner PTY to its parent terminal
+ */
+async function reconnectRunnerToParent(
+  session: ActiveSession,
+  parentTerminal: TheatreTerminal
+): Promise<void> {
+  const { Terminal } = await import('@xterm/xterm');
+  const { FitAddon } = await import('@xterm/addon-fit');
+  const { getTerminalTheme, updateRunnerPill } = await import('./terminalCards');
+
+  // Create runner terminal (hidden until panel is opened)
+  const runnerTerminal = new Terminal({
+    theme: getTerminalTheme(),
+    fontFamily: 'SF Mono, Monaco, Menlo, monospace',
+    fontSize: 13,
+    lineHeight: 1.2,
+    cursorBlink: false,
+    cursorStyle: 'bar',
+    allowTransparency: true,
+    scrollback: 10000,
+  });
+
+  const runnerFitAddon = new FitAddon();
+  runnerTerminal.loadAddon(runnerFitAddon);
+
+  // Reconnect to existing PTY
+  const result = await window.api.pty.reconnect(session.ptyId);
+
+  if (!result.success) {
+    console.error('[Theatre] Failed to reconnect runner PTY:', session.ptyId, result.error);
+    runnerTerminal.dispose();
+    return;
+  }
+
+  // Set up parent terminal's runner state
+  parentTerminal.runnerPtyId = session.ptyId;
+  parentTerminal.runnerTerminal = runnerTerminal;
+  parentTerminal.runnerFitAddon = runnerFitAddon;
+  parentTerminal.runnerLabel = session.label;
+  parentTerminal.runnerStatus = 'running'; // Assume running since it's being restored
+
+  // Replay buffered output
+  if (result.bufferedOutput) {
+    runnerTerminal.reset();
+    runnerTerminal.write(result.bufferedOutput);
+  }
+
+  // Set up data handler
+  parentTerminal.runnerCleanupData = window.api.pty.onData(session.ptyId, (data) => {
+    runnerTerminal.write(data);
+
+    // Extract OSC title sequences to update runner label
+    const oscMatches = data.matchAll(/\x1b\]0;([^\x07]*)\x07/g);
+    for (const match of oscMatches) {
+      if (match[1]) {
+        parentTerminal.runnerLabel = match[1];
+        updateRunnerPill(parentTerminal);
+        // Update panel title if visible
+        const panelTitle = parentTerminal.container.querySelector('.runner-panel-title');
+        if (panelTitle) {
+          panelTitle.textContent = match[1];
+        }
+      }
+    }
+  });
+
+  // Set up exit handler
+  parentTerminal.runnerCleanupExit = window.api.pty.onExit(session.ptyId, (exitCode) => {
+    runnerTerminal.writeln('');
+    const exitColor = exitCode === 0 ? '32' : '31';
+    runnerTerminal.writeln(`\x1b[${exitColor}m● Process exited with code ${exitCode}\x1b[0m`);
+
+    parentTerminal.runnerStatus = exitCode === 0 ? 'success' : 'error';
+    updateRunnerPill(parentTerminal);
+  });
+
+  // Forward terminal input to PTY
+  runnerTerminal.onData((data) => {
+    if (parentTerminal.runnerPtyId) {
+      window.api.pty.write(parentTerminal.runnerPtyId, data);
+    }
+  });
+
+  // Update runner pill to show running state
+  updateRunnerPill(parentTerminal);
+
+  console.log('[Theatre] Reconnected runner to parent terminal:', session.ptyId, '->', parentTerminal.ptyId);
 }

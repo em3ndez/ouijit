@@ -92,6 +92,10 @@ export interface PtySpawnOptions {
   worktreePath?: string;
   /** Branch name of the worktree (if isWorktree) */
   worktreeBranch?: string;
+  /** Whether this is a runner PTY (secondary terminal for running commands) */
+  isRunner?: boolean;
+  /** Parent PTY ID if this is a runner (for session restoration) */
+  parentPtyId?: PtyId;
 }
 
 /**
@@ -105,6 +109,10 @@ export interface ActiveSession {
   isWorktree: boolean;
   worktreePath?: string;
   worktreeBranch?: string;
+  /** Whether this is a runner PTY */
+  isRunner?: boolean;
+  /** Parent PTY ID if this is a runner */
+  parentPtyId?: PtyId;
 }
 
 /**
