@@ -12,6 +12,7 @@ import {
   MAX_THEATRE_TERMINALS,
   theatreState,
 } from './state';
+import { getTerminalGitPath, hideRunnerPanel, theatreRegistry } from './helpers';
 import {
   projectPath,
   projectData,
@@ -19,11 +20,9 @@ import {
   activeIndex,
 } from './signals';
 import { showToast } from '../importDialog';
-import { scheduleGitStatusRefresh, refreshGitStatus, refreshTerminalGitStatus, buildCardGitStatusHtml, getTerminalGitPath, scheduleTerminalGitStatusRefresh } from './gitStatus';
+import { scheduleGitStatusRefresh, refreshTerminalGitStatus, buildCardGitStatusHtml, scheduleTerminalGitStatusRefresh } from './gitStatus';
 import { toggleTerminalDiffPanel, toggleTerminalWorktreeDiffPanel, hideTerminalDiffPanel } from './diffPanel';
 import { mergeRunConfigs, getConfigId } from '../../utils/runConfigs';
-import { refreshTaskIndex, toggleTaskIndex } from './taskIndex';
-import { createNewAgentShell } from './worktreeDropdown';
 
 const cardIcons = { Play, GitCompare, GitMerge, GitBranch, Check };
 
@@ -685,26 +684,6 @@ export function showRunnerPanel(term: TheatreTerminal): void {
   }, 250);
 }
 
-/**
- * Hide the runner panel (does NOT kill the runner process)
- */
-export function hideRunnerPanel(term: TheatreTerminal): void {
-  if (!term.runnerPanelOpen) return;
-
-  const panel = term.container.querySelector('.runner-panel');
-  if (panel) {
-    panel.classList.remove('runner-panel--visible');
-  }
-
-  term.container.classList.remove('runner-panel-open');
-  term.runnerPanelOpen = false;
-
-  // Refit main terminal after animation
-  setTimeout(() => {
-    term.fitAddon.fit();
-    window.api.pty.resize(term.ptyId, term.terminal.cols, term.terminal.rows);
-  }, 250);
-}
 
 /**
  * Toggle the runner panel visibility
@@ -811,11 +790,11 @@ async function runDefaultInWorktreeCard(term: TheatreTerminal): Promise<void> {
   // Handle global hotkeys in runner terminal
   runnerTerminal.attachCustomKeyEventHandler((event) => {
     if (event.metaKey && event.key === 't') {
-      toggleTaskIndex();
+      theatreRegistry.toggleTaskIndex?.();
       return false;
     }
     if (event.metaKey && event.key === 'n') {
-      createNewAgentShell();
+      theatreRegistry.createNewAgentShell?.();
       return false;
     }
     return true;
@@ -983,7 +962,7 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
     }
     worktreeInfo = result.worktree;
     // Refresh task index if visible
-    refreshTaskIndex();
+    theatreRegistry.refreshTaskIndex?.();
   }
 
   // Use worktree path if we have one
@@ -1021,11 +1000,11 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
   // Handle global hotkeys in terminal
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.metaKey && event.key === 't') {
-      toggleTaskIndex();
+      theatreRegistry.toggleTaskIndex?.();
       return false;
     }
     if (event.metaKey && event.key === 'n') {
-      createNewAgentShell();
+      theatreRegistry.createNewAgentShell?.();
       return false;
     }
     return true;
@@ -1119,7 +1098,7 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
       if (projectPath.value) {
         scheduleGitStatusRefresh();
         // Also schedule a refresh of this terminal's git status
-        scheduleTerminalGitStatusRefresh(theatreTerminal);
+        scheduleTerminalGitStatusRefresh(theatreTerminal, updateTerminalCardLabel);
       }
     });
 
@@ -1363,10 +1342,10 @@ export async function showStackEmptyState(): Promise<void> {
     input.addEventListener('keydown', (e) => {
       if (e.metaKey && e.key === 't') {
         e.preventDefault();
-        toggleTaskIndex();
+        theatreRegistry.toggleTaskIndex?.();
       } else if (e.metaKey && e.key === 'n') {
         e.preventDefault();
-        createNewAgentShell();
+        theatreRegistry.createNewAgentShell?.();
       }
     });
 
@@ -1432,3 +1411,7 @@ export function hideStackEmptyState(): void {
     emptyState.remove();
   }, 200);
 }
+
+// Register functions in the theatre registry for cross-module access
+theatreRegistry.addTheatreTerminal = addTheatreTerminal;
+theatreRegistry.closeTheatreTerminal = closeTheatreTerminal;

@@ -5,6 +5,7 @@
 import { createIcons, ChevronDown, ChevronRight } from 'lucide';
 import type { ChangedFile, FileDiff } from '../../types';
 import { theatreState, TheatreTerminal } from './state';
+import { getTerminalGitPath, hideRunnerPanel } from './helpers';
 import {
   projectPath,
   terminals,
@@ -18,7 +19,6 @@ import {
 } from './signals';
 import { escapeHtml } from '../../utils/html';
 import { showToast } from '../importDialog';
-import { getTerminalGitPath } from './gitStatus';
 
 const diffIcons = { ChevronDown, ChevronRight };
 
@@ -445,7 +445,6 @@ export async function showTerminalDiffPanel(term: TheatreTerminal): Promise<void
 
   // Close runner panel if open (mutual exclusivity)
   if (term.runnerPanelOpen) {
-    const { hideRunnerPanel } = await import('./terminalCards');
     hideRunnerPanel(term);
   }
 
@@ -731,7 +730,6 @@ export async function showTerminalWorktreeDiffPanel(term: TheatreTerminal): Prom
 
   // Close runner panel if open (mutual exclusivity)
   if (term.runnerPanelOpen) {
-    const { hideRunnerPanel } = await import('./terminalCards');
     hideRunnerPanel(term);
   }
 

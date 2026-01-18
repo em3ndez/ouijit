@@ -18,6 +18,13 @@ export {
   type SummaryType,
 } from './state';
 
+// Helpers (utility functions and cross-module registry)
+export {
+  getTerminalGitPath,
+  hideRunnerPanel,
+  theatreRegistry,
+} from './helpers';
+
 // Signals (reactive state)
 export {
   projectPath,
@@ -46,7 +53,6 @@ export {
   hideGitDropdown,
   refreshGitStatus,
   scheduleGitStatusRefresh,
-  getTerminalGitPath,
   scheduleTerminalGitStatusRefresh,
   refreshTerminalGitStatus,
   refreshAllTerminalGitStatus,
@@ -106,3 +112,19 @@ export {
   hasPreservedSession,
   isInTheatreMode,
 } from './theatreMode';
+
+// Task index
+export {
+  showTaskIndex,
+  hideTaskIndex,
+  toggleTaskIndex,
+  refreshTaskIndex,
+} from './taskIndex';
+
+// Worktree/task operations
+export {
+  createNewAgentShell,
+  closeTask,
+  reopenTask,
+  deleteTask,
+} from './worktreeDropdown';

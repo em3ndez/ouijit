@@ -7,7 +7,7 @@ import type { WorktreeWithMetadata } from '../../types';
 import { theatreState } from './state';
 import { projectPath, taskIndexVisible } from './signals';
 import { showToast } from '../importDialog';
-import { addTheatreTerminal } from './terminalCards';
+import { theatreRegistry } from './helpers';
 import { reopenTask, deleteTask, closeTask } from './worktreeDropdown';
 import { registerHotkey, unregisterHotkey, Scopes } from '../../utils/hotkeys';
 
@@ -133,7 +133,7 @@ function buildTaskItem(task: WorktreeWithMetadata, path: string, index?: number)
     if (task.status === 'closed') {
       await reopenTask(path, task);
     } else {
-      await addTheatreTerminal(undefined, {
+      await theatreRegistry.addTheatreTerminal?.(undefined, {
         existingWorktree: {
           path: task.path,
           branch: task.branch,
@@ -364,3 +364,7 @@ export function toggleTaskIndex(): void {
     showTaskIndex();
   }
 }
+
+// Register functions in the theatre registry for cross-module access
+theatreRegistry.toggleTaskIndex = toggleTaskIndex;
+theatreRegistry.refreshTaskIndex = refreshTaskIndex;

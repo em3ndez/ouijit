@@ -6,7 +6,7 @@ import type { WorktreeWithMetadata } from '../../types';
 import { MAX_THEATRE_TERMINALS } from './state';
 import { projectPath, terminals } from './signals';
 import { showToast } from '../importDialog';
-import { addTheatreTerminal, closeTheatreTerminal } from './terminalCards';
+import { theatreRegistry } from './helpers';
 import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../../utils/hotkeys';
 
 /**
@@ -163,7 +163,7 @@ export async function createNewAgentShell(): Promise<void> {
 
   const name = await showWorktreeNamePrompt();
   if (name !== null) {
-    await addTheatreTerminal(undefined, { useWorktree: true, worktreeName: name || undefined });
+    await theatreRegistry.addTheatreTerminal?.(undefined, { useWorktree: true, worktreeName: name || undefined });
   }
 }
 
@@ -178,7 +178,7 @@ export async function closeTask(path: string, task: WorktreeWithMetadata): Promi
     for (let i = currentTerminals.length - 1; i >= 0; i--) {
       const term = currentTerminals[i];
       if (term.worktreeBranch === task.branch) {
-        closeTheatreTerminal(i);
+        theatreRegistry.closeTheatreTerminal?.(i);
       }
     }
     showToast('Task closed', 'success');
@@ -194,7 +194,7 @@ export async function reopenTask(path: string, task: WorktreeWithMetadata): Prom
   const result = await window.api.worktree.reopen(path, task.branch);
   if (result.success) {
     // Open terminal for the task
-    await addTheatreTerminal(undefined, {
+    await theatreRegistry.addTheatreTerminal?.(undefined, {
       existingWorktree: {
         path: task.path,
         branch: task.branch,
@@ -218,7 +218,7 @@ export async function deleteTask(path: string, task: WorktreeWithMetadata): Prom
   for (let i = currentTerminals.length - 1; i >= 0; i--) {
     const term = currentTerminals[i];
     if (term.worktreeBranch === task.branch) {
-      closeTheatreTerminal(i);
+      theatreRegistry.closeTheatreTerminal?.(i);
     }
   }
 
@@ -229,3 +229,6 @@ export async function deleteTask(path: string, task: WorktreeWithMetadata): Prom
     showToast(result.error || 'Failed to delete task', 'error');
   }
 }
+
+// Register functions in the theatre registry for cross-module access
+theatreRegistry.createNewAgentShell = createNewAgentShell;

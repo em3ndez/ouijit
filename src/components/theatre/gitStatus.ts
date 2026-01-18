@@ -4,6 +4,7 @@
 
 import type { CompactGitStatus } from '../../types';
 import { theatreState, GIT_STATUS_IDLE_DELAY, TheatreTerminal } from './state';
+import { getTerminalGitPath } from './helpers';
 import { projectPath, terminals, gitDropdownVisible } from './signals';
 
 /**
@@ -49,26 +50,23 @@ export function scheduleGitStatusRefresh(): void {
 // Map of pending per-terminal git status refreshes
 const pendingTerminalGitRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
 
-/**
- * Get the git path for a terminal (worktree path if it's a worktree, otherwise project path)
- */
-export function getTerminalGitPath(term: TheatreTerminal): string {
-  return term.worktreePath || term.projectPath;
-}
 
 /**
  * Schedule a debounced git status refresh for a specific terminal
+ * @param term - The terminal to refresh
+ * @param onComplete - Optional callback to run after refresh (e.g., to update UI)
  */
-export function scheduleTerminalGitStatusRefresh(term: TheatreTerminal): void {
+export function scheduleTerminalGitStatusRefresh(
+  term: TheatreTerminal,
+  onComplete?: (term: TheatreTerminal) => void
+): void {
   const key = term.ptyId;
   const existing = pendingTerminalGitRefreshes.get(key);
   if (existing) clearTimeout(existing);
 
   pendingTerminalGitRefreshes.set(key, setTimeout(async () => {
     await refreshTerminalGitStatus(term);
-    // Import dynamically to avoid circular deps
-    const { updateTerminalCardLabel } = await import('./terminalCards');
-    updateTerminalCardLabel(term);
+    onComplete?.(term);
     pendingTerminalGitRefreshes.delete(key);
   }, GIT_STATUS_IDLE_DELAY));
 }
