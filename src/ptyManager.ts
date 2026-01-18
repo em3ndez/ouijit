@@ -108,7 +108,7 @@ export async function spawnPty(
 
     const managed: ManagedPty = {
       process: ptyProcess,
-      projectPath: options.cwd,
+      projectPath: options.projectPath || options.cwd,
       command: finalCommand,
       label,
       isWorktree: options.isWorktree || false,

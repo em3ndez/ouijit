@@ -965,9 +965,14 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
   // Spawn PTY
   const spawnOptions: PtySpawnOptions = {
     cwd: terminalCwd,
+    projectPath: currentProjectPath,
     command,
     cols: terminal.cols,
     rows: terminal.rows,
+    label,
+    isWorktree: !!worktreeInfo,
+    worktreePath: worktreeInfo?.path,
+    worktreeBranch: worktreeInfo?.branch,
   };
 
   try {

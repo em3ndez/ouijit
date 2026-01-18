@@ -78,6 +78,8 @@ export type PtyId = string;
  */
 export interface PtySpawnOptions {
   cwd: string;
+  /** The project this terminal belongs to (for session restoration). Defaults to cwd if not specified. */
+  projectPath?: string;
   /** Command to run. If not provided, spawns an interactive shell */
   command?: string;
   cols?: number;
