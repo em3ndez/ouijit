@@ -4,7 +4,7 @@
 
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { createIcons, Terminal as TerminalIcon, Play, GitCompare, GitMerge, GitBranch, Check } from 'lucide';
+import { createIcons, Terminal as TerminalIcon, Play, GitCompare, GitMerge, GitBranch, Archive } from 'lucide';
 import type { PtyId, PtySpawnOptions, RunConfig, WorktreeInfo } from '../../types';
 import {
   TheatreTerminal,
@@ -24,7 +24,7 @@ import { scheduleGitStatusRefresh, refreshTerminalGitStatus, buildCardGitStatusH
 import { toggleTerminalDiffPanel, hideTerminalDiffPanel } from './diffPanel';
 import { mergeRunConfigs, getConfigId } from '../../utils/runConfigs';
 
-const cardIcons = { Play, GitCompare, GitMerge, GitBranch, Check };
+const cardIcons = { Play, GitCompare, GitMerge, GitBranch, Archive };
 
 /**
  * Format a branch name for display (hyphens to spaces)
@@ -321,7 +321,7 @@ export function createTheatreCard(label: string, index: number): HTMLElement {
           <span class="runner-pill-label"></span>
         </div>
       </div>
-      <button class="theatre-card-close-task theatre-card-action--worktree" style="display: none;" title="Close task"><i data-lucide="check"></i></button>
+      <button class="theatre-card-close-task theatre-card-action--worktree" style="display: none;" title="Close task"><i data-lucide="archive"></i></button>
       <button class="theatre-card-close" title="Close terminal">&times;</button>
     </div>
   `;

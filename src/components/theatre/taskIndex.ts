@@ -2,7 +2,7 @@
  * Task index sidecar panel - browse and manage all tasks (open and closed)
  */
 
-import { createIcons, ArrowLeft, RotateCcw, Trash2, Check } from 'lucide';
+import { createIcons, ArrowLeft, RotateCcw, Trash2, Archive } from 'lucide';
 import type { WorktreeWithMetadata } from '../../types';
 import { theatreState } from './state';
 import { projectPath, taskIndexVisible } from './signals';
@@ -11,7 +11,7 @@ import { theatreRegistry } from './helpers';
 import { reopenTask, deleteTask, closeTask } from './worktreeDropdown';
 import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../../utils/hotkeys';
 
-const taskIndexIcons = { ArrowLeft, RotateCcw, Trash2, Check };
+const taskIndexIcons = { ArrowLeft, RotateCcw, Trash2, Archive };
 
 /**
  * Format a branch name for display (hyphens to spaces)
@@ -102,7 +102,7 @@ function buildTaskItem(task: WorktreeWithMetadata, path: string, index?: number)
     const closeBtn = document.createElement('button');
     closeBtn.className = 'task-index-item-action task-index-item-action--close';
     closeBtn.title = 'Close task';
-    closeBtn.innerHTML = '<i data-lucide="check"></i>';
+    closeBtn.innerHTML = '<i data-lucide="archive"></i>';
     closeBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       await closeTask(path, task);

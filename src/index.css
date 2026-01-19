@@ -2521,8 +2521,8 @@ body > .diff-panel--visible {
 }
 
 .theatre-card-close-task:hover {
-  background: rgba(52, 199, 89, 0.2);
-  color: #34C759;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 /* Worktree card action buttons - now siblings in label */
@@ -3058,8 +3058,8 @@ body > .diff-panel--visible {
   }
 
   .theatre-card-close-task:hover {
-    background: rgba(52, 199, 89, 0.15);
-    color: #34C759;
+    background: rgba(0, 0, 0, 0.08);
+    color: rgba(0, 0, 0, 0.7);
   }
 
   .theatre-card-action {
@@ -3603,7 +3603,7 @@ body.task-index-open .theatre-stack {
 }
 
 .task-index-item-action--close:hover {
-  color: var(--color-success);
+  color: var(--color-text-primary);
 }
 
 .task-index-item-action--danger:hover {
