@@ -2,7 +2,7 @@
  * Launch dropdown for theatre mode - command selection and project actions
  */
 
-import { createIcons, ChevronDown, Play, Plus, FolderOpen, Star, X, ListTodo, Bug, Terminal } from 'lucide';
+import { createIcons, ChevronDown, Play, Plus, FolderOpen, Star, X, ListTodo, Terminal } from 'lucide';
 import type { RunConfig } from '../../types';
 import { theatreState, MAX_THEATRE_TERMINALS } from './state';
 import { projectPath, projectData, terminals, launchDropdownVisible } from './signals';
@@ -12,7 +12,7 @@ import { showToast } from '../importDialog';
 import { showCustomCommandDialog } from '../customCommandDialog';
 import { addTheatreTerminal } from './terminalCards';
 
-const launchIcons = { ChevronDown, Play, Plus, FolderOpen, Star, X, ListTodo, Bug, Terminal };
+const launchIcons = { ChevronDown, Play, Plus, FolderOpen, Star, X, ListTodo, Terminal };
 
 /**
  * Build the theatre mode header content
@@ -44,9 +44,6 @@ export function buildTheatreHeader(): string {
           <i data-lucide="play"></i>
         </button>
       </div>
-      ${import.meta.env.DEV ? `<button class="theatre-debug-btn" title="Toggle OSC title debug">
-        <i data-lucide="bug"></i>
-      </button>` : ''}
       <button class="theatre-exit-btn" title="Exit theatre mode (Esc)">
         <i data-lucide="minimize-2"></i>
       </button>

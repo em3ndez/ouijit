@@ -89,128 +89,6 @@ export function stripAnsi(str: string): string {
 }
 
 /**
- * Debug: Maximum number of OSC titles to keep in history
- */
-const OSC_HISTORY_MAX = 50;
-
-/**
- * Debug: Create or get the OSC debug overlay for a terminal card
- */
-function getOrCreateOscDebugOverlay(container: HTMLElement): HTMLElement {
-  let overlay = container.querySelector('.osc-debug-overlay') as HTMLElement;
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.className = 'osc-debug-overlay';
-    overlay.innerHTML = `
-      <div class="osc-debug-header">
-        <span class="osc-debug-title">OSC Title Debug</span>
-        <button class="osc-debug-close">&times;</button>
-      </div>
-      <div class="osc-debug-current">
-        <span class="osc-debug-label">Current:</span>
-        <code class="osc-debug-value">—</code>
-      </div>
-      <div class="osc-debug-history">
-        <span class="osc-debug-label">History:</span>
-        <div class="osc-debug-history-list"></div>
-      </div>
-    `;
-
-    const cardBody = container.querySelector('.theatre-card-body');
-    if (cardBody) {
-      cardBody.appendChild(overlay);
-    }
-
-    // Wire up close button
-    const closeBtn = overlay.querySelector('.osc-debug-close');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleOscDebug();
-      });
-    }
-  }
-  return overlay;
-}
-
-/**
- * Debug: Update the OSC debug overlay for a terminal
- */
-function updateOscDebugOverlay(term: TheatreTerminal): void {
-  if (!theatreState.oscDebugEnabled) return;
-
-  const overlay = getOrCreateOscDebugOverlay(term.container);
-  overlay.style.display = 'flex';
-
-  // Update current value
-  const currentValue = overlay.querySelector('.osc-debug-value') as HTMLElement;
-  if (currentValue) {
-    currentValue.textContent = term.lastOscTitle || '(empty)';
-  }
-
-  // Update history list
-  const historyList = overlay.querySelector('.osc-debug-history-list') as HTMLElement;
-  if (historyList && term.oscTitleHistory) {
-    const items = term.oscTitleHistory.slice().reverse().slice(0, 20).map(entry => {
-      const time = new Date(entry.timestamp).toLocaleTimeString('en-US', {
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        fractionalSecondDigits: 3
-      });
-      // Escape HTML and show special chars
-      const displayTitle = entry.title
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-      return `<div class="osc-debug-history-item"><span class="osc-debug-time">${time}</span><code>${displayTitle || '(empty)'}</code></div>`;
-    }).join('');
-    historyList.innerHTML = items || '<div class="osc-debug-history-empty">No history yet</div>';
-  }
-}
-
-/**
- * Debug: Toggle OSC debug overlay visibility for all terminals
- */
-export function toggleOscDebug(): void {
-  theatreState.oscDebugEnabled = !theatreState.oscDebugEnabled;
-
-  const currentTerminals = terminals.value;
-  for (const term of currentTerminals) {
-    const overlay = term.container.querySelector('.osc-debug-overlay') as HTMLElement;
-    if (theatreState.oscDebugEnabled) {
-      updateOscDebugOverlay(term);
-    } else if (overlay) {
-      overlay.style.display = 'none';
-    }
-  }
-
-  console.log(`[Debug] OSC title debug ${theatreState.oscDebugEnabled ? 'enabled' : 'disabled'}`);
-}
-
-/**
- * Debug: Add an OSC title to a terminal's history
- */
-function addOscTitleToHistory(term: TheatreTerminal, title: string): void {
-  if (!term.oscTitleHistory) {
-    term.oscTitleHistory = [];
-  }
-
-  term.oscTitleHistory.push({ title, timestamp: Date.now() });
-
-  // Keep history bounded
-  if (term.oscTitleHistory.length > OSC_HISTORY_MAX) {
-    term.oscTitleHistory = term.oscTitleHistory.slice(-OSC_HISTORY_MAX);
-  }
-
-  // Update overlay if debug is enabled
-  if (theatreState.oscDebugEnabled) {
-    updateOscDebugOverlay(term);
-  }
-}
-
-/**
  * Analyze terminal output buffer and determine summary state
  */
 export function analyzeTerminalOutput(buffer: string, lastOscTitle: string): { summary: string; type: SummaryType } {
@@ -1114,7 +992,6 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
       summaryType: 'idle',
       outputBuffer: '',
       lastOscTitle: '',
-      oscTitleHistory: [],
       isWorktree: !!worktreeInfo,
       worktreePath: worktreeInfo?.path,
       worktreeBranch: worktreeInfo?.branch,
@@ -1155,7 +1032,6 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
         const newTitle = match[1];
         if (newTitle !== theatreTerminal.lastOscTitle) {
           theatreTerminal.lastOscTitle = newTitle;
-          addOscTitleToHistory(theatreTerminal, newTitle);
           updateTerminalCardLabel(theatreTerminal);
         }
       }

@@ -89,7 +89,6 @@ export {
   buildEmptyStateHtml,
   showStackEmptyState,
   hideStackEmptyState,
-  toggleOscDebug,
   setupCardActions,
 } from './terminalCards';
 

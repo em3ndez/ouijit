@@ -39,7 +39,6 @@ import {
   addTheatreTerminal,
   updateCardStack,
   showStackEmptyState,
-  toggleOscDebug,
   switchToTheatreTerminal,
   selectByStackPosition,
   setupCardActions,
@@ -121,16 +120,6 @@ export async function enterTheatreMode(
       });
     }
 
-    // Wire up debug button (toggles OSC title debug overlay)
-    const debugBtn = headerContent.querySelector('.theatre-debug-btn');
-    if (debugBtn) {
-      debugBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleOscDebug();
-        // Toggle active state on button
-        debugBtn.classList.toggle('theatre-debug-btn--active', theatreState.oscDebugEnabled);
-      });
-    }
   }
 
   // 3. Handle stack - restore existing or create new
@@ -546,15 +535,6 @@ export async function restoreTheatreMode(
       });
     }
 
-    // Wire up debug button
-    const debugBtn = headerContent.querySelector('.theatre-debug-btn');
-    if (debugBtn) {
-      debugBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleOscDebug();
-        debugBtn.classList.toggle('theatre-debug-btn--active', theatreState.oscDebugEnabled);
-      });
-    }
   }
 
   // 3. Create stack and restore terminals
@@ -708,7 +688,6 @@ async function reconnectTheatreTerminal(session: ActiveSession): Promise<void> {
     summaryType: 'idle',
     outputBuffer: '',
     lastOscTitle: '',
-    oscTitleHistory: [],
     isWorktree: session.isWorktree,
     worktreePath: session.worktreePath,
     worktreeBranch: session.worktreeBranch,
