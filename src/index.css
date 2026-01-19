@@ -2770,6 +2770,14 @@ body > .diff-panel--visible {
   font-weight: var(--font-weight-medium);
 }
 
+.theatre-card-git-add {
+  color: #69db7c;
+}
+
+.theatre-card-git-del {
+  color: #ff6b6b;
+}
+
 /* Card body - flex container for terminal and diff panel */
 .theatre-card-body {
   flex: 1;

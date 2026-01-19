@@ -33,20 +33,17 @@ export function formatDiffStats(additions: number, deletions: number): string {
 }
 
 /**
- * Build HTML for the diff panel
+ * Build HTML for the diff panel (uncommitted changes only)
  */
-export function buildDiffPanelHtml(files: ChangedFile[], worktreeBranch?: string): string {
+export function buildDiffPanelHtml(files: ChangedFile[]): string {
   // Get first file for initial selector state
   const firstFile = files[0];
   const statusLabel = firstFile.status === '?' ? 'U' : firstFile.status;
   const fileName = firstFile.path.split('/').pop() || firstFile.path;
   const stats = formatDiffStats(firstFile.additions, firstFile.deletions);
 
-  // Pre-populate header info for worktree mode
-  const headerInfo = worktreeBranch ? 'vs main' : '';
-
   return `
-    <div class="diff-panel"${worktreeBranch ? ' data-worktree="true"' : ''}>
+    <div class="diff-panel">
       <div class="diff-content">
         <div class="diff-content-header">
           <div class="diff-file-selector" title="${escapeHtml(firstFile.path)}" data-additions="${firstFile.additions}" data-deletions="${firstFile.deletions}">
@@ -55,7 +52,7 @@ export function buildDiffPanelHtml(files: ChangedFile[], worktreeBranch?: string
             <span class="diff-file-selector-stats">${stats}</span>
             <i data-lucide="chevron-down" class="diff-file-selector-chevron"></i>
           </div>
-          <span class="diff-header-info">${headerInfo}</span>
+          <span class="diff-header-info"></span>
           <button class="diff-panel-close" title="Close diff panel"><i data-lucide="chevron-right"></i></button>
         </div>
         <div class="diff-content-body"></div>
@@ -676,8 +673,8 @@ export async function showWorktreeDiffPanel(worktreeBranch: string): Promise<voi
   diffPanelFiles.value = diffSummary.files;
   diffPanelVisible.value = true;
 
-  // Create and insert panel with worktree context
-  const panelHtml = buildDiffPanelHtml(diffSummary.files, worktreeBranch);
+  // Create and insert panel
+  const panelHtml = buildDiffPanelHtml(diffSummary.files);
   document.body.insertAdjacentHTML('beforeend', panelHtml);
 
   const panel = document.querySelector('.diff-panel');
@@ -758,8 +755,8 @@ export async function showTerminalWorktreeDiffPanel(term: TheatreTerminal): Prom
   const cardBody = term.container.querySelector('.theatre-card-body');
   if (!cardBody) return;
 
-  // Create and insert panel inside the card body (with worktree context label)
-  const panelHtml = buildDiffPanelHtml(diffSummary.files, term.worktreeBranch);
+  // Create and insert panel inside the card body
+  const panelHtml = buildDiffPanelHtml(diffSummary.files);
   cardBody.insertAdjacentHTML('beforeend', panelHtml);
 
   const panel = cardBody.querySelector('.diff-panel');

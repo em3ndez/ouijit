@@ -21,7 +21,7 @@ import {
 } from './signals';
 import { showToast } from '../importDialog';
 import { scheduleGitStatusRefresh, refreshTerminalGitStatus, buildCardGitStatusHtml, scheduleTerminalGitStatusRefresh } from './gitStatus';
-import { toggleTerminalDiffPanel, toggleTerminalWorktreeDiffPanel, hideTerminalDiffPanel } from './diffPanel';
+import { toggleTerminalDiffPanel, hideTerminalDiffPanel } from './diffPanel';
 import { mergeRunConfigs, getConfigId } from '../../utils/runConfigs';
 
 const cardIcons = { Play, GitCompare, GitMerge, GitBranch, Check };
@@ -391,14 +391,7 @@ export function updateTerminalCardLabel(term: TheatreTerminal): void {
       if (statsEl) {
         statsEl.addEventListener('click', (e) => {
           e.stopPropagation();
-          const diffType = statsEl.dataset.diffType;
-          // For worktree terminals with branch diff, show worktree vs main
-          // Otherwise show uncommitted changes
-          if (term.isWorktree && diffType === 'branch') {
-            toggleTerminalWorktreeDiffPanel(term);
-          } else {
-            toggleTerminalDiffPanel(term);
-          }
+          toggleTerminalDiffPanel(term);
         });
       }
     }
@@ -443,7 +436,7 @@ export function createTheatreCard(label: string, index: number): HTMLElement {
     </div>
     <div class="theatre-card-label-right">
       <div class="theatre-card-git-wrapper"></div>
-      <div class="runner-pill theatre-card-action--worktree" style="display: none;">
+      <div class="runner-pill" style="display: none;">
         <button class="runner-pill-play" data-action="run" title="Run default command"><i data-lucide="play"></i></button>
         <div class="runner-pill-status">
           <span class="runner-pill-light"></span>
@@ -475,30 +468,25 @@ export function createTheatreCard(label: string, index: number): HTMLElement {
 }
 
 /**
- * Set up worktree action buttons on a card
+ * Set up card action buttons (runner pill for all terminals, close-task for worktrees)
+ * Note: Runner pill visibility is controlled by updateCardStack (only shown on active card)
  */
-export function setupWorktreeCardActions(term: TheatreTerminal): void {
-  if (!term.isWorktree || !term.worktreeBranch) return;
-
+export function setupCardActions(term: TheatreTerminal): void {
   const labelEl = term.container.querySelector('.theatre-card-label');
   if (!labelEl) return;
 
-  // Show runner pill for worktree terminals
-  const runnerPill = labelEl.querySelector('.runner-pill') as HTMLElement;
-  if (runnerPill) {
-    runnerPill.style.display = 'flex';
-  }
+  // Show close button only for worktree terminals
+  if (term.isWorktree && term.worktreeBranch) {
+    const closeBtn = labelEl.querySelector('.theatre-card-close-task') as HTMLElement;
+    if (closeBtn) {
+      closeBtn.style.display = 'flex';
 
-  // Show close button for worktree terminals
-  const closeBtn = labelEl.querySelector('.theatre-card-close-task') as HTMLElement;
-  if (closeBtn) {
-    closeBtn.style.display = 'flex';
-
-    // Wire up close button
-    closeBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await closeTaskFromTerminal(term);
-    });
+      // Wire up close button
+      closeBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await closeTaskFromTerminal(term);
+      });
+    }
   }
 
   // Initialize lucide icons
@@ -515,7 +503,7 @@ export function setupWorktreeCardActions(term: TheatreTerminal): void {
       if (term.runnerPtyId) {
         toggleRunnerPanel(term);
       } else {
-        await runDefaultInWorktreeCard(term);
+        await runDefaultInCard(term);
       }
     });
   }
@@ -744,12 +732,12 @@ export function killRunner(term: TheatreTerminal): void {
 
 
 /**
- * Run the default command in the worktree as a hidden runner
+ * Run the default command as a hidden runner
  */
-async function runDefaultInWorktreeCard(term: TheatreTerminal): Promise<void> {
+async function runDefaultInCard(term: TheatreTerminal): Promise<void> {
   const path = projectPath.value;
   const project = projectData.value;
-  if (!path || !project || !term.worktreePath || !term.worktreeBranch) return;
+  if (!path || !project) return;
 
   // If runner already active, kill it first
   if (term.runnerPtyId) {
@@ -797,15 +785,16 @@ async function runDefaultInWorktreeCard(term: TheatreTerminal): Promise<void> {
   term.runnerTerminal = runnerTerminal;
   term.runnerFitAddon = runnerFitAddon;
 
-  // Spawn PTY for the runner
+  // Spawn PTY for the runner - use worktree path if available, otherwise project path
+  const cwd = term.worktreePath || path;
   const spawnOptions: PtySpawnOptions = {
-    cwd: term.worktreePath,
+    cwd,
     projectPath: path,  // Use main project path for session grouping during restore
     command: defaultConfig.command,
     cols: 80,  // Default size, will be resized when panel opens
     rows: 24,
     label: defaultConfig.name,
-    isWorktree: true,
+    isWorktree: !!term.isWorktree,
     worktreePath: term.worktreePath,
     worktreeBranch: term.worktreeBranch,
     isRunner: true,
@@ -906,14 +895,18 @@ export function updateCardStack(): void {
   // Sort by diff descending (highest diff = bottom of stack = ⌘1)
   backPositions.sort((a, b) => b.diff - a.diff);
 
-  // Second pass: assign shortcuts based on visual stack position (bottom to top)
+  // Second pass: assign shortcuts and toggle runner pill visibility
   currentTerminals.forEach((term, index) => {
     const shortcutEl = term.container.querySelector('.theatre-card-shortcut') as HTMLElement;
-    if (shortcutEl) {
-      if (index === currentActiveIndex) {
-        shortcutEl.style.display = 'none';
-      } else {
-        // Find this terminal's position in the sorted back cards
+    const runnerPill = term.container.querySelector('.runner-pill') as HTMLElement;
+
+    if (index === currentActiveIndex) {
+      // Active card: hide shortcut, show runner pill
+      if (shortcutEl) shortcutEl.style.display = 'none';
+      if (runnerPill) runnerPill.style.display = 'flex';
+    } else {
+      // Back card: show shortcut, hide runner pill
+      if (shortcutEl) {
         const stackPosition = backPositions.findIndex(bp => bp.index === index);
         if (stackPosition !== -1 && stackPosition < 9) {
           shortcutEl.textContent = `⌘${stackPosition + 1}`;
@@ -922,6 +915,7 @@ export function updateCardStack(): void {
           shortcutEl.style.display = 'none';
         }
       }
+      if (runnerPill) runnerPill.style.display = 'none';
     }
   });
 }
@@ -1209,8 +1203,8 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
       }
     });
 
-    // Set up worktree action buttons if this is a worktree terminal
-    setupWorktreeCardActions(theatreTerminal);
+    // Set up card action buttons (runner pill, close-task for worktrees)
+    setupCardActions(theatreTerminal);
 
     // Fetch initial git status for this terminal
     refreshTerminalGitStatus(theatreTerminal).then(() => {

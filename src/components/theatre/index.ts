@@ -90,6 +90,7 @@ export {
   showStackEmptyState,
   hideStackEmptyState,
   toggleOscDebug,
+  setupCardActions,
 } from './terminalCards';
 
 // Launch dropdown

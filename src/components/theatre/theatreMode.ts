@@ -42,6 +42,7 @@ import {
   toggleOscDebug,
   switchToTheatreTerminal,
   selectByStackPosition,
+  setupCardActions,
 } from './terminalCards';
 import {
   buildTheatreHeader,
@@ -703,7 +704,7 @@ async function reconnectTheatreTerminal(session: ActiveSession): Promise<void> {
     cleanupData: null,
     cleanupExit: null,
     resizeObserver,
-    summary: 'Restored',
+    summary: '',
     summaryType: 'idle',
     outputBuffer: '',
     lastOscTitle: '',
@@ -782,12 +783,8 @@ async function reconnectTheatreTerminal(session: ActiveSession): Promise<void> {
   // Add to terminals array
   terminals.value = [...terminals.value, theatreTerminal];
 
-  // Set up worktree action buttons (play button / runner pill) if this is a worktree terminal
-  if (session.isWorktree) {
-    import('./terminalCards').then(({ setupWorktreeCardActions }) => {
-      setupWorktreeCardActions(theatreTerminal);
-    });
-  }
+  // Set up card action buttons (runner pill for all, close-task for worktrees)
+  setupCardActions(theatreTerminal);
 
   // Update card label
   updateTerminalCardLabel(theatreTerminal);
