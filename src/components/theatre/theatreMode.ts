@@ -40,6 +40,8 @@ import {
   updateCardStack,
   showStackEmptyState,
   toggleOscDebug,
+  switchToTheatreTerminal,
+  getTerminalIndexByStackPosition,
 } from './terminalCards';
 import {
   buildTheatreHeader,
@@ -291,6 +293,16 @@ export async function enterTheatreMode(
   registerHotkey('command+n', Scopes.THEATRE, () => createNewAgentShell());
   registerHotkey('command+t', Scopes.THEATRE, () => toggleTaskIndex());
 
+  // ⌘1-9 to switch between terminals by stack position (bottom to top)
+  for (let i = 1; i <= 9; i++) {
+    registerHotkey(`command+${i}`, Scopes.THEATRE, () => {
+      const targetIndex = getTerminalIndexByStackPosition(i);
+      if (targetIndex !== -1) {
+        switchToTheatreTerminal(targetIndex);
+      }
+    });
+  }
+
   // 5. Start periodic git status refresh (for long-running commands)
   // This now refreshes all terminals' git status
   if (project.hasGit) {
@@ -391,6 +403,9 @@ export function exitTheatreMode(): void {
   unregisterHotkey('escape', Scopes.THEATRE);
   unregisterHotkey('command+n', Scopes.THEATRE);
   unregisterHotkey('command+t', Scopes.THEATRE);
+  for (let i = 1; i <= 9; i++) {
+    unregisterHotkey(`command+${i}`, Scopes.THEATRE);
+  }
   popScope();
 
   // 5. Clear git status timers
@@ -585,6 +600,16 @@ export async function restoreTheatreMode(
   registerHotkey('escape', Scopes.THEATRE, () => exitTheatreMode());
   registerHotkey('command+n', Scopes.THEATRE, () => createNewAgentShell());
   registerHotkey('command+t', Scopes.THEATRE, () => toggleTaskIndex());
+
+  // ⌘1-9 to switch between terminals by stack position (bottom to top)
+  for (let i = 1; i <= 9; i++) {
+    registerHotkey(`command+${i}`, Scopes.THEATRE, () => {
+      const targetIndex = getTerminalIndexByStackPosition(i);
+      if (targetIndex !== -1) {
+        switchToTheatreTerminal(targetIndex);
+      }
+    });
+  }
 
   // 5. Start periodic git status refresh
   if (project.hasGit) {

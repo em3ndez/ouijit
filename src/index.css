@@ -2380,6 +2380,21 @@ body > .diff-panel--visible {
     0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
+/* Back card label positioning - shift content up for better visibility in tab area */
+.theatre-card--back-1 .theatre-card-label,
+.theatre-card--back-2 .theatre-card-label,
+.theatre-card--back-3 .theatre-card-label,
+.theatre-card--back-4 .theatre-card-label {
+  padding-top: 4px;
+}
+
+/* Hide non-essential elements on back cards, but keep close button */
+.theatre-card:not(.theatre-card--active) .theatre-card-git-wrapper,
+.theatre-card:not(.theatre-card--active) .runner-pill,
+.theatre-card:not(.theatre-card--active) .theatre-card-close-task {
+  display: none;
+}
+
 /* Hover effect on back cards */
 .theatre-card:not(.theatre-card--active):hover {
   border-color: var(--color-accent);
@@ -2440,13 +2455,20 @@ body > .diff-panel--visible {
   text-overflow: ellipsis;
 }
 
+/* Keyboard shortcut hint for tab switching */
+.theatre-card-shortcut {
+  font-family: 'SF Mono', Monaco, Menlo, monospace;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
+}
+
 /* Status dot indicator for terminal summary */
 .theatre-card-status-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-right: 8px;
   background: #69db7c; /* Green by default = idle/ready */
   box-shadow: 0 0 4px rgba(105, 219, 124, 0.5);
   transition: background-color 0.2s ease, box-shadow 0.2s ease;
@@ -2619,12 +2641,7 @@ body > .diff-panel--visible {
   color: rgba(255, 255, 255, 0.4);
   font-size: 14px;
   line-height: 1;
-  opacity: 0;
-  transition: opacity var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
-}
-
-.theatre-card--active .theatre-card-close {
-  opacity: 1;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .theatre-card-close:hover {
@@ -3166,6 +3183,10 @@ body > .diff-panel--visible {
 
   .theatre-card-label-text {
     color: rgba(0, 0, 0, 0.7);
+  }
+
+  .theatre-card-shortcut {
+    color: rgba(0, 0, 0, 0.4);
   }
 
   .theatre-card-close {

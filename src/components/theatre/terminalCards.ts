@@ -434,6 +434,7 @@ export function createTheatreCard(label: string, index: number): HTMLElement {
   labelEl.innerHTML = `
     <div class="theatre-card-label-left">
       <span class="theatre-card-status-dot" data-status="idle"></span>
+      <kbd class="theatre-card-shortcut" style="display: none;"></kbd>
       <span class="theatre-card-label-text">${label}</span>
     </div>
     <div class="theatre-card-label-right">
@@ -798,6 +799,15 @@ async function runDefaultInWorktreeCard(term: TheatreTerminal): Promise<void> {
       theatreRegistry.createNewAgentShell?.();
       return false;
     }
+    // ⌘1-9 to switch between terminals by stack position (bottom to top)
+    if (event.metaKey && event.key >= '1' && event.key <= '9') {
+      const stackPosition = parseInt(event.key, 10);
+      const targetIndex = getTerminalIndexByStackPosition(stackPosition);
+      if (targetIndex !== -1) {
+        switchToTheatreTerminal(targetIndex);
+      }
+      return false;
+    }
     return true;
   });
 
@@ -893,6 +903,8 @@ export function updateCardStack(): void {
   const tabSpace = backCardCount * 24;
   stack.style.top = `${82 + tabSpace}px`;
 
+  // First pass: calculate back positions for all cards
+  const backPositions: { index: number; diff: number }[] = [];
   currentTerminals.forEach((term, index) => {
     // Remove all position classes
     term.container.classList.remove('theatre-card--active', 'theatre-card--back-1', 'theatre-card--back-2', 'theatre-card--back-3', 'theatre-card--back-4');
@@ -904,8 +916,62 @@ export function updateCardStack(): void {
       const diff = index < currentActiveIndex ? currentActiveIndex - index : currentTerminals.length - index + currentActiveIndex;
       const backClass = `theatre-card--back-${Math.min(diff, 4)}`;
       term.container.classList.add(backClass);
+      backPositions.push({ index, diff });
     }
   });
+
+  // Sort by diff descending (highest diff = bottom of stack = ⌘1)
+  backPositions.sort((a, b) => b.diff - a.diff);
+
+  // Second pass: assign shortcuts based on visual stack position (bottom to top)
+  currentTerminals.forEach((term, index) => {
+    const shortcutEl = term.container.querySelector('.theatre-card-shortcut') as HTMLElement;
+    if (shortcutEl) {
+      if (index === currentActiveIndex) {
+        shortcutEl.style.display = 'none';
+      } else {
+        // Find this terminal's position in the sorted back cards
+        const stackPosition = backPositions.findIndex(bp => bp.index === index);
+        if (stackPosition !== -1 && stackPosition < 9) {
+          shortcutEl.textContent = `⌘${stackPosition + 1}`;
+          shortcutEl.style.display = '';
+        } else {
+          shortcutEl.style.display = 'none';
+        }
+      }
+    }
+  });
+}
+
+/**
+ * Get the terminal index for a given stack position (1 = bottom, 2 = second from bottom, etc.)
+ * Returns -1 if no terminal at that position
+ */
+export function getTerminalIndexByStackPosition(stackPosition: number): number {
+  const currentTerminals = terminals.value;
+  const currentActiveIndex = activeIndex.value;
+
+  if (currentTerminals.length === 0) return -1;
+
+  // Build back positions array (same logic as updateCardStack)
+  const backPositions: { index: number; diff: number }[] = [];
+  currentTerminals.forEach((_, index) => {
+    if (index !== currentActiveIndex) {
+      const diff = index < currentActiveIndex ? currentActiveIndex - index : currentTerminals.length - index + currentActiveIndex;
+      backPositions.push({ index, diff });
+    }
+  });
+
+  // Sort by diff descending (highest diff = bottom of stack = position 1)
+  backPositions.sort((a, b) => b.diff - a.diff);
+
+  // stackPosition is 1-indexed (⌘1 = position 1 = bottom)
+  const arrayIndex = stackPosition - 1;
+  if (arrayIndex >= 0 && arrayIndex < backPositions.length) {
+    return backPositions[arrayIndex].index;
+  }
+
+  return -1;
 }
 
 /**
@@ -1006,6 +1072,15 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
     }
     if (event.metaKey && event.key === 'n') {
       theatreRegistry.createNewAgentShell?.();
+      return false;
+    }
+    // ⌘1-9 to switch between terminals by stack position (bottom to top)
+    if (event.metaKey && event.key >= '1' && event.key <= '9') {
+      const stackPosition = parseInt(event.key, 10);
+      const targetIndex = getTerminalIndexByStackPosition(stackPosition);
+      if (targetIndex !== -1) {
+        switchToTheatreTerminal(targetIndex);
+      }
       return false;
     }
     return true;
