@@ -2,16 +2,16 @@
  * Task index sidecar panel - browse and manage all tasks (open and closed)
  */
 
-import { createIcons, X, RotateCcw, Trash2, Check } from 'lucide';
+import { createIcons, ArrowLeft, RotateCcw, Trash2, Check } from 'lucide';
 import type { WorktreeWithMetadata } from '../../types';
 import { theatreState } from './state';
 import { projectPath, taskIndexVisible } from './signals';
 import { showToast } from '../importDialog';
 import { theatreRegistry } from './helpers';
 import { reopenTask, deleteTask, closeTask } from './worktreeDropdown';
-import { registerHotkey, unregisterHotkey, Scopes } from '../../utils/hotkeys';
+import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../../utils/hotkeys';
 
-const taskIndexIcons = { X, RotateCcw, Trash2, Check };
+const taskIndexIcons = { ArrowLeft, RotateCcw, Trash2, Check };
 
 /**
  * Format a branch name for display (hyphens to spaces)
@@ -43,7 +43,7 @@ function buildTaskIndexHtml(): string {
     <div class="task-index-panel">
       <div class="task-index-header">
         <h2 class="task-index-title">Tasks</h2>
-        <button class="task-index-close" title="Close"><i data-lucide="x"></i></button>
+        <button class="task-index-close" title="Close"><i data-lucide="arrow-left"></i></button>
       </div>
       <div class="task-index-content">
         <div class="task-index-list task-index-list--open"></div>
@@ -253,81 +253,41 @@ export async function showTaskIndex(): Promise<void> {
 
   taskIndexVisible.value = true;
 
-  // Keyboard navigation
-  let selectedIndex = -1;
+  // Push task index scope to capture hotkeys
+  pushScope(Scopes.TASK_INDEX);
 
-  const getVisibleItems = () => {
-    return Array.from(panel!.querySelectorAll('.task-index-item')) as HTMLElement[];
-  };
-
-  const updateSelection = (newIndex: number) => {
-    const items = getVisibleItems();
-    if (items.length === 0) return;
-
-    // Remove previous selection
-    items.forEach(item => item.classList.remove('task-index-item--selected'));
-
-    // Clamp index
-    selectedIndex = Math.max(0, Math.min(newIndex, items.length - 1));
-
-    // Add new selection
-    items[selectedIndex]?.classList.add('task-index-item--selected');
-    items[selectedIndex]?.scrollIntoView({ block: 'nearest' });
-  };
-
-  const activateSelected = () => {
-    const items = getVisibleItems();
-    if (selectedIndex >= 0 && selectedIndex < items.length) {
-      items[selectedIndex].click();
-    }
-  };
-
-  const handleKeydown = (e: KeyboardEvent) => {
-    const items = getVisibleItems();
-    if (items.length === 0) return;
-
-    switch (e.key) {
-      case 'ArrowDown':
-      case 'j':
-        e.preventDefault();
-        updateSelection(selectedIndex + 1);
-        break;
-      case 'ArrowUp':
-      case 'k':
-        e.preventDefault();
-        updateSelection(selectedIndex - 1);
-        break;
-      case 'Enter':
-        e.preventDefault();
-        activateSelected();
-        break;
-      case 'Escape':
-        e.preventDefault();
-        hideTaskIndex();
-        break;
-      default:
-        // ⌘1-9 for quick select
-        if (e.metaKey && e.key >= '1' && e.key <= '9') {
-          const index = parseInt(e.key, 10) - 1;
-          if (index < items.length) {
-            e.preventDefault();
-            updateSelection(index);
-            activateSelected();
-          }
-        }
-        break;
-    }
-  };
-
-  document.addEventListener('keydown', handleKeydown);
-
-  // Select first item by default
-  requestAnimationFrame(() => {
-    updateSelection(0);
+  // Register scoped hotkeys
+  registerHotkey('escape', Scopes.TASK_INDEX, () => {
+    hideTaskIndex();
   });
 
+  registerHotkey('command+t', Scopes.TASK_INDEX, () => {
+    hideTaskIndex();
+  });
+
+  registerHotkey('command+n', Scopes.TASK_INDEX, () => {
+    hideTaskIndex();
+    theatreRegistry.createNewAgentShell?.();
+  });
+
+  // ⌘1-9 for quick select
+  for (let i = 1; i <= 9; i++) {
+    registerHotkey(`command+${i}`, Scopes.TASK_INDEX, () => {
+      const items = Array.from(panel!.querySelectorAll('.task-index-item')) as HTMLElement[];
+      if (i - 1 < items.length) {
+        items[i - 1].click();
+      }
+    });
+  }
+
   theatreState.taskIndexCleanup = () => {
-    document.removeEventListener('keydown', handleKeydown);
+    unregisterHotkey('escape', Scopes.TASK_INDEX);
+    unregisterHotkey('command+t', Scopes.TASK_INDEX);
+    unregisterHotkey('command+n', Scopes.TASK_INDEX);
+    for (let i = 1; i <= 9; i++) {
+      unregisterHotkey(`command+${i}`, Scopes.TASK_INDEX);
+    }
+    popScope();
   };
 }
 

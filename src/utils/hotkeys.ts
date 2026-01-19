@@ -10,6 +10,7 @@ export const Scopes = {
   APP: 'app',
   PROJECT_LIST: 'project-list',
   THEATRE: 'theatre',
+  TASK_INDEX: 'task-index',
   MODAL: 'modal',
   DROPDOWN: 'dropdown',
 } as const;
@@ -70,15 +71,20 @@ export function unregisterHotkey(keys: string, scope: Scope): void {
  * By default, hotkeys-js ignores events from input/textarea/select
  */
 export function initHotkeys(): void {
-  // Allow hotkeys in inputs only for specific keys (Escape, Enter)
+  // Allow hotkeys in inputs only for specific keys
   hotkeys.filter = (event) => {
     const target = event.target as HTMLElement;
     const tagName = target.tagName;
     const isInput =
       tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
 
-    // Always allow Escape and Enter in inputs (for modal dismissal/submission)
+    // Always allow these through, even in inputs
     if (event.key === 'Escape' || event.key === 'Enter') {
+      return true;
+    }
+
+    // Allow ⌘+number and ⌘+letter shortcuts in inputs
+    if (event.metaKey && !event.ctrlKey && !event.altKey) {
       return true;
     }
 

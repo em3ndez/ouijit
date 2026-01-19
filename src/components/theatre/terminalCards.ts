@@ -19,6 +19,7 @@ import {
   terminals,
   activeIndex,
 } from './signals';
+import { registerHotkey, unregisterHotkey, Scopes } from '../../utils/hotkeys';
 import { showToast } from '../importDialog';
 import { scheduleGitStatusRefresh, refreshTerminalGitStatus, buildCardGitStatusHtml, scheduleTerminalGitStatusRefresh } from './gitStatus';
 import { toggleTerminalDiffPanel, toggleTerminalWorktreeDiffPanel, hideTerminalDiffPanel } from './diffPanel';
@@ -1217,7 +1218,7 @@ export function buildEmptyStateHtml(): string {
         <div class="theatre-stack-empty-open-list"></div>
       </div>
       <div class="theatre-stack-empty-new">
-        <div class="theatre-stack-empty-section-label">New Task</div>
+        <div class="theatre-stack-empty-section-label"><span class="theatre-stack-empty-section-shortcut">⌘N</span>New Task</div>
         <form class="theatre-stack-empty-form">
           <input
             type="text"
@@ -1230,7 +1231,7 @@ export function buildEmptyStateHtml(): string {
         </form>
       </div>
       <div class="theatre-stack-empty-hints">
-        <span class="theatre-stack-empty-hint"><kbd>⌘T</kbd> all tasks</span>
+        <span class="theatre-stack-empty-hint"><span class="theatre-stack-empty-hint-shortcut">⌘T</span>All Tasks</span>
       </div>
     </div>
   `;
@@ -1319,36 +1320,24 @@ export async function showStackEmptyState(): Promise<void> {
   const input = emptyState.querySelector('.theatre-stack-empty-input') as HTMLInputElement;
   const submitBtn = emptyState.querySelector('.theatre-stack-empty-btn') as HTMLButtonElement;
 
-  // Handle ⌘1-9 for quick task selection (document level when empty state visible)
-  const handleEmptyStateKeys = (e: KeyboardEvent) => {
-    if (e.metaKey && e.key >= '1' && e.key <= '9') {
-      const index = parseInt(e.key, 10) - 1;
-      const taskBtn = emptyState.querySelector(`.theatre-stack-empty-task[data-task-index="${index}"]`) as HTMLButtonElement;
+  // Register ⌘1-9 for quick task selection in THEATRE scope
+  for (let i = 1; i <= 9; i++) {
+    registerHotkey(`command+${i}`, Scopes.THEATRE, () => {
+      const taskBtn = emptyState.querySelector(`.theatre-stack-empty-task[data-task-index="${i - 1}"]`) as HTMLButtonElement;
       if (taskBtn) {
-        e.preventDefault();
         taskBtn.click();
       }
-    }
-  };
-  document.addEventListener('keydown', handleEmptyStateKeys);
+    });
+  }
 
   // Store cleanup function on the element for later removal
   (emptyState as any)._keydownCleanup = () => {
-    document.removeEventListener('keydown', handleEmptyStateKeys);
+    for (let i = 1; i <= 9; i++) {
+      unregisterHotkey(`command+${i}`, Scopes.THEATRE);
+    }
   };
 
   if (form && input && submitBtn) {
-    // Handle ⌘T/⌘N when input is focused (input captures these otherwise)
-    input.addEventListener('keydown', (e) => {
-      if (e.metaKey && e.key === 't') {
-        e.preventDefault();
-        theatreRegistry.toggleTaskIndex?.();
-      } else if (e.metaKey && e.key === 'n') {
-        e.preventDefault();
-        theatreRegistry.createNewAgentShell?.();
-      }
-    });
-
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
 
