@@ -8,13 +8,14 @@ import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { reserveTaskNumber, createTask, getTaskByNumber, deleteTaskByNumber, type TaskMetadata } from './taskMetadata';
+import { getNextTaskNumber, createTask, getTaskByNumber, deleteTaskByNumber, type TaskMetadata } from './taskMetadata';
 
 const execAsync = promisify(exec);
 
 export interface WorktreeInfo {
   path: string;
   branch: string;
+  taskName?: string;
   createdAt: string;
 }
 
@@ -99,13 +100,13 @@ function sanitizeBranchName(name: string): string {
 
 /**
  * Generate a branch name from a task name
- * No longer needs timestamp since task number provides uniqueness
+ * Always includes task number to guarantee uniqueness
  */
 function generateBranchName(name: string | undefined, taskNumber: number): string {
   if (name) {
     const sanitized = sanitizeBranchName(name);
     if (sanitized) {
-      return sanitized;
+      return `${sanitized}-${taskNumber}`;
     }
   }
   return `task-${taskNumber}`;
@@ -142,8 +143,8 @@ export async function createTaskWorktree(projectPath: string, name?: string): Pr
     const projectName = path.basename(projectPath);
     const displayName = name || 'Untitled';
 
-    // Reserve task number first
-    const taskNumber = await reserveTaskNumber(projectPath);
+    // Get next task number (only persisted after successful worktree creation)
+    const taskNumber = await getNextTaskNumber(projectPath);
 
     // Generate branch name and worktree path
     const branch = generateBranchName(name, taskNumber);

@@ -871,6 +871,7 @@ export async function selectByStackPosition(position: number): Promise<void> {
       existingWorktree: {
         path: task.path,
         branch: task.branch,
+        taskName: task.name,
         createdAt: task.createdAt,
       },
     });
@@ -916,6 +917,7 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
     worktreeInfo = {
       path: result.worktreePath,
       branch: result.task.branch,
+      taskName: result.task.name,
       createdAt: result.task.createdAt,
     };
     // Refresh task index if visible
@@ -927,7 +929,9 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
     terminalCwd = worktreeInfo.path;
   }
 
-  const label = worktreeInfo ? formatBranchNameForDisplay(worktreeInfo.branch) : (runConfig?.name || 'Shell');
+  const label = worktreeInfo
+    ? (worktreeInfo.taskName || formatBranchNameForDisplay(worktreeInfo.branch))
+    : (runConfig?.name || 'Shell');
   const command = runConfig?.command;
   const index = currentTerminals.length;
 
@@ -1226,6 +1230,7 @@ async function populatePreviousTasks(emptyState: HTMLElement): Promise<void> {
           existingWorktree: {
             path: task.path,
             branch: task.branch,
+            taskName: task.name,
             createdAt: task.createdAt,
           },
         });

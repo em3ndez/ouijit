@@ -384,6 +384,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       results.push({
         path: wt.path,
         branch: wt.branch,
+        taskName: metadata.name,
         createdAt: metadata.createdAt || wt.createdAt,
         taskNumber: metadata.taskNumber,
         name: metadata.name,
@@ -401,6 +402,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         results.push({
           path: '',
           branch: task.branch,
+          taskName: task.name,
           createdAt: task.createdAt,
           taskNumber: task.taskNumber,
           name: task.name,

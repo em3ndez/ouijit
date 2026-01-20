@@ -156,19 +156,17 @@ async function ensureProjectStore(projectPath: string): Promise<TaskStore> {
 }
 
 /**
- * Reserve the next task number for a project
- * Returns the number and increments the counter
+ * Get the next task number for a project without persisting
+ * The counter is only incremented when createTask is called
  */
-export async function reserveTaskNumber(projectPath: string): Promise<number> {
+export async function getNextTaskNumber(projectPath: string): Promise<number> {
   const store = await ensureProjectStore(projectPath);
-  const taskNumber = store[projectPath].nextTaskNumber;
-  store[projectPath].nextTaskNumber++;
-  await saveStore(store);
-  return taskNumber;
+  return store[projectPath].nextTaskNumber;
 }
 
 /**
  * Create a new task entry with explicit task number
+ * Also increments nextTaskNumber if this task number matches it
  */
 export async function createTask(
   projectPath: string,
@@ -193,6 +191,12 @@ export async function createTask(
   };
 
   store[projectPath].tasks.push(task);
+
+  // Increment counter if this was the next expected number
+  if (taskNumber >= store[projectPath].nextTaskNumber) {
+    store[projectPath].nextTaskNumber = taskNumber + 1;
+  }
+
   await saveStore(store);
   return task;
 }
@@ -294,6 +298,6 @@ export async function ensureTaskExists(
   if (existing) {
     return existing;
   }
-  const taskNumber = await reserveTaskNumber(projectPath);
+  const taskNumber = await getNextTaskNumber(projectPath);
   return createTask(projectPath, taskNumber, branch, name);
 }
