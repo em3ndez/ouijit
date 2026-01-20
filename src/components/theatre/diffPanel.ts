@@ -2,7 +2,6 @@
  * Diff panel for viewing uncommitted changes in theatre mode
  */
 
-import { createIcons, ChevronDown, ChevronRight } from 'lucide';
 import type { ChangedFile, FileDiff } from '../../types';
 import { theatreState, TheatreTerminal } from './state';
 import { getTerminalGitPath, hideRunnerPanel } from './helpers';
@@ -19,8 +18,6 @@ import {
 } from './signals';
 import { escapeHtml } from '../../utils/html';
 import { showToast } from '../importDialog';
-
-const diffIcons = { ChevronDown, ChevronRight };
 
 /**
  * Format diff stats as HTML
@@ -353,9 +350,6 @@ export async function showDiffPanel(): Promise<void> {
   const panel = document.querySelector('.diff-panel');
   if (!panel) return;
 
-  // Initialize lucide icons for the chevron
-  createIcons({ icons: diffIcons });
-
   // Wire up file selector dropdown toggle
   const fileSelector = panel.querySelector('.diff-file-selector');
   if (fileSelector) {
@@ -477,9 +471,6 @@ export async function showTerminalDiffPanel(term: TheatreTerminal): Promise<void
 
   // Add class to card to indicate diff is open
   term.container.classList.add('diff-panel-open');
-
-  // Initialize lucide icons for the chevron
-  createIcons({ icons: diffIcons, nodes: [panel as Element] });
 
   // Wire up file selector dropdown toggle
   const fileSelector = panel.querySelector('.diff-file-selector');
@@ -680,9 +671,6 @@ export async function showWorktreeDiffPanel(worktreeBranch: string): Promise<voi
   const panel = document.querySelector('.diff-panel');
   if (!panel) return;
 
-  // Initialize lucide icons for the chevron
-  createIcons({ icons: diffIcons });
-
   // Wire up file selector dropdown toggle
   const fileSelector = panel.querySelector('.diff-file-selector');
   if (fileSelector) {
@@ -764,9 +752,6 @@ export async function showTerminalWorktreeDiffPanel(term: TheatreTerminal): Prom
 
   // Add class to card to indicate diff is open
   term.container.classList.add('diff-panel-open');
-
-  // Initialize lucide icons for the chevron
-  createIcons({ icons: diffIcons, nodes: [panel as Element] });
 
   // Wire up file selector dropdown toggle
   const fileSelector = panel.querySelector('.diff-file-selector');

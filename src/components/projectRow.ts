@@ -1,5 +1,5 @@
 import type { Project, RunConfig } from '../types';
-import { createElement, ChevronDown, Upload, FolderOpen, Plus, Star, X } from 'lucide';
+import { createElement, ChevronDown, Upload, FolderOpen, Plus, Star, X } from '../utils/icons';
 import { showToast } from './importDialog';
 import { showCustomCommandDialog } from './customCommandDialog';
 import { stringToColor, getInitials } from '../utils/projectIcon';

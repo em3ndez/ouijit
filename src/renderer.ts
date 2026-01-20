@@ -6,7 +6,7 @@
 
 import './index.css';
 import '@xterm/xterm/css/xterm.css';
-import { createIcons, Search, FolderOpen, Download, RefreshCw, Plus } from 'lucide';
+import { initIcons } from './utils/icons';
 import type { Project, ElectronAPI, ActiveSession } from './types';
 import { renderProjects } from './components/projectGrid';
 import { setupSearch } from './components/searchBar';
@@ -284,10 +284,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialize hotkey system
   initHotkeys();
 
-  // Initialize Lucide icons
-  createIcons({
-    icons: { Search, FolderOpen, Download, RefreshCw, Plus },
-  });
+  // Initialize automatic icon conversion
+  initIcons();
 
   // Set up refresh button
   const refreshBtn = document.getElementById('refresh-btn');

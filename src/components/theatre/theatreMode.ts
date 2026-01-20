@@ -2,7 +2,6 @@
  * Theatre mode orchestration - enter/exit, session management
  */
 
-import { createIcons, Maximize2, Minimize2, RefreshCw, GitBranch, ListTodo, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge, Terminal, Bug } from 'lucide';
 import type { Project, RunConfig, ChangedFile, ActiveSession } from '../../types';
 import {
   theatreState,
@@ -53,8 +52,6 @@ import { createNewAgentShell } from './worktreeDropdown';
 import { toggleTaskIndex } from './taskIndex';
 import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../../utils/hotkeys';
 
-const theatreIcons = { Maximize2, Minimize2, RefreshCw, GitBranch, ListTodo, ChevronDown, Play, Plus, FolderOpen, Upload, Star, X, GitMerge, Terminal, Bug };
-
 /**
  * Enter theatre mode for the specified project
  * If a preserved session exists, it will be restored instead of creating a new one
@@ -85,7 +82,6 @@ export async function enterTheatreMode(
   if (headerContent) {
     theatreState.originalHeaderContent = headerContent.innerHTML;
     headerContent.innerHTML = buildTheatreHeader();
-    createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
 
     // Wire up exit button
     const exitBtn = headerContent.querySelector('.theatre-exit-btn');
@@ -178,8 +174,6 @@ export async function enterTheatreMode(
 
             const panel = cardBody.querySelector('.diff-panel');
             if (panel) {
-              createIcons({ icons: theatreIcons, nodes: [panel as Element] });
-
               // Wire up file selector dropdown toggle
               const fileSelector = panel.querySelector('.diff-file-selector');
               if (fileSelector) {
@@ -356,7 +350,6 @@ export function exitTheatreMode(): void {
   const headerContent = document.querySelector('.header-content');
   if (headerContent && theatreState.originalHeaderContent) {
     headerContent.innerHTML = theatreState.originalHeaderContent;
-    createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
     // Re-attach refresh handler with full behavior
     const refreshBtn = headerContent.querySelector('#refresh-btn');
     if (refreshBtn) {
@@ -500,7 +493,6 @@ export async function restoreTheatreMode(
   if (headerContent) {
     theatreState.originalHeaderContent = headerContent.innerHTML;
     headerContent.innerHTML = buildTheatreHeader();
-    createIcons({ icons: theatreIcons, nodes: [headerContent as HTMLElement] });
 
     // Wire up exit button
     const exitBtn = headerContent.querySelector('.theatre-exit-btn');

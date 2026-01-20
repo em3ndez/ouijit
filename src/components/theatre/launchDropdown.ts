@@ -2,7 +2,6 @@
  * Launch dropdown for theatre mode - command selection and project actions
  */
 
-import { createIcons, ChevronDown, Play, Plus, FolderOpen, Star, X, ListTodo, Terminal } from 'lucide';
 import type { RunConfig } from '../../types';
 import { theatreState, MAX_THEATRE_TERMINALS } from './state';
 import { projectPath, projectData, terminals, launchDropdownVisible } from './signals';
@@ -11,8 +10,6 @@ import { stringToColor, getInitials } from '../../utils/projectIcon';
 import { showToast } from '../importDialog';
 import { showCustomCommandDialog } from '../customCommandDialog';
 import { addTheatreTerminal } from './terminalCards';
-
-const launchIcons = { ChevronDown, Play, Plus, FolderOpen, Star, X, ListTodo, Terminal };
 
 /**
  * Build the theatre mode header content
@@ -209,9 +206,6 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
     }
   });
   dropdown.appendChild(finderOption);
-
-  // Initialize icons
-  createIcons({ icons: launchIcons, nodes: [dropdown] });
 }
 
 /**

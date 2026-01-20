@@ -2,7 +2,6 @@
  * Task index sidecar panel - browse and manage all tasks (open and closed)
  */
 
-import { createIcons, ArrowLeft, RotateCcw, Trash2, Archive } from 'lucide';
 import type { WorktreeWithMetadata } from '../../types';
 import { theatreState } from './state';
 import { projectPath, taskIndexVisible } from './signals';
@@ -10,8 +9,6 @@ import { showToast } from '../importDialog';
 import { theatreRegistry } from './helpers';
 import { reopenTask, deleteTask, closeTask } from './worktreeDropdown';
 import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../../utils/hotkeys';
-
-const taskIndexIcons = { ArrowLeft, RotateCcw, Trash2, Archive };
 
 /**
  * Format a branch name for display (hyphens to spaces)
@@ -209,9 +206,6 @@ async function populateTaskIndex(): Promise<void> {
   } else {
     emptyState.style.display = 'none';
   }
-
-  // Initialize icons
-  createIcons({ icons: taskIndexIcons, nodes: [panel as Element] });
 }
 
 /**
@@ -244,9 +238,6 @@ export async function showTaskIndex(): Promise<void> {
     if (closeBtn) {
       closeBtn.addEventListener('click', () => hideTaskIndex());
     }
-
-    // Initialize icons
-    createIcons({ icons: taskIndexIcons, nodes: [panel as Element] });
   }
 
   // Populate tasks

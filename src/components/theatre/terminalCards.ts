@@ -4,7 +4,6 @@
 
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { createIcons, Terminal as TerminalIcon, Play, GitCompare, GitMerge, GitBranch, Archive } from 'lucide';
 import type { PtyId, PtySpawnOptions, RunConfig, WorktreeInfo } from '../../types';
 import {
   TheatreTerminal,
@@ -23,8 +22,6 @@ import { showToast } from '../importDialog';
 import { scheduleGitStatusRefresh, refreshTerminalGitStatus, buildCardGitStatusHtml, scheduleTerminalGitStatusRefresh } from './gitStatus';
 import { toggleTerminalDiffPanel, hideTerminalDiffPanel } from './diffPanel';
 import { mergeRunConfigs, getConfigId } from '../../utils/runConfigs';
-
-const cardIcons = { Play, GitCompare, GitMerge, GitBranch, Archive };
 
 /**
  * Format a branch name for display (hyphens to spaces)
@@ -260,11 +257,8 @@ export function updateTerminalCardLabel(term: TheatreTerminal): void {
     const gitHtml = buildCardGitStatusHtml(term.gitStatus);
     gitWrapper.innerHTML = gitHtml;
 
-    // Initialize icons
+    // Wire up click handler for stats (only if clickable)
     if (gitHtml) {
-      createIcons({ icons: cardIcons, nodes: [gitWrapper] });
-
-      // Wire up click handler for stats (only if clickable)
       const statsEl = gitWrapper.querySelector('.theatre-card-git-stats--clickable') as HTMLElement;
       if (statsEl) {
         statsEl.addEventListener('click', (e) => {
@@ -366,9 +360,6 @@ export function setupCardActions(term: TheatreTerminal): void {
       });
     }
   }
-
-  // Initialize lucide icons
-  createIcons({ icons: cardIcons, nodes: [labelEl as Element] });
 
   // Wire up runner pill click handlers
   const runBtn = labelEl.querySelector('.runner-pill-play');
