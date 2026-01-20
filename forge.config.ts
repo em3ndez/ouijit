@@ -33,6 +33,13 @@ const config: ForgeConfig = {
     // Node's native module loader expects .node files on the real filesystem.
     asar: false,
     icon: './src/assets/icons/icon',
+    osxSign: process.env.SKIP_SIGN
+      ? undefined
+      : {
+          optionsForFile: () => ({
+            entitlements: './entitlements.mac.plist',
+          }),
+        },
   },
   rebuildConfig: {},
   hooks: {
