@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { reserveTaskNumber, createTask, getTaskByNumber, deleteTaskByNumber, type TaskMetadata } from './taskMetadata';
 
 const execAsync = promisify(exec);
 
@@ -17,9 +18,10 @@ export interface WorktreeInfo {
   createdAt: string;
 }
 
-export interface WorktreeCreateResult {
+export interface TaskWorktreeResult {
   success: boolean;
-  worktree?: WorktreeInfo;
+  task?: TaskMetadata;
+  worktreePath?: string;
   error?: string;
 }
 
@@ -96,16 +98,17 @@ function sanitizeBranchName(name: string): string {
 }
 
 /**
- * Generate a unique branch name for a worktree
+ * Generate a branch name from a task name
+ * No longer needs timestamp since task number provides uniqueness
  */
-function generateBranchName(name?: string): string {
+function generateBranchName(name: string | undefined, taskNumber: number): string {
   if (name) {
     const sanitized = sanitizeBranchName(name);
     if (sanitized) {
-      return `${sanitized}-${Date.now()}`;
+      return sanitized;
     }
   }
-  return `agent-${Date.now()}`;
+  return `task-${taskNumber}`;
 }
 
 /**
@@ -131,14 +134,21 @@ export function formatBranchNameForDisplay(branch: string): string {
 }
 
 /**
- * Create a new git worktree for a project
+ * Create a new task with its git worktree
+ * This is the main entry point - combines task metadata and worktree creation
  */
-export async function createWorktree(projectPath: string, name?: string): Promise<WorktreeCreateResult> {
+export async function createTaskWorktree(projectPath: string, name?: string): Promise<TaskWorktreeResult> {
   try {
     const projectName = path.basename(projectPath);
-    const branch = generateBranchName(name);
+    const displayName = name || 'Untitled';
+
+    // Reserve task number first
+    const taskNumber = await reserveTaskNumber(projectPath);
+
+    // Generate branch name and worktree path
+    const branch = generateBranchName(name, taskNumber);
     const baseDir = getWorktreeBaseDir(projectName);
-    const worktreePath = path.join(baseDir, branch);
+    const worktreePath = path.join(baseDir, `T-${taskNumber}`);
 
     // Ensure base directory exists
     await fs.mkdir(baseDir, { recursive: true });
@@ -150,35 +160,40 @@ export async function createWorktree(projectPath: string, name?: string): Promis
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
+    // Create task metadata (worktree succeeded)
+    const task = await createTask(projectPath, taskNumber, branch, displayName);
+
     // Copy dependencies from source project to avoid needing to reinstall
     await copyDependencies(projectPath, worktreePath);
 
     return {
       success: true,
-      worktree: {
-        path: worktreePath,
-        branch,
-        createdAt: new Date().toISOString(),
-      },
+      task,
+      worktreePath,
     };
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to create worktree',
+      error: error instanceof Error ? error.message : 'Failed to create task worktree',
     };
   }
 }
 
 /**
- * Remove a git worktree
+ * Remove a git worktree and its task metadata
  */
-export async function removeWorktree(
+export async function removeTaskWorktree(
   projectPath: string,
   worktreePath: string
 ): Promise<WorktreeRemoveResult> {
   try {
-    // Get the branch name before removing
-    const branchName = path.basename(worktreePath);
+    // Parse task number from directory name (e.g., "T-3" -> 3)
+    const dirName = path.basename(worktreePath);
+    const taskNumber = parseInt(dirName.slice(2), 10);
+
+    // Get the task to find the branch name
+    const task = await getTaskByNumber(projectPath, taskNumber);
+    const branchName = task?.branch;
 
     // Remove the worktree
     execSync(`git worktree remove "${worktreePath}" --force`, {
@@ -188,14 +203,21 @@ export async function removeWorktree(
     });
 
     // Delete the branch
-    try {
-      execSync(`git branch -D "${branchName}"`, {
-        cwd: projectPath,
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-    } catch {
-      // Branch may already be deleted, ignore
+    if (branchName) {
+      try {
+        execSync(`git branch -D "${branchName}"`, {
+          cwd: projectPath,
+          encoding: 'utf8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+      } catch {
+        // Branch may already be deleted, ignore
+      }
+    }
+
+    // Delete task metadata
+    if (!isNaN(taskNumber)) {
+      await deleteTaskByNumber(projectPath, taskNumber);
     }
 
     return { success: true };

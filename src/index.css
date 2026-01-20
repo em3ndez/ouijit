@@ -3569,6 +3569,14 @@ body.task-index-open .theatre-stack {
   flex-shrink: 0;
 }
 
+.task-index-item-id {
+  font-family: 'SF Mono', Monaco, Menlo, monospace;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-right: var(--spacing-xs);
+  flex-shrink: 0;
+}
+
 .task-index-item-actions {
   display: flex;
   gap: 2px;

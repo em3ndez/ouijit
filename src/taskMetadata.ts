@@ -13,7 +13,8 @@ const METADATA_FILE = 'task-metadata.json';
  * Metadata for a single task
  */
 export interface TaskMetadata {
-  branch: string;           // Unique identifier (the branch name)
+  taskNumber: number;       // Sequential number (1, 2, 3...) - displayed as T-{taskNumber}
+  branch: string;           // Git branch name (descriptive)
   name: string;             // Display name
   status: 'open' | 'closed';
   createdAt: string;        // ISO timestamp
@@ -25,6 +26,7 @@ export interface TaskMetadata {
  */
 interface TaskStore {
   [projectPath: string]: {
+    nextTaskNumber: number;  // Counter for assigning task numbers
     tasks: TaskMetadata[];
   };
 }
@@ -100,26 +102,90 @@ export async function getTask(projectPath: string, branch: string): Promise<Task
 }
 
 /**
- * Create a new task entry
+ * Get a single task by task number
+ */
+export async function getTaskByNumber(projectPath: string, taskNumber: number): Promise<TaskMetadata | null> {
+  const store = await loadStore();
+  const projectData = store[projectPath];
+  if (!projectData) {
+    return null;
+  }
+  return projectData.tasks.find(t => t.taskNumber === taskNumber) || null;
+}
+
+/**
+ * Delete a task by task number
+ */
+export async function deleteTaskByNumber(
+  projectPath: string,
+  taskNumber: number
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const store = await loadStore();
+    const projectData = store[projectPath];
+
+    if (!projectData) {
+      return { success: true };
+    }
+
+    projectData.tasks = projectData.tasks.filter(t => t.taskNumber !== taskNumber);
+    await saveStore(store);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to delete task:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Initialize project store if needed, returns the store
+ */
+async function ensureProjectStore(projectPath: string): Promise<TaskStore> {
+  const store = await loadStore();
+  if (!store[projectPath]) {
+    store[projectPath] = { nextTaskNumber: 1, tasks: [] };
+  }
+  // Handle legacy stores without nextTaskNumber
+  if (!store[projectPath].nextTaskNumber) {
+    const maxNumber = store[projectPath].tasks.reduce((max, t) => {
+      return t.taskNumber ? Math.max(max, t.taskNumber) : max;
+    }, 0);
+    store[projectPath].nextTaskNumber = maxNumber + 1;
+  }
+  return store;
+}
+
+/**
+ * Reserve the next task number for a project
+ * Returns the number and increments the counter
+ */
+export async function reserveTaskNumber(projectPath: string): Promise<number> {
+  const store = await ensureProjectStore(projectPath);
+  const taskNumber = store[projectPath].nextTaskNumber;
+  store[projectPath].nextTaskNumber++;
+  await saveStore(store);
+  return taskNumber;
+}
+
+/**
+ * Create a new task entry with explicit task number
  */
 export async function createTask(
   projectPath: string,
+  taskNumber: number,
   branch: string,
   name: string
 ): Promise<TaskMetadata> {
-  const store = await loadStore();
+  const store = await ensureProjectStore(projectPath);
 
-  if (!store[projectPath]) {
-    store[projectPath] = { tasks: [] };
-  }
-
-  // Check if task already exists
-  const existing = store[projectPath].tasks.find(t => t.branch === branch);
+  // Check if task already exists with this number
+  const existing = store[projectPath].tasks.find(t => t.taskNumber === taskNumber);
   if (existing) {
     return existing;
   }
 
   const task: TaskMetadata = {
+    taskNumber,
     branch,
     name,
     status: 'open',
@@ -228,5 +294,6 @@ export async function ensureTaskExists(
   if (existing) {
     return existing;
   }
-  return createTask(projectPath, branch, name);
+  const taskNumber = await reserveTaskNumber(projectPath);
+  return createTask(projectPath, taskNumber, branch, name);
 }

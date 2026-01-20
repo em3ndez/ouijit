@@ -16,14 +16,12 @@ import {
 } from './ptyManager';
 import { exportProject, previewOuijitFile, importOuijitPackage } from './ouijit';
 import { getGitStatus, getCompactGitStatus, getGitDropdownInfo, checkoutBranch, createBranch, mergeIntoMain, getChangedFiles, getFileDiff, getWorktreeDiff, getWorktreeFileDiff, mergeWorktreeBranch } from './git';
-import { createWorktree, removeWorktree, listWorktrees, formatBranchNameForDisplay } from './worktree';
-import type { WorktreeCreateResult, WorktreeRemoveResult, WorktreeInfo } from './worktree';
+import { createTaskWorktree, removeTaskWorktree, listWorktrees, formatBranchNameForDisplay } from './worktree';
+import type { TaskWorktreeResult, WorktreeRemoveResult, WorktreeInfo } from './worktree';
 import {
   getProjectTasks,
-  createTask,
   closeTask,
   reopenTask,
-  deleteTask,
   ensureTaskExists,
 } from './taskMetadata';
 import {
@@ -341,25 +339,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // Worktree handlers
-  ipcMain.handle('worktree:create', async (_event, projectPath: string, name?: string): Promise<WorktreeCreateResult> => {
-    const result = await createWorktree(projectPath, name);
-    // Create task metadata when worktree is created
-    if (result.success && result.worktree) {
-      const displayName = name || formatBranchNameForDisplay(result.worktree.branch);
-      await createTask(projectPath, result.worktree.branch, displayName);
-    }
-    return result;
+  ipcMain.handle('worktree:create', async (_event, projectPath: string, name?: string): Promise<TaskWorktreeResult> => {
+    return createTaskWorktree(projectPath, name);
   });
 
   ipcMain.handle('worktree:remove', async (_event, projectPath: string, worktreePath: string): Promise<WorktreeRemoveResult> => {
-    // Get the branch name before removing (it's the last part of the path)
-    const branch = path.basename(worktreePath);
-    const result = await removeWorktree(projectPath, worktreePath);
-    // Delete task metadata when worktree is removed (hard delete)
-    if (result.success) {
-      await deleteTask(projectPath, branch);
-    }
-    return result;
+    return removeTaskWorktree(projectPath, worktreePath);
   });
 
   ipcMain.handle('worktree:list', async (_event, projectPath: string): Promise<WorktreeInfo[]> => {
@@ -400,6 +385,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         path: wt.path,
         branch: wt.branch,
         createdAt: metadata.createdAt || wt.createdAt,
+        taskNumber: metadata.taskNumber,
         name: metadata.name,
         status: metadata.status,
         closedAt: metadata.closedAt,
@@ -416,6 +402,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           path: '',
           branch: task.branch,
           createdAt: task.createdAt,
+          taskNumber: task.taskNumber,
           name: task.name,
           status: task.status,
           closedAt: task.closedAt,

@@ -909,11 +909,15 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
   // Create worktree if requested
   if (options?.useWorktree && !worktreeInfo) {
     const result = await window.api.worktree.create(currentProjectPath, options.worktreeName);
-    if (!result.success || !result.worktree) {
+    if (!result.success || !result.task || !result.worktreePath) {
       showToast(result.error || 'Failed to create worktree', 'error');
       return false;
     }
-    worktreeInfo = result.worktree;
+    worktreeInfo = {
+      path: result.worktreePath,
+      branch: result.task.branch,
+      createdAt: result.task.createdAt,
+    };
     // Refresh task index if visible
     theatreRegistry.refreshTaskIndex?.();
   }

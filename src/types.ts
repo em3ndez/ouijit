@@ -158,7 +158,8 @@ export interface PtyAPI {
  * Task metadata for tracking lifecycle state
  */
 export interface TaskMetadata {
-  branch: string;           // Unique identifier (the branch name)
+  taskNumber?: number;      // Sequential number (1, 2, 3...) - displayed as T-{taskNumber}
+  branch: string;           // Git branch name
   name: string;             // Display name
   status: 'open' | 'closed';
   createdAt: string;        // ISO timestamp
@@ -178,17 +179,19 @@ export interface WorktreeInfo {
  * Extended worktree info including task metadata
  */
 export interface WorktreeWithMetadata extends WorktreeInfo {
+  taskNumber?: number;      // Sequential number - displayed as T-{taskNumber}
   name: string;             // Display name
   status: 'open' | 'closed';
   closedAt?: string;
 }
 
 /**
- * Result of creating a worktree
+ * Result of creating a task with worktree
  */
 export interface WorktreeCreateResult {
   success: boolean;
-  worktree?: WorktreeInfo;
+  task?: TaskMetadata;
+  worktreePath?: string;
   error?: string;
 }
 
