@@ -1919,23 +1919,21 @@ body > .diff-panel--visible {
 }
 
 .diff-panel-close {
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-full);
-  background: rgba(255, 255, 255, 0.1);
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: transparent;
   border: none;
   color: rgba(255, 255, 255, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
-  line-height: 1;
   flex-shrink: 0;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .diff-panel-close:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.9);
 }
 
@@ -2511,17 +2509,15 @@ body > .diff-panel--visible {
 }
 
 .theatre-card-close {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   color: rgba(255, 255, 255, 0.4);
-  font-size: 14px;
-  line-height: 1;
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
@@ -2530,17 +2526,21 @@ body > .diff-panel--visible {
   color: rgba(255, 255, 255, 0.9);
 }
 
+.theatre-card-close svg {
+  width: 14px;
+  height: 14px;
+}
+
 .theatre-card-close-task {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: rgba(255, 255, 255, 0.5);
-  font-size: 14px;
   opacity: 0;
   transition: opacity var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
 }
@@ -2765,13 +2765,14 @@ body > .diff-panel--visible {
   display: flex;
   align-items: center;
   gap: 0;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
+  background: none;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   transition: background 0.15s ease;
 }
 
-.runner-pill:hover {
+.runner-pill:hover,
+.runner-pill--expanded {
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -3152,11 +3153,8 @@ body > .diff-panel--visible {
   }
 
   /* Runner pill light mode */
-  .runner-pill {
-    background: rgba(0, 0, 0, 0.05);
-  }
-
-  .runner-pill:hover {
+  .runner-pill:hover,
+  .runner-pill--expanded {
     background: rgba(0, 0, 0, 0.1);
   }
 

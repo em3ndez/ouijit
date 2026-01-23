@@ -429,7 +429,7 @@ export function createTheatreCard(label: string, index: number): HTMLElement {
         </div>
       </div>
       <button class="theatre-card-close-task theatre-card-action--worktree" style="display: none;" title="Close task"><i data-lucide="archive"></i></button>
-      <button class="theatre-card-close" title="Close terminal">&times;</button>
+      <button class="theatre-card-close" title="Close terminal"><i data-lucide="x"></i></button>
     </div>
   `;
   card.appendChild(labelEl);
