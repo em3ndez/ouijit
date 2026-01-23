@@ -2357,7 +2357,8 @@ body > .diff-panel--visible {
 /* Hide non-essential elements on back cards, but keep close button */
 .theatre-card:not(.theatre-card--active) .theatre-card-git-wrapper,
 .theatre-card:not(.theatre-card--active) .runner-pill,
-.theatre-card:not(.theatre-card--active) .theatre-card-close-task {
+.theatre-card:not(.theatre-card--active) .theatre-card-close-task,
+.theatre-card:not(.theatre-card--active) .theatre-card-ready-toggle {
   display: none;
 }
 
@@ -2557,6 +2558,55 @@ body > .diff-panel--visible {
 .theatre-card-close-task:hover {
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.9);
+}
+
+/* Ready to ship indicator and toggle */
+.theatre-card-ready-indicator {
+  display: none;
+  align-items: center;
+  color: #74c0fc;
+  margin-right: 4px;
+}
+
+.theatre-card-ready-indicator svg {
+  width: 12px;
+  height: 12px;
+}
+
+.theatre-card-ready-toggle {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: rgba(255, 255, 255, 0.5);
+  opacity: 0;
+  transition: opacity var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.theatre-card-ready-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.theatre-card--active .theatre-card-ready-toggle {
+  opacity: 1;
+}
+
+.theatre-card-ready-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.theatre-card-ready-toggle--active {
+  color: #74c0fc;
+}
+
+.theatre-card-ready-toggle--active:hover {
+  color: #a5d8ff;
 }
 
 /* Ctrl+C long-press progress indicator */
@@ -3143,6 +3193,15 @@ body > .diff-panel--visible {
     color: rgba(0, 0, 0, 0.7);
   }
 
+  .theatre-card-ready-toggle {
+    color: rgba(0, 0, 0, 0.4);
+  }
+
+  .theatre-card-ready-toggle:hover {
+    background: rgba(0, 0, 0, 0.08);
+    color: rgba(0, 0, 0, 0.7);
+  }
+
   .theatre-card-action {
     color: rgba(0, 0, 0, 0.4);
   }
@@ -3386,6 +3445,27 @@ body > .diff-panel--visible {
 .theatre-stack-empty-task--closed {
   opacity: 0.6;
   text-decoration: line-through;
+}
+
+.theatre-stack-empty-task--ready {
+  background: rgba(116, 192, 252, 0.12);
+  border-color: rgba(116, 192, 252, 0.2);
+}
+
+.theatre-stack-empty-task--ready:hover {
+  background: rgba(116, 192, 252, 0.18);
+  border-color: rgba(116, 192, 252, 0.25);
+}
+
+.theatre-stack-empty-task-ready {
+  display: flex;
+  align-items: center;
+  color: #74c0fc;
+}
+
+.theatre-stack-empty-task-ready svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* Open/closed section styles */
@@ -3699,6 +3779,36 @@ body.task-index-open .theatre-stack {
 .task-index-item-action svg {
   width: 14px !important;
   height: 14px !important;
+}
+
+/* Ready to ship state */
+.task-index-item--ready {
+  background: rgba(116, 192, 252, 0.08);
+}
+
+.task-index-item--ready:hover {
+  background: rgba(116, 192, 252, 0.12);
+}
+
+.task-index-item-ready-indicator {
+  display: flex;
+  align-items: center;
+  color: #74c0fc;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.task-index-item-ready-indicator svg {
+  width: 14px !important;
+  height: 14px !important;
+}
+
+.task-index-item-action--ready-active {
+  color: #74c0fc;
+}
+
+.task-index-item-action--ready-active:hover {
+  color: #a5d8ff;
 }
 
 .task-index-empty {

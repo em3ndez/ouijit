@@ -164,6 +164,7 @@ export interface TaskMetadata {
   status: 'open' | 'closed';
   createdAt: string;        // ISO timestamp
   closedAt?: string;        // When marked closed
+  readyToShip?: boolean;    // "Spiritually done" - code complete, pending merge/review
 }
 
 /**
@@ -184,6 +185,7 @@ export interface WorktreeWithMetadata extends WorktreeInfo {
   name: string;             // Display name
   status: 'open' | 'closed';
   closedAt?: string;
+  readyToShip?: boolean;    // "Spiritually done" - code complete, pending merge/review
 }
 
 /**
@@ -220,6 +222,8 @@ export interface WorktreeAPI {
   close(projectPath: string, branch: string): Promise<{ success: boolean; error?: string }>;
   /** Reopen a closed task */
   reopen(projectPath: string, branch: string): Promise<{ success: boolean; error?: string }>;
+  /** Set a task's ready-to-ship state */
+  setReady(projectPath: string, branch: string, ready: boolean): Promise<{ success: boolean; error?: string }>;
 }
 
 /**

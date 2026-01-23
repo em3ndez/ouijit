@@ -22,6 +22,7 @@ import {
   getProjectTasks,
   closeTask,
   reopenTask,
+  setTaskReadyToShip,
   ensureTaskExists,
 } from './taskMetadata';
 import {
@@ -390,6 +391,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         name: metadata.name,
         status: metadata.status,
         closedAt: metadata.closedAt,
+        readyToShip: metadata.readyToShip,
       });
     }
 
@@ -408,6 +410,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           name: task.name,
           status: task.status,
           closedAt: task.closedAt,
+          readyToShip: task.readyToShip,
         });
       }
     }
@@ -429,6 +432,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Reopen a closed task
   ipcMain.handle('worktree:reopen', async (_event, projectPath: string, branch: string): Promise<{ success: boolean; error?: string }> => {
     return reopenTask(projectPath, branch);
+  });
+
+  // Set task ready-to-ship state
+  ipcMain.handle('worktree:set-ready', async (_event, projectPath: string, branch: string, ready: boolean): Promise<{ success: boolean; error?: string }> => {
+    return setTaskReadyToShip(projectPath, branch, ready);
   });
 
   // Override worktree:create to also create task metadata

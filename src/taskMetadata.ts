@@ -19,6 +19,7 @@ export interface TaskMetadata {
   status: 'open' | 'closed';
   createdAt: string;        // ISO timestamp
   closedAt?: string;        // When marked closed
+  readyToShip?: boolean;    // "Spiritually done" - code complete, pending merge/review
 }
 
 /**
@@ -257,6 +258,40 @@ export async function reopenTask(
     return { success: true };
   } catch (error) {
     console.error('Failed to reopen task:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Set a task's ready-to-ship state ("spiritually done")
+ */
+export async function setTaskReadyToShip(
+  projectPath: string,
+  branch: string,
+  ready: boolean
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const store = await loadStore();
+    const projectData = store[projectPath];
+
+    if (!projectData) {
+      return { success: false, error: 'Project not found' };
+    }
+
+    const task = projectData.tasks.find(t => t.branch === branch);
+    if (!task) {
+      return { success: false, error: 'Task not found' };
+    }
+
+    if (ready) {
+      task.readyToShip = true;
+    } else {
+      delete task.readyToShip;
+    }
+    await saveStore(store);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to set task ready state:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }

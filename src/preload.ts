@@ -107,6 +107,9 @@ contextBridge.exposeInMainWorld('api', {
 
     reopen: (projectPath: string, branch: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('worktree:reopen', projectPath, branch),
+
+    setReady: (projectPath: string, branch: string, ready: boolean): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('worktree:set-ready', projectPath, branch, ready),
   },
 
   /**

@@ -31,6 +31,7 @@ export interface TheatreTerminal {
   isWorktree: boolean;
   worktreePath?: string;
   worktreeBranch?: string;
+  readyToShip?: boolean;  // "Spiritually done" state from task metadata
   // Per-terminal git status and diff panel state
   gitStatus: CompactGitStatus | null;
   diffPanelOpen: boolean;
