@@ -1457,6 +1457,10 @@ body.theatre-mode .project-row {
   display: none !important;
 }
 
+body.theatre-mode .main-content {
+  min-height: 0;
+}
+
 /* Remove max-width constraint from header in theatre mode */
 body.theatre-mode .header {
   z-index: 10000;
