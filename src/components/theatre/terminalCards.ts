@@ -48,6 +48,114 @@ function formatBranchNameForDisplay(branch: string): string {
 // Track pending summary updates (debounced)
 const pendingSummaryUpdates = new Map<PtyId, ReturnType<typeof setTimeout>>();
 
+// Long-press Ctrl+C timing (milliseconds)
+const CTRL_C_INDICATOR_DELAY_MS = 200;  // Show indicator after this delay
+const CTRL_C_CLOSE_DELAY_MS = 1000;     // Close terminal after this total time
+
+// Track active Ctrl+C state per terminal
+const ctrlCState = new Map<PtyId, {
+  indicatorTimer: ReturnType<typeof setTimeout> | null;
+  closeTimer: ReturnType<typeof setTimeout> | null;
+  progressEl: HTMLElement | null;
+}>();
+
+/**
+ * Set up long-press Ctrl+C detection for a terminal.
+ * A quick Ctrl+C passes through to the PTY normally.
+ * Holding Ctrl+C for longer closes the terminal with visual feedback.
+ */
+export function setupCtrlCLongPress(
+  term: TheatreTerminal,
+  onClose: () => void
+): void {
+  let ctrlCPressed = false;
+
+  const cleanup = () => {
+    const state = ctrlCState.get(term.ptyId);
+    if (!state) return;
+
+    if (state.indicatorTimer) clearTimeout(state.indicatorTimer);
+    if (state.closeTimer) clearTimeout(state.closeTimer);
+    if (state.progressEl) {
+      state.progressEl.remove();
+    }
+    ctrlCState.delete(term.ptyId);
+  };
+
+  const showProgress = () => {
+    // Create progress overlay
+    const progressEl = document.createElement('div');
+    progressEl.className = 'ctrl-c-progress';
+    progressEl.innerHTML = `
+      <div class="ctrl-c-progress-bar"></div>
+      <div class="ctrl-c-progress-pill">Hold <kbd>ctrl+c</kbd> to close</div>
+      <div class="ctrl-c-progress-label">Release to cancel</div>
+    `;
+    term.container.appendChild(progressEl);
+
+    // Start the progress animation
+    const bar = progressEl.querySelector('.ctrl-c-progress-bar') as HTMLElement;
+    if (bar) {
+      // Animation duration is the remaining time after indicator delay
+      const animDuration = CTRL_C_CLOSE_DELAY_MS - CTRL_C_INDICATOR_DELAY_MS;
+      bar.style.transition = `width ${animDuration}ms linear`;
+      requestAnimationFrame(() => {
+        bar.style.width = '100%';
+      });
+    }
+
+    const state = ctrlCState.get(term.ptyId);
+    if (state) {
+      state.progressEl = progressEl;
+    }
+  };
+
+  term.terminal.attachCustomKeyEventHandler((event) => {
+    const isCtrlC = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
+                    (event.key === 'c' || event.key === 'C');
+
+    if (event.type === 'keydown' && isCtrlC) {
+      if (ctrlCPressed) {
+        // Already tracking this press, don't restart timers
+        return false; // Suppress repeated keydown events
+      }
+      ctrlCPressed = true;
+
+      // Clear any existing state
+      cleanup();
+
+      // Set up new state
+      const state = {
+        indicatorTimer: setTimeout(showProgress, CTRL_C_INDICATOR_DELAY_MS),
+        closeTimer: setTimeout(() => {
+          cleanup();
+          ctrlCPressed = false;
+          onClose();
+        }, CTRL_C_CLOSE_DELAY_MS),
+        progressEl: null as HTMLElement | null,
+      };
+      ctrlCState.set(term.ptyId, state);
+
+      // Let xterm handle the keydown (sends Ctrl+C to PTY)
+      return true;
+    }
+
+    if (event.type === 'keyup' && isCtrlC) {
+      ctrlCPressed = false;
+      cleanup();
+      return true;
+    }
+
+    // Non-Ctrl+C key: cancel any pending timers
+    if (event.type === 'keydown' && ctrlCPressed) {
+      ctrlCPressed = false;
+      cleanup();
+    }
+
+    return true; // Let xterm handle other keys
+  });
+}
+
 /**
  * Get terminal color theme (dark theme for terminal containers)
  */
@@ -1221,6 +1329,14 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
 
     // Set up card action buttons (runner pill, close-task for worktrees)
     setupCardActions(theatreTerminal);
+
+    // Set up long-press Ctrl+C to close terminal
+    setupCtrlCLongPress(theatreTerminal, () => {
+      const idx = terminals.value.indexOf(theatreTerminal);
+      if (idx !== -1) {
+        closeTheatreTerminal(idx);
+      }
+    });
 
     // Fetch initial git status for this terminal
     refreshTerminalGitStatus(theatreTerminal).then(() => {

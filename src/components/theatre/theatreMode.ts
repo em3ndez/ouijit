@@ -41,6 +41,7 @@ import {
   switchToTheatreTerminal,
   selectByStackPosition,
   setupCardActions,
+  setupCtrlCLongPress,
 } from './terminalCards';
 import {
   buildTheatreHeader,
@@ -765,6 +766,16 @@ async function reconnectTheatreTerminal(session: ActiveSession): Promise<void> {
 
   // Set up card action buttons (runner pill for all, close-task for worktrees)
   setupCardActions(theatreTerminal);
+
+  // Set up long-press Ctrl+C to close terminal
+  setupCtrlCLongPress(theatreTerminal, () => {
+    const idx = terminals.value.indexOf(theatreTerminal);
+    if (idx !== -1) {
+      import('./terminalCards').then(({ closeTheatreTerminal }) => {
+        closeTheatreTerminal(idx);
+      });
+    }
+  });
 
   // Update card label
   updateTerminalCardLabel(theatreTerminal);

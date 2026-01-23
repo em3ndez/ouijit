@@ -2559,6 +2559,57 @@ body > .diff-panel--visible {
   color: rgba(255, 255, 255, 0.9);
 }
 
+/* Ctrl+C long-press progress indicator */
+.ctrl-c-progress {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  border-radius: var(--radius-lg);
+  animation: ctrl-c-fade-in 0.15s ease-out;
+}
+
+@keyframes ctrl-c-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.ctrl-c-progress-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 0;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.ctrl-c-progress-pill {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 8px;
+}
+
+.ctrl-c-progress-pill kbd {
+  font-family: inherit;
+  font-weight: 600;
+}
+
+.ctrl-c-progress-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
 /* Worktree card action buttons - now siblings in label */
 .theatre-card-action {
   width: 22px;
