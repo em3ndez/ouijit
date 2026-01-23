@@ -43,6 +43,7 @@ export interface TheatreTerminal {
   runnerTerminal: Terminal | null;
   runnerFitAddon: FitAddon | null;
   runnerLabel: string;           // OCS title or command name
+  runnerCommand: string | null;  // Command being run by the runner
   runnerStatus: 'running' | 'success' | 'error' | 'idle';
   runnerCleanupData: (() => void) | null;
   runnerCleanupExit: (() => void) | null;

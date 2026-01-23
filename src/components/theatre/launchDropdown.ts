@@ -9,7 +9,7 @@ import { getConfigId, mergeRunConfigs } from '../../utils/runConfigs';
 import { stringToColor, getInitials } from '../../utils/projectIcon';
 import { showToast } from '../importDialog';
 import { showCustomCommandDialog } from '../customCommandDialog';
-import { addTheatreTerminal } from './terminalCards';
+import { addTheatreTerminal, killExistingCommandInstances } from './terminalCards';
 
 /**
  * Build the theatre mode header content
@@ -318,6 +318,9 @@ export async function runDefaultCommand(): Promise<void> {
       defaultConfig = found;
     }
   }
+
+  // Kill any existing terminals or runners with the same command
+  killExistingCommandInstances(defaultConfig.command);
 
   await addTheatreTerminal(defaultConfig);
 }

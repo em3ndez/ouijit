@@ -699,6 +699,7 @@ async function reconnectTheatreTerminal(session: ActiveSession): Promise<void> {
     runnerTerminal: null,
     runnerFitAddon: null,
     runnerLabel: '',
+    runnerCommand: null,
     runnerStatus: 'idle',
     runnerCleanupData: null,
     runnerCleanupExit: null,

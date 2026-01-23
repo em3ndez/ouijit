@@ -673,12 +673,35 @@ export function killRunner(term: TheatreTerminal): void {
   term.runnerTerminal = null;
   term.runnerFitAddon = null;
   term.runnerLabel = '';
+  term.runnerCommand = null;
   term.runnerStatus = 'idle';
   term.runnerCleanupData = null;
   term.runnerCleanupExit = null;
 
   // Collapse the pill
   updateRunnerPill(term);
+}
+
+/**
+ * Kill any existing terminals or runners that are running the same command.
+ * This ensures only one instance of a command runs at a time.
+ */
+export function killExistingCommandInstances(command: string): void {
+  const currentTerminals = terminals.value;
+
+  // First, kill any runners with the same command
+  for (const term of currentTerminals) {
+    if (term.runnerCommand === command) {
+      killRunner(term);
+    }
+  }
+
+  // Then, close any terminals running the same command (in reverse order to avoid index issues)
+  for (let i = currentTerminals.length - 1; i >= 0; i--) {
+    if (currentTerminals[i].command === command) {
+      closeTheatreTerminal(i);
+    }
+  }
 }
 
 
@@ -713,8 +736,12 @@ async function runDefaultInCard(term: TheatreTerminal): Promise<void> {
     }
   }
 
+  // Kill any existing terminals or runners with the same command
+  killExistingCommandInstances(defaultConfig.command);
+
   // Set initial runner state
   term.runnerLabel = defaultConfig.name;
+  term.runnerCommand = defaultConfig.command;
   term.runnerStatus = 'running';
 
   // Create hidden terminal for runner output
@@ -1119,6 +1146,7 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
       runnerTerminal: null,
       runnerFitAddon: null,
       runnerLabel: '',
+      runnerCommand: null,
       runnerStatus: 'idle',
       runnerCleanupData: null,
       runnerCleanupExit: null,
