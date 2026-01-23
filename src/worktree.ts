@@ -39,50 +39,66 @@ export function getWorktreeBaseDir(projectName: string): string {
 }
 
 /**
- * Dependency directories to copy from source project to worktree
+ * Escape a path for use in shell commands
  */
-const DEPENDENCY_DIRS = [
-  'node_modules',  // Node.js
-  '.venv',         // Python (common convention)
-  'venv',          // Python (alternative)
-];
+function shellEscape(str: string): string {
+  return `'${str.replace(/'/g, "'\\''")}'`;
+}
 
 /**
- * Copy dependency directories from source project to worktree
- * This avoids needing to run npm install, pip install, etc. in the new worktree
- * Uses shell cp -R which is more reliable for large directories with symlinks
- * Runs asynchronously to avoid blocking the main process
+ * Copy all gitignored files from source project to worktree
+ * This ensures secrets, local configs, dependencies, and other untracked files are available
+ * Uses APFS clones for instant, space-efficient copies
  */
-async function copyDependencies(sourcePath: string, worktreePath: string): Promise<void> {
-  const copyPromises: Promise<void>[] = [];
+async function copyGitIgnoredFiles(sourcePath: string, worktreePath: string): Promise<void> {
+  try {
+    // Get list of ignored files/directories from git
+    // --others: untracked files
+    // --ignored: only show ignored files
+    // --exclude-standard: use .gitignore, .git/info/exclude, global gitignore
+    // --directory: show directory names instead of their contents (efficient for copying whole dirs)
+    const { stdout } = await execAsync(
+      'git ls-files --others --ignored --exclude-standard --directory',
+      { cwd: sourcePath, maxBuffer: 10 * 1024 * 1024 } // 10MB buffer for large lists
+    );
 
-  for (const dir of DEPENDENCY_DIRS) {
-    const sourceDir = path.join(sourcePath, dir);
-    const destDir = path.join(worktreePath, dir);
+    const items = stdout.split('\n').filter(item => item.trim());
+    if (items.length === 0) return;
 
-    // Check if directory exists before attempting copy
-    const copyPromise = fs.stat(sourceDir).then(async (stat) => {
-      if (stat.isDirectory()) {
-        try {
-          // Use shell cp with APFS cloning for instant, space-efficient copies
-          // -R: recursive, handles symlinks properly
-          // -p: preserve timestamps and permissions
-          // -c: use APFS clones (copy-on-write) - nearly instant, zero disk space until modified
-          await execAsync(`cp -Rpc "${sourceDir}" "${destDir}"`);
-        } catch (error) {
-          // Log error for debugging but don't fail the worktree creation
-          console.warn(`[worktree] Failed to copy ${dir}:`, error instanceof Error ? error.message : error);
+    // Copy each item in parallel
+    const copyPromises = items.map(async (item) => {
+      // Remove trailing slash if present (directories)
+      const cleanItem = item.replace(/\/$/, '');
+      if (!cleanItem) return;
+
+      const sourceItem = path.join(sourcePath, cleanItem);
+      const destItem = path.join(worktreePath, cleanItem);
+
+      try {
+        const stat = await fs.stat(sourceItem);
+
+        // Ensure parent directory exists
+        await fs.mkdir(path.dirname(destItem), { recursive: true });
+
+        if (stat.isDirectory()) {
+          // Use APFS clone for directories (fast, space-efficient)
+          // -R: recursive, -p: preserve timestamps/permissions, -c: APFS clone
+          await execAsync(`cp -Rpc ${shellEscape(sourceItem)} ${shellEscape(destItem)}`);
+        } else {
+          // Use APFS clone for files too
+          await execAsync(`cp -pc ${shellEscape(sourceItem)} ${shellEscape(destItem)}`);
         }
+      } catch (error) {
+        // Log but don't fail - some files might be transient or locked
+        console.warn(`[worktree] Failed to copy ${cleanItem}:`, error instanceof Error ? error.message : error);
       }
-    }).catch(() => {
-      // Directory doesn't exist, skip silently
     });
 
-    copyPromises.push(copyPromise);
+    await Promise.all(copyPromises);
+  } catch (error) {
+    // Log but don't fail worktree creation if git ls-files fails
+    console.warn('[worktree] Failed to copy gitignored files:', error instanceof Error ? error.message : error);
   }
-
-  // Wait for all copies to complete in parallel
-  await Promise.all(copyPromises);
 }
 
 /**
@@ -164,8 +180,8 @@ export async function createTaskWorktree(projectPath: string, name?: string): Pr
     // Create task metadata (worktree succeeded)
     const task = await createTask(projectPath, taskNumber, branch, displayName);
 
-    // Copy dependencies from source project to avoid needing to reinstall
-    await copyDependencies(projectPath, worktreePath);
+    // Copy all gitignored files (secrets, configs, dependencies, etc.)
+    await copyGitIgnoredFiles(projectPath, worktreePath);
 
     return {
       success: true,
