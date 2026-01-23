@@ -140,10 +140,15 @@ export function setupCtrlCLongPress(
       return true;
     }
 
-    if (event.type === 'keyup' && isCtrlC) {
-      ctrlCPressed = false;
-      cleanup();
-      return true;
+    // Cancel on keyup of either C or Ctrl (user may release in either order)
+    if (event.type === 'keyup' && ctrlCPressed) {
+      const isC = event.key === 'c' || event.key === 'C';
+      const isCtrl = event.key === 'Control';
+      if (isC || isCtrl) {
+        ctrlCPressed = false;
+        cleanup();
+        return true;
+      }
     }
 
     // Non-Ctrl+C key: cancel any pending timers
