@@ -449,12 +449,14 @@ function buildCommitDialogHtml(defaultMessage: string): string {
 function showCommitDialog(term: TheatreTerminal, panel: HTMLElement): void {
   if (!term.worktreeBranch) return;
 
+  // Don't open multiple dialogs
+  if (panel.querySelector('.ship-it-commit-dialog')) return;
+
   const defaultMessage = getDefaultCommitMessage(term.worktreeBranch);
   const dialogHtml = buildCommitDialogHtml(defaultMessage);
   panel.insertAdjacentHTML('beforeend', dialogHtml);
 
   const dialog = panel.querySelector('.ship-it-commit-dialog') as HTMLElement;
-  const content = dialog?.querySelector('.ship-it-commit-dialog-content') as HTMLElement;
   const textarea = dialog?.querySelector('.ship-it-commit-message') as HTMLTextAreaElement;
   const cancelBtn = dialog?.querySelector('.ship-it-commit-cancel');
   const confirmBtn = dialog?.querySelector('.ship-it-commit-confirm');
