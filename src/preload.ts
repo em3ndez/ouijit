@@ -1,7 +1,7 @@
 // See the Electron documentation for details on how to use preload scripts:
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { Project, RunConfig, LaunchResult, PtySpawnOptions, PtySpawnResult, PtyId, ActiveSession, PtyReconnectResult, CreateProjectOptions, CreateProjectResult, GitStatus, CompactGitStatus, GitDropdownInfo, GitCheckoutResult, GitMergeResult, ChangedFile, FileDiff, ProjectSettings, WorktreeCreateResult, WorktreeRemoveResult, WorktreeInfo, WorktreeDiffSummary, WorktreeWithMetadata, ScriptHook, HookType } from './types';
 
 // Expose protected methods that allow the renderer process to use
@@ -233,4 +233,9 @@ contextBridge.exposeInMainWorld('api', {
     delete: (projectPath: string, hookType: HookType): Promise<{ success: boolean }> =>
       ipcRenderer.invoke('hooks:delete', projectPath, hookType),
   },
+
+  /**
+   * Get file path from a dropped File object
+   */
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 });

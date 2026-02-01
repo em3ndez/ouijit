@@ -772,6 +772,38 @@ export function showRunnerPanel(term: TheatreTerminal): void {
       const xtermContainer = panel.querySelector('.runner-xterm-container') as HTMLElement;
       if (xtermContainer) {
         term.runnerTerminal.open(xtermContainer);
+
+        // Enable native drag/drop on the runner terminal
+        const setupRunnerDragDrop = (container: HTMLElement, runnerTerm: Terminal) => {
+          const screen = container.querySelector('.xterm-screen');
+          const target = screen || container;
+
+          target.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if ((e as DragEvent).dataTransfer) {
+              (e as DragEvent).dataTransfer!.dropEffect = 'copy';
+            }
+          });
+
+          target.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const dt = (e as DragEvent).dataTransfer;
+            if (dt?.files.length) {
+              const paths = Array.from(dt.files)
+                .map(f => window.api.getPathForFile(f))
+                .filter((p): p is string => !!p)
+                .map(p => p.includes(' ') ? `"${p}"` : p)
+                .join(' ');
+              if (paths) {
+                runnerTerm.paste(paths);
+              }
+            }
+          });
+        };
+        setupRunnerDragDrop(xtermContainer, term.runnerTerminal);
+
         if (term.runnerFitAddon) {
           requestAnimationFrame(() => {
             term.runnerFitAddon!.fit();
@@ -1274,6 +1306,38 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
   terminal.loadAddon(fitAddon);
   terminal.open(xtermContainer);
 
+  // Enable native drag/drop on the terminal
+  // xterm.js creates a .xterm-screen element that captures all mouse events,
+  // so we need to attach handlers there after the terminal opens
+  const setupDragDrop = (container: HTMLElement, term: Terminal) => {
+    const screen = container.querySelector('.xterm-screen');
+    const target = screen || container;
+
+    target.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if ((e as DragEvent).dataTransfer) {
+        (e as DragEvent).dataTransfer!.dropEffect = 'copy';
+      }
+    });
+
+    target.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const dt = (e as DragEvent).dataTransfer;
+      if (dt?.files.length) {
+        const paths = Array.from(dt.files)
+          .map(f => window.api.getPathForFile(f))
+          .filter((p): p is string => !!p)
+          .map(p => p.includes(' ') ? `"${p}"` : p)
+          .join(' ');
+        if (paths) {
+          term.paste(paths);
+        }
+      }
+    });
+  };
+  setupDragDrop(xtermContainer, terminal);
 
   await new Promise(resolve => requestAnimationFrame(resolve));
   fitAddon.fit();

@@ -153,6 +153,11 @@ async function initialize(): Promise<void> {
   }
 }
 
+// Prevent Electron's default drag/drop behavior (navigation)
+// This allows specific elements (like terminals) to handle drops
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => e.preventDefault());
+
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize hotkey system

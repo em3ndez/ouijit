@@ -334,6 +334,8 @@ export interface ElectronAPI {
   setKillExistingOnRun(projectPath: string, kill: boolean): Promise<{ success: boolean }>;
   /** Script hooks API */
   hooks: HooksAPI;
+  /** Get file path from a dropped File object */
+  getPathForFile(file: File): string;
 }
 
 /**

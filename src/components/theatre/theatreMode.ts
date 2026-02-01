@@ -651,6 +651,35 @@ async function reconnectTheatreTerminal(session: ActiveSession): Promise<void> {
   // Open terminal in container
   terminal.open(xtermContainer);
 
+  // Enable native drag/drop on the terminal
+  // xterm.js creates a .xterm-screen element that captures all mouse events
+  const screen = xtermContainer.querySelector('.xterm-screen');
+  const dragTarget = screen || xtermContainer;
+
+  dragTarget.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if ((e as DragEvent).dataTransfer) {
+      (e as DragEvent).dataTransfer!.dropEffect = 'copy';
+    }
+  });
+
+  dragTarget.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const dt = (e as DragEvent).dataTransfer;
+    if (dt?.files.length) {
+      const paths = Array.from(dt.files)
+        .map(f => window.api.getPathForFile(f))
+        .filter((p): p is string => !!p)
+        .map(p => p.includes(' ') ? `"${p}"` : p)
+        .join(' ');
+      if (paths) {
+        terminal.paste(paths);
+      }
+    }
+  });
+
   // Fit after opening
   requestAnimationFrame(() => {
     fitAddon.fit();
