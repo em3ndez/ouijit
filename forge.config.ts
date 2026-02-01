@@ -65,10 +65,7 @@ const config: ForgeConfig = {
         return;
       }
 
-      const appPath = path.join(
-        options.outputPaths[0],
-        `${options.packageJSON.productName || options.packageJSON.name}.app`
-      );
+      const appPath = path.join(options.outputPaths[0], 'Ouijit.app');
 
       if (!fs.existsSync(appPath)) {
         console.log('App not found for notarization:', appPath);
