@@ -265,15 +265,22 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // Show native folder picker dialog
   ipcMain.handle('show-folder-picker', async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openDirectory'],
-      title: 'Add Project Folder',
-      buttonLabel: 'Add Project',
-    });
-    return {
-      canceled: result.canceled,
-      filePaths: result.filePaths,
-    };
+    try {
+      // Use focused window as fallback in case mainWindow reference is stale
+      const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow;
+      const result = await dialog.showOpenDialog(targetWindow, {
+        properties: ['openDirectory'],
+        title: 'Add Project Folder',
+        buttonLabel: 'Add Project',
+      });
+      return {
+        canceled: result.canceled,
+        filePaths: result.filePaths,
+      };
+    } catch (error) {
+      console.error('Error showing folder picker:', error);
+      return { canceled: true, filePaths: [] };
+    }
   });
 
   // Add a project folder to the persisted list
