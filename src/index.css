@@ -3968,6 +3968,94 @@ body.platform-other .shortcut-number {
   flex-shrink: 0;
 }
 
+/* Merge target dropdown trigger */
+.ship-it-merge-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: var(--font-weight-medium);
+  color: rgba(255, 255, 255, 0.9);
+  position: relative;
+}
+
+.ship-it-merge-target:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.ship-it-merge-target.open {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.ship-it-merge-target svg {
+  width: 10px;
+  height: 10px;
+  opacity: 0.6;
+}
+
+/* Merge target branch dropdown */
+.ship-it-branch-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 180px;
+  max-width: 280px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  -webkit-app-region: no-drag;
+}
+
+.ship-it-branch-dropdown.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.ship-it-branch-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.ship-it-branch-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ship-it-branch-dropdown-item.selected {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 1);
+}
+
+.ship-it-branch-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ship-it-branch-main-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.6);
+}
+
 .ship-it-file-list {
   flex: 1;
   overflow-y: auto;
@@ -4344,6 +4432,43 @@ body.platform-other .shortcut-number {
   }
 
   .ship-it-summary-branch {
+    color: rgba(0, 0, 0, 0.5);
+  }
+
+  .ship-it-merge-target {
+    background: rgba(0, 0, 0, 0.06);
+    color: rgba(0, 0, 0, 0.8);
+  }
+
+  .ship-it-merge-target:hover {
+    background: rgba(0, 0, 0, 0.1);
+  }
+
+  .ship-it-merge-target.open {
+    background: rgba(0, 0, 0, 0.12);
+  }
+
+  .ship-it-branch-dropdown {
+    background: var(--color-surface);
+    border-color: rgba(0, 0, 0, 0.15);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  }
+
+  .ship-it-branch-dropdown-item {
+    color: rgba(0, 0, 0, 0.8);
+  }
+
+  .ship-it-branch-dropdown-item:hover {
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  .ship-it-branch-dropdown-item.selected {
+    background: rgba(0, 0, 0, 0.08);
+    color: rgba(0, 0, 0, 0.9);
+  }
+
+  .ship-it-branch-main-badge {
+    background: rgba(0, 0, 0, 0.08);
     color: rgba(0, 0, 0, 0.5);
   }
 

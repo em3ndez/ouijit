@@ -111,6 +111,42 @@ export interface CompactGitStatus {
 }
 
 /**
+ * Information about a git branch
+ */
+export interface BranchInfo {
+  name: string;
+  isMain: boolean;
+}
+
+/**
+ * Lists all local branches in a repository
+ */
+export function listBranches(projectPath: string): BranchInfo[] {
+  const opts = gitExecOpts(projectPath);
+
+  try {
+    const mainBranch = getMainBranch(projectPath);
+
+    // Get all local branches sorted by most recent commit
+    const result = execSync(
+      "git for-each-ref --sort=-committerdate --format='%(refname:short)' refs/heads/",
+      opts
+    ).toString().trim();
+
+    if (!result) return [];
+
+    return result.split('\n')
+      .filter(name => name.trim())
+      .map(name => ({
+        name: name.trim(),
+        isMain: name.trim() === mainBranch,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Gets the current git branch and dirty status for a project
  * @param projectPath - Path to the project directory
  * @returns GitStatus object or null if not a git repo or commands fail
@@ -147,7 +183,7 @@ export function getGitStatus(projectPath: string): GitStatus | null {
 /**
  * Detects the main branch (main or master) for a repo
  */
-function getMainBranch(projectPath: string): string {
+export function getMainBranch(projectPath: string): string {
   const opts = gitExecOpts(projectPath);
 
   try {
@@ -687,14 +723,15 @@ export interface WorktreeDiffSummary {
 }
 
 /**
- * Gets the diff summary between a worktree branch and main
+ * Gets the diff summary between a worktree branch and a target branch
  */
 export function getWorktreeDiff(
   projectPath: string,
-  worktreeBranch: string
+  worktreeBranch: string,
+  targetBranch?: string
 ): WorktreeDiffSummary | null {
   const opts = gitExecOpts(projectPath);
-  const mainBranch = getMainBranch(projectPath);
+  const baseBranch = targetBranch || getMainBranch(projectPath);
 
   try {
     const files: ChangedFile[] = [];
@@ -706,7 +743,7 @@ export function getWorktreeDiff(
 
     try {
       const numstat = execSync(
-        `git diff --numstat ${mainBranch}...${worktreeBranch}`,
+        `git diff --numstat ${baseBranch}...${worktreeBranch}`,
         opts
       ).toString().trim();
 
@@ -728,7 +765,7 @@ export function getWorktreeDiff(
 
     // Get file status (modified, added, deleted)
     const nameStatus = execSync(
-      `git diff --name-status ${mainBranch}...${worktreeBranch}`,
+      `git diff --name-status ${baseBranch}...${worktreeBranch}`,
       opts
     ).toString().trim();
 
@@ -761,19 +798,20 @@ export function getWorktreeDiff(
 }
 
 /**
- * Gets the diff for a specific file between worktree branch and main
+ * Gets the diff for a specific file between worktree branch and a target branch
  */
 export function getWorktreeFileDiff(
   projectPath: string,
   worktreeBranch: string,
-  filePath: string
+  filePath: string,
+  targetBranch?: string
 ): FileDiff | null {
   const opts = { ...gitExecOpts(projectPath), maxBuffer: 10 * 1024 * 1024 };
-  const mainBranch = getMainBranch(projectPath);
+  const baseBranch = targetBranch || getMainBranch(projectPath);
 
   try {
     const diffOutput = execSync(
-      `git diff ${mainBranch}...${worktreeBranch} -- "${filePath}"`,
+      `git diff ${baseBranch}...${worktreeBranch} -- "${filePath}"`,
       opts
     ).toString();
 
@@ -791,17 +829,18 @@ export function getWorktreeFileDiff(
 }
 
 /**
- * Merge a specific branch into main (for worktree branches)
+ * Merge a specific branch into a target branch (defaults to main)
  */
 export function mergeWorktreeBranch(
   projectPath: string,
   branchToMerge: string,
-  commitMessage?: string
+  commitMessage?: string,
+  targetBranch?: string
 ): { success: boolean; error?: string; mergedBranch?: string } {
   const opts = gitExecOpts(projectPath);
 
   try {
-    const mainBranch = getMainBranch(projectPath);
+    const mergeTo = targetBranch || getMainBranch(projectPath);
 
     // Check for uncommitted changes in main repo
     try {
@@ -821,16 +860,16 @@ export function mergeWorktreeBranch(
       return { success: false, error: 'Not a git repository' };
     }
 
-    // Checkout main if not already there
-    if (currentBranch !== mainBranch) {
+    // Checkout target branch if not already there
+    if (currentBranch !== mergeTo) {
       try {
-        execSync(`git checkout "${mainBranch}"`, opts);
+        execSync(`git checkout "${mergeTo}"`, opts);
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : '';
         if (errorMsg.includes('Your local changes')) {
           return { success: false, error: 'Uncommitted changes would be overwritten' };
         }
-        return { success: false, error: `Failed to checkout ${mainBranch}` };
+        return { success: false, error: `Failed to checkout ${mergeTo}` };
       }
     }
 
@@ -856,7 +895,7 @@ export function mergeWorktreeBranch(
         }
       }
       // Go back to the original branch if we switched
-      if (currentBranch !== mainBranch) {
+      if (currentBranch !== mergeTo) {
         try {
           execSync(`git checkout "${currentBranch}"`, opts);
         } catch {

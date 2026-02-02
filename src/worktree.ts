@@ -177,6 +177,18 @@ export async function createTaskWorktree(projectPath: string, name?: string): Pr
       });
     }
 
+    // Capture source branch as the default merge target
+    let mergeTarget: string | undefined;
+    try {
+      mergeTarget = execSync('git rev-parse --abbrev-ref HEAD', {
+        cwd: projectPath,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+    } catch {
+      // Failed to get current branch, will default to main later
+    }
+
     const projectName = path.basename(projectPath);
     const displayName = name || 'Untitled';
 
@@ -199,7 +211,7 @@ export async function createTaskWorktree(projectPath: string, name?: string): Pr
     });
 
     // Create task metadata (worktree succeeded)
-    const task = await createTask(projectPath, taskNumber, branch, displayName);
+    const task = await createTask(projectPath, taskNumber, branch, displayName, mergeTarget);
 
     // Copy all gitignored files (secrets, configs, dependencies, etc.)
     await copyGitIgnoredFiles(projectPath, worktreePath);

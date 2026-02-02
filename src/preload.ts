@@ -2,7 +2,7 @@
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { Project, RunConfig, LaunchResult, PtySpawnOptions, PtySpawnResult, PtyId, ActiveSession, PtyReconnectResult, CreateProjectOptions, CreateProjectResult, GitStatus, CompactGitStatus, GitDropdownInfo, GitCheckoutResult, GitMergeResult, ChangedFile, FileDiff, ProjectSettings, WorktreeCreateResult, WorktreeRemoveResult, WorktreeInfo, WorktreeDiffSummary, WorktreeWithMetadata, ScriptHook, HookType } from './types';
+import type { Project, RunConfig, LaunchResult, PtySpawnOptions, PtySpawnResult, PtyId, ActiveSession, PtyReconnectResult, CreateProjectOptions, CreateProjectResult, GitStatus, CompactGitStatus, GitDropdownInfo, GitCheckoutResult, GitMergeResult, ChangedFile, FileDiff, ProjectSettings, WorktreeCreateResult, WorktreeRemoveResult, WorktreeInfo, WorktreeDiffSummary, WorktreeWithMetadata, ScriptHook, HookType, BranchInfo } from './types';
 
 // Expose protected methods that allow the renderer process to use
 // ipcRenderer without exposing the entire object
@@ -90,11 +90,11 @@ contextBridge.exposeInMainWorld('api', {
     list: (projectPath: string): Promise<WorktreeInfo[]> =>
       ipcRenderer.invoke('worktree:list', projectPath),
 
-    getDiff: (projectPath: string, worktreeBranch: string): Promise<WorktreeDiffSummary | null> =>
-      ipcRenderer.invoke('worktree:get-diff', projectPath, worktreeBranch),
+    getDiff: (projectPath: string, worktreeBranch: string, targetBranch?: string): Promise<WorktreeDiffSummary | null> =>
+      ipcRenderer.invoke('worktree:get-diff', projectPath, worktreeBranch, targetBranch),
 
-    getFileDiff: (projectPath: string, worktreeBranch: string, filePath: string): Promise<FileDiff | null> =>
-      ipcRenderer.invoke('worktree:get-file-diff', projectPath, worktreeBranch, filePath),
+    getFileDiff: (projectPath: string, worktreeBranch: string, filePath: string, targetBranch?: string): Promise<FileDiff | null> =>
+      ipcRenderer.invoke('worktree:get-file-diff', projectPath, worktreeBranch, filePath, targetBranch),
 
     merge: (projectPath: string, worktreeBranch: string): Promise<GitMergeResult> =>
       ipcRenderer.invoke('worktree:merge', projectPath, worktreeBranch),
@@ -113,6 +113,15 @@ contextBridge.exposeInMainWorld('api', {
 
     setReady: (projectPath: string, branch: string, ready: boolean): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('worktree:set-ready', projectPath, branch, ready),
+
+    listBranches: (projectPath: string): Promise<BranchInfo[]> =>
+      ipcRenderer.invoke('worktree:list-branches', projectPath),
+
+    setMergeTarget: (projectPath: string, branch: string, mergeTarget: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('worktree:set-merge-target', projectPath, branch, mergeTarget),
+
+    getMainBranch: (projectPath: string): Promise<string> =>
+      ipcRenderer.invoke('worktree:get-main-branch', projectPath),
   },
 
   /**

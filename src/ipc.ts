@@ -14,7 +14,7 @@ import {
   killPty,
   cleanupAllPtys,
 } from './ptyManager';
-import { getGitStatus, getCompactGitStatus, getGitDropdownInfo, checkoutBranch, createBranch, mergeIntoMain, getChangedFiles, getFileDiff, getWorktreeDiff, getWorktreeFileDiff, mergeWorktreeBranch } from './git';
+import { getGitStatus, getCompactGitStatus, getGitDropdownInfo, checkoutBranch, createBranch, mergeIntoMain, getChangedFiles, getFileDiff, getWorktreeDiff, getWorktreeFileDiff, mergeWorktreeBranch, listBranches, getMainBranch } from './git';
 import { createTaskWorktree, removeTaskWorktree, listWorktrees, formatBranchNameForDisplay } from './worktree';
 import type { TaskWorktreeResult, WorktreeRemoveResult, WorktreeInfo } from './worktree';
 import {
@@ -22,6 +22,7 @@ import {
   closeTask,
   reopenTask,
   setTaskReadyToShip,
+  setTaskMergeTarget,
   ensureTaskExists,
   getTask,
 } from './taskMetadata';
@@ -34,7 +35,7 @@ import {
   deleteHook,
 } from './projectSettings';
 import { executeHook } from './hookRunner';
-import type { RunConfig, LaunchResult, PtySpawnOptions, CreateProjectOptions, CreateProjectResult, ProjectSettings, GitStatus, CompactGitStatus, GitDropdownInfo, ChangedFile, FileDiff, WorktreeDiffSummary, GitMergeResult, WorktreeWithMetadata, ScriptHook, HookType } from './types';
+import type { RunConfig, LaunchResult, PtySpawnOptions, CreateProjectOptions, CreateProjectResult, ProjectSettings, GitStatus, CompactGitStatus, GitDropdownInfo, ChangedFile, FileDiff, WorktreeDiffSummary, GitMergeResult, WorktreeWithMetadata, ScriptHook, HookType, BranchInfo } from './types';
 
 /**
  * Escapes a string for use in AppleScript
@@ -402,19 +403,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return listWorktrees(projectPath);
   });
 
-  ipcMain.handle('worktree:get-diff', async (_event, projectPath: string, worktreeBranch: string): Promise<WorktreeDiffSummary | null> => {
-    return getWorktreeDiff(projectPath, worktreeBranch);
+  ipcMain.handle('worktree:get-diff', async (_event, projectPath: string, worktreeBranch: string, targetBranch?: string): Promise<WorktreeDiffSummary | null> => {
+    return getWorktreeDiff(projectPath, worktreeBranch, targetBranch);
   });
 
-  ipcMain.handle('worktree:get-file-diff', async (_event, projectPath: string, worktreeBranch: string, filePath: string): Promise<FileDiff | null> => {
-    return getWorktreeFileDiff(projectPath, worktreeBranch, filePath);
+  ipcMain.handle('worktree:get-file-diff', async (_event, projectPath: string, worktreeBranch: string, filePath: string, targetBranch?: string): Promise<FileDiff | null> => {
+    return getWorktreeFileDiff(projectPath, worktreeBranch, filePath, targetBranch);
   });
 
   ipcMain.handle('worktree:merge', async (_event, projectPath: string, worktreeBranch: string): Promise<GitMergeResult> => {
     return mergeWorktreeBranch(projectPath, worktreeBranch);
   });
 
-  // Ship a worktree branch (merge into main and close task)
+  // Ship a worktree branch (merge into target branch and close task)
   ipcMain.handle('worktree:ship', async (_event, projectPath: string, worktreeBranch: string, commitMessage?: string): Promise<{ success: boolean; error?: string; conflictFiles?: string[]; mergedBranch?: string }> => {
     // First, check for uncommitted changes in the worktree
     const worktrees = listWorktrees(projectPath);
@@ -437,8 +438,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       }
     }
 
+    // Get the merge target from task metadata
+    const task = await getTask(projectPath, worktreeBranch);
+    const targetBranch = task?.mergeTarget;
+
     // Attempt to merge
-    const result = mergeWorktreeBranch(projectPath, worktreeBranch, commitMessage);
+    const result = mergeWorktreeBranch(projectPath, worktreeBranch, commitMessage, targetBranch);
 
     if (!result.success && result.error?.includes('conflict')) {
       // Try to get conflicting files (note: merge was already aborted by mergeWorktreeBranch)
@@ -482,6 +487,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         status: metadata.status,
         closedAt: metadata.closedAt,
         readyToShip: metadata.readyToShip,
+        mergeTarget: metadata.mergeTarget,
       });
     }
 
@@ -501,6 +507,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           status: task.status,
           closedAt: task.closedAt,
           readyToShip: task.readyToShip,
+          mergeTarget: task.mergeTarget,
         });
       }
     }
@@ -561,6 +568,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Set task ready-to-ship state
   ipcMain.handle('worktree:set-ready', async (_event, projectPath: string, branch: string, ready: boolean): Promise<{ success: boolean; error?: string }> => {
     return setTaskReadyToShip(projectPath, branch, ready);
+  });
+
+  // List all branches in the project
+  ipcMain.handle('worktree:list-branches', async (_event, projectPath: string): Promise<BranchInfo[]> => {
+    return listBranches(projectPath);
+  });
+
+  // Set task merge target
+  ipcMain.handle('worktree:set-merge-target', async (_event, projectPath: string, branch: string, mergeTarget: string): Promise<{ success: boolean; error?: string }> => {
+    return setTaskMergeTarget(projectPath, branch, mergeTarget);
+  });
+
+  // Get the main branch for a project
+  ipcMain.handle('worktree:get-main-branch', async (_event, projectPath: string): Promise<string> => {
+    return getMainBranch(projectPath);
   });
 
   // Hook handlers

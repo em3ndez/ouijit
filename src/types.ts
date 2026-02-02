@@ -1,5 +1,5 @@
 // Re-export all git types from git.ts (single source of truth)
-export type { GitStatus, GitDropdownInfo, ExtendedGitStatus, RecentBranch, UncommittedChanges, ChangedFile, DiffLine, DiffHunk, FileDiff, CompactGitStatus, WorktreeDiffSummary } from './git';
+export type { GitStatus, GitDropdownInfo, ExtendedGitStatus, RecentBranch, UncommittedChanges, ChangedFile, DiffLine, DiffHunk, FileDiff, CompactGitStatus, WorktreeDiffSummary, BranchInfo } from './git';
 // Import for local use within this file
 import type { GitStatus } from './git';
 
@@ -228,6 +228,7 @@ export interface WorktreeWithMetadata extends WorktreeInfo {
   status: 'open' | 'closed';
   closedAt?: string;
   readyToShip?: boolean;    // "Spiritually done" - code complete, pending merge/review
+  mergeTarget?: string;     // Branch to merge into (defaults to main if unset)
 }
 
 /**
@@ -267,10 +268,10 @@ export interface WorktreeAPI {
   create(projectPath: string, name?: string): Promise<WorktreeCreateResult>;
   remove(projectPath: string, worktreePath: string): Promise<WorktreeRemoveResult>;
   list(projectPath: string): Promise<WorktreeInfo[]>;
-  getDiff(projectPath: string, worktreeBranch: string): Promise<import('./git').WorktreeDiffSummary | null>;
-  getFileDiff(projectPath: string, worktreeBranch: string, filePath: string): Promise<import('./git').FileDiff | null>;
+  getDiff(projectPath: string, worktreeBranch: string, targetBranch?: string): Promise<import('./git').WorktreeDiffSummary | null>;
+  getFileDiff(projectPath: string, worktreeBranch: string, filePath: string, targetBranch?: string): Promise<import('./git').FileDiff | null>;
   merge(projectPath: string, worktreeBranch: string): Promise<GitMergeResult>;
-  /** Ship (merge into main) a worktree branch */
+  /** Ship (merge into target branch) a worktree branch */
   ship(projectPath: string, worktreeBranch: string, commitMessage?: string): Promise<ShipItResult>;
   /** Get tasks with metadata merged with worktree list */
   getTasks(projectPath: string): Promise<WorktreeWithMetadata[]>;
@@ -280,6 +281,12 @@ export interface WorktreeAPI {
   reopen(projectPath: string, branch: string): Promise<{ success: boolean; error?: string }>;
   /** Set a task's ready-to-ship state */
   setReady(projectPath: string, branch: string, ready: boolean): Promise<{ success: boolean; error?: string }>;
+  /** List all branches in the project */
+  listBranches(projectPath: string): Promise<import('./git').BranchInfo[]>;
+  /** Set a task's merge target branch */
+  setMergeTarget(projectPath: string, branch: string, mergeTarget: string): Promise<{ success: boolean; error?: string }>;
+  /** Get the main branch for a project */
+  getMainBranch(projectPath: string): Promise<string>;
 }
 
 /**

@@ -20,6 +20,7 @@ export interface TaskMetadata {
   createdAt: string;        // ISO timestamp
   closedAt?: string;        // When marked closed
   readyToShip?: boolean;    // "Spiritually done" - code complete, pending merge/review
+  mergeTarget?: string;     // Branch to merge into (defaults to main if unset)
 }
 
 /**
@@ -173,7 +174,8 @@ export async function createTask(
   projectPath: string,
   taskNumber: number,
   branch: string,
-  name: string
+  name: string,
+  mergeTarget?: string
 ): Promise<TaskMetadata> {
   const store = await ensureProjectStore(projectPath);
 
@@ -189,6 +191,7 @@ export async function createTask(
     name,
     status: 'open',
     createdAt: new Date().toISOString(),
+    ...(mergeTarget && { mergeTarget }),
   };
 
   store[projectPath].tasks.push(task);
@@ -292,6 +295,36 @@ export async function setTaskReadyToShip(
     return { success: true };
   } catch (error) {
     console.error('Failed to set task ready state:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Set a task's merge target branch
+ */
+export async function setTaskMergeTarget(
+  projectPath: string,
+  branch: string,
+  mergeTarget: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const store = await loadStore();
+    const projectData = store[projectPath];
+
+    if (!projectData) {
+      return { success: false, error: 'Project not found' };
+    }
+
+    const task = projectData.tasks.find(t => t.branch === branch);
+    if (!task) {
+      return { success: false, error: 'Task not found' };
+    }
+
+    task.mergeTarget = mergeTarget;
+    await saveStore(store);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to set task merge target:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
