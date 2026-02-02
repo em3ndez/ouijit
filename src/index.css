@@ -662,7 +662,7 @@ textarea,
   padding: 2px 6px;
   margin-left: auto;
   font-family: 'SF Mono', Monaco, Menlo, monospace;
-  font-size: 10px;
+  font-size: 16px;
   color: var(--color-text-tertiary);
   background: var(--color-background);
   border: 1px solid var(--color-border);
@@ -2245,8 +2245,10 @@ body > .diff-panel--visible {
 
 /* Keyboard shortcut hint for tab switching */
 .theatre-card-shortcut {
+  display: inline-flex;
+  align-items: center;
   font-family: 'SF Mono', Monaco, Menlo, monospace;
-  font-size: 10px;
+  font-size: 16px;
   color: rgba(255, 255, 255, 0.4);
   flex-shrink: 0;
 }
@@ -3341,8 +3343,10 @@ body > .diff-panel--visible {
 }
 
 .theatre-stack-empty-hint-shortcut {
+  display: inline-flex;
+  align-items: center;
   font-family: 'SF Mono', Monaco, Menlo, monospace;
-  font-size: 11px;
+  font-size: 16px;
   color: rgba(255, 255, 255, 0.25);
 }
 
@@ -3389,8 +3393,10 @@ body > .diff-panel--visible {
 }
 
 .theatre-stack-empty-task-shortcut {
+  display: inline-flex;
+  align-items: center;
   font-family: 'SF Mono', Monaco, Menlo, monospace;
-  font-size: 11px;
+  font-size: 16px;
   color: rgba(255, 255, 255, 0.35);
 }
 
@@ -3450,8 +3456,10 @@ body > .diff-panel--visible {
 }
 
 .theatre-stack-empty-section-shortcut {
+  display: inline-flex;
+  align-items: center;
   font-family: 'SF Mono', Monaco, Menlo, monospace;
-  font-size: 11px;
+  font-size: 16px;
   color: rgba(255, 255, 255, 0.25);
 }
 
@@ -3682,11 +3690,18 @@ body.task-index-open .theatre-stack {
 }
 
 .task-index-item-shortcut {
+  display: inline-flex;
+  align-items: center;
   font-family: 'SF Mono', Monaco, Menlo, monospace;
-  font-size: 11px;
+  font-size: 16px;
   color: var(--color-text-secondary);
   margin-right: var(--spacing-xs);
   flex-shrink: 0;
+}
+
+/* Smaller numbers in shortcut hints (e.g., ⌘1 where 1 is smaller) */
+.shortcut-number {
+  font-size: 12px;
 }
 
 .task-index-item-id {
@@ -3901,7 +3916,7 @@ body.task-index-open .theatre-stack {
 
 .ship-it-summary-stat {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   margin-bottom: 4px;
 }

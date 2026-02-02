@@ -70,7 +70,7 @@ function buildTaskItem(task: WorktreeWithMetadata, path: string, index?: number)
   if (index !== undefined && index < 9) {
     const shortcut = document.createElement('kbd');
     shortcut.className = 'task-index-item-shortcut';
-    shortcut.textContent = `⌘${index + 1}`;
+    shortcut.innerHTML = `⌘<span class="shortcut-number">${index + 1}</span>`;
     item.appendChild(shortcut);
   }
 

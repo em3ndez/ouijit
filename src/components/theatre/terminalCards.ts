@@ -1062,7 +1062,7 @@ export function updateCardStack(): void {
       if (shortcutEl) {
         const stackPosition = backPositions.findIndex(bp => bp.index === index);
         if (stackPosition !== -1 && stackPosition < 9) {
-          shortcutEl.textContent = `⌘${stackPosition + 1}`;
+          shortcutEl.innerHTML = `⌘<span class="shortcut-number">${stackPosition + 1}</span>`;
           shortcutEl.style.display = '';
         } else {
           shortcutEl.style.display = 'none';
@@ -1517,7 +1517,7 @@ export function buildEmptyStateHtml(): string {
         <div class="theatre-stack-empty-open-list"></div>
       </div>
       <div class="theatre-stack-empty-new">
-        <div class="theatre-stack-empty-section-label"><span class="theatre-stack-empty-section-shortcut">⌘N</span>New Task</div>
+        <div class="theatre-stack-empty-section-label"><span class="theatre-stack-empty-section-shortcut">⌘<span class="shortcut-number">N</span></span>New Task</div>
         <form class="theatre-stack-empty-form">
           <input
             type="text"
@@ -1530,7 +1530,7 @@ export function buildEmptyStateHtml(): string {
         </form>
       </div>
       <div class="theatre-stack-empty-hints">
-        <span class="theatre-stack-empty-hint"><span class="theatre-stack-empty-hint-shortcut">⌘T</span>All Tasks</span>
+        <span class="theatre-stack-empty-hint"><span class="theatre-stack-empty-hint-shortcut">⌘<span class="shortcut-number">T</span></span>All Tasks</span>
       </div>
     </div>
   `;
@@ -1566,7 +1566,7 @@ async function populatePreviousTasks(emptyState: HTMLElement): Promise<void> {
       if (index < 9) {
         const shortcut = document.createElement('kbd');
         shortcut.className = 'theatre-stack-empty-task-shortcut';
-        shortcut.textContent = `⌘${index + 1}`;
+        shortcut.innerHTML = `⌘<span class="shortcut-number">${index + 1}</span>`;
         taskBtn.appendChild(shortcut);
       }
 
