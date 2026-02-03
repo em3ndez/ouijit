@@ -26,8 +26,6 @@ Each Claude Code session sees only its own worktree. No stepping on each other's
 
 **Task Lifecycle** - Open → Ready to Ship → Closed, with worktree cleanup
 
-**Project Discovery** - Auto-scans `~/dev`, `~/Projects`, `~/code`, etc.
-
 ## Script Hooks
 
 Configure shell scripts that run at key points in the task lifecycle:
@@ -53,6 +51,9 @@ OUIJIT_HOOK_TYPE       # Which hook is running
 | Key | Action |
 |-----|--------|
 | ⌘D | Toggle diff panel |
+| ⌘S | Open ship-it panel |
+| ⌘T | Show task index |
+| ⌘N | Create new task |
 | ⌘P | Open runner terminal |
 | ⌘W | Close current terminal |
 | ⌘[ / ⌘] | Switch terminal cards |
@@ -69,6 +70,10 @@ npm run make     # Package for distribution
 ## Tech Stack
 
 Electron, Vite, TypeScript, xterm.js, node-pty, @preact/signals-core
+
+## Platforms
+
+macOS and Linux
 
 ## License
 
