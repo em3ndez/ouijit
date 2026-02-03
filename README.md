@@ -2,6 +2,8 @@
 
 Run multiple Claude Code sessions in parallel without losing the terminal.
 
+![Ouijit Theatre Mode](screenshot.png)
+
 ## Why Ouijit?
 
 Most agent orchestration tools add dashboards and abstractions on top of the AI. Ouijit takes a different approach: keep the TUI, manage the isolation.
