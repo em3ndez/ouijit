@@ -87,6 +87,7 @@
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
+  --radius-xl: 24px;
   --radius-full: 9999px;
 
   /* Typography */
@@ -1091,7 +1092,7 @@ textarea,
 /* Dialog box styles (used by import dialog, hook config dialog, etc.) */
 .import-dialog {
   background: var(--color-surface);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
   max-width: 400px;
   width: 90%;
@@ -4240,7 +4241,7 @@ body.platform-other .shortcut-number {
 
 .ship-it-commit-dialog-content {
   background: var(--color-surface);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
   max-width: 400px;
   width: 90%;
