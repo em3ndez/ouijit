@@ -27,52 +27,42 @@ function showWorktreeNamePrompt(): Promise<WorktreePromptResult | null> {
     overlay.className = 'modal-overlay';
 
     const dialog = document.createElement('div');
-    dialog.className = 'import-dialog';
-    dialog.style.maxWidth = '400px';
+    dialog.className = 'import-dialog new-task-dialog';
 
     dialog.innerHTML = `
-      <h2 class="import-dialog-title">New Task</h2>
-      <div class="new-project-form">
-        <div class="form-group">
-          <label class="form-label" for="worktree-name">Task name</label>
-          <input
-            type="text"
-            id="worktree-name"
-            class="form-input"
-            placeholder="e.g., fix login bug"
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </div>
-        <div class="form-group" style="margin-top: 16px;">
-          <label class="form-label" for="worktree-prompt">Description <span class="form-label-optional">(optional)</span></label>
-          <textarea
-            id="worktree-prompt"
-            class="form-input"
-            style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 14px; resize: vertical; padding-top: 10px; min-height: 60px;"
-            placeholder="What needs to be done..."
-            autocomplete="off"
-            spellcheck="false"
-            rows="2"
-          ></textarea>
-        </div>
-      </div>
-      <div class="import-actions">
-        <button class="btn btn-secondary" data-action="cancel">Cancel</button>
-        <button class="btn btn-primary" data-action="create">Create</button>
-      </div>
+      <form class="new-task-composer">
+        <input
+          type="text"
+          id="worktree-name"
+          class="new-task-composer-name"
+          placeholder="Task name"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <textarea
+          id="worktree-prompt"
+          class="new-task-composer-prompt"
+          placeholder="Describe what needs to be done..."
+          spellcheck="false"
+          rows="2"
+        ></textarea>
+        <button type="submit" class="new-task-composer-btn" aria-label="Create task">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M8 13V3M4 7l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </form>
     `;
 
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
 
+    const form = dialog.querySelector('.new-task-composer') as HTMLFormElement;
     const nameInput = dialog.querySelector('#worktree-name') as HTMLInputElement;
     const promptInput = dialog.querySelector('#worktree-prompt') as HTMLTextAreaElement;
-    const createBtn = dialog.querySelector('[data-action="create"]') as HTMLButtonElement;
 
     const cleanup = () => {
       unregisterHotkey('escape', Scopes.MODAL);
-      unregisterHotkey('enter', Scopes.MODAL);
       popScope();
       dialog.classList.remove('import-dialog--visible');
       overlay.classList.remove('modal-overlay--visible');
@@ -91,9 +81,21 @@ function showWorktreeNamePrompt(): Promise<WorktreePromptResult | null> {
       resolve(null);
     };
 
-    // Event listeners
-    createBtn.addEventListener('click', handleCreate);
-    dialog.querySelector('[data-action="cancel"]')?.addEventListener('click', handleCancel);
+    // Enter in name field focuses description instead of submitting
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        promptInput.focus();
+      }
+    });
+
+    // Form submission
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      handleCreate();
+    });
+
+    // Click outside to cancel
     overlay.addEventListener('mousedown', (e) => {
       if (e.target === overlay) handleCancel();
     });
@@ -101,7 +103,6 @@ function showWorktreeNamePrompt(): Promise<WorktreePromptResult | null> {
     // Set up hotkey scope for modal
     pushScope(Scopes.MODAL);
     registerHotkey('escape', Scopes.MODAL, handleCancel);
-    registerHotkey('enter', Scopes.MODAL, handleCreate);
 
     // Animate in and focus
     requestAnimationFrame(() => {
