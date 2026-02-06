@@ -617,10 +617,8 @@ function buildRunnerPanelHtml(label: string): string {
     <div class="runner-panel">
       <div class="runner-panel-header">
         <span class="runner-panel-title">${label}</span>
-        <div class="runner-panel-actions">
-          <button class="runner-panel-collapse" title="Collapse panel">−</button>
-          <button class="runner-panel-kill" title="Stop runner">&times;</button>
-        </div>
+        <button class="runner-panel-kill" title="Kill runner">Kill</button>
+        <button class="runner-panel-collapse" title="Collapse panel"><i data-lucide="chevron-right"></i></button>
       </div>
       <div class="runner-panel-body">
         <div class="runner-xterm-container"></div>
@@ -647,7 +645,7 @@ export function showRunnerPanel(term: TheatreTerminal): void {
   let panel = cardBody.querySelector('.runner-panel') as HTMLElement;
   if (!panel) {
     // Create panel (insert at end so it appears on the right)
-    cardBody.insertAdjacentHTML('beforeend', buildRunnerPanelHtml(term.runnerLabel || 'Runner'));
+    cardBody.insertAdjacentHTML('beforeend', buildRunnerPanelHtml(term.runnerCommand || term.runnerLabel || 'Runner'));
     panel = cardBody.querySelector('.runner-panel') as HTMLElement;
     if (!panel) return;
 
