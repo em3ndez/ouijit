@@ -1621,6 +1621,14 @@ export async function showStackEmptyState(): Promise<void> {
       }
     });
 
+    // Mod+Enter in prompt field submits the form
+    promptInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
 

@@ -89,6 +89,14 @@ function showWorktreeNamePrompt(): Promise<WorktreePromptResult | null> {
       }
     });
 
+    // Mod+Enter in prompt field submits the form
+    promptInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
     // Form submission
     form.addEventListener('submit', (e) => {
       e.preventDefault();
