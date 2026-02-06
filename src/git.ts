@@ -919,8 +919,7 @@ export function mergeWorktreeBranch(
       execFileSync('git', ['merge', '--squash', branchToMerge], opts);
       // Create the squash commit with custom or default message
       const commitMsg = commitMessage || branchToMerge.replace(/-\d{10,}$/, '').replace(/-/g, ' ');
-      // Use stdin to handle multi-line messages safely
-      execSync('git commit -F -', { ...opts, input: commitMsg });
+      execFileSync('git', ['commit', '-m', commitMsg], opts);
       return { success: true, mergedBranch: branchToMerge };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : '';
