@@ -215,16 +215,19 @@ export async function createTaskWorktree(projectPath: string, name?: string, pro
     const projectName = path.basename(projectPath);
     const displayName = name || 'Untitled';
 
-    // Get next task number (only persisted after successful worktree creation)
-    const taskNumber = await getNextTaskNumber(projectPath);
-
-    // Generate branch name and worktree path
-    const branch = generateBranchName(name, taskNumber);
+    // Get next task number, skipping any stale directories from failed attempts
+    let taskNumber = await getNextTaskNumber(projectPath);
     const baseDir = getWorktreeBaseDir(projectName);
-    const worktreePath = path.join(baseDir, `T-${taskNumber}`);
-
-    // Ensure base directory exists
     await fs.mkdir(baseDir, { recursive: true });
+
+    let worktreePath = path.join(baseDir, `T-${taskNumber}`);
+    while (await fs.access(worktreePath).then(() => true, () => false)) {
+      taskNumber++;
+      worktreePath = path.join(baseDir, `T-${taskNumber}`);
+    }
+
+    // Generate branch name
+    const branch = generateBranchName(name, taskNumber);
 
     // Create worktree with new branch
     execSync(`git worktree add -b "${branch}" "${worktreePath}"`, {
