@@ -37,6 +37,7 @@ let currentWindow: BrowserWindow | null = null;
 
 // Maximum bytes to buffer for scroll history preservation (100KB)
 const MAX_BUFFER_SIZE = 100 * 1024;
+const SIGKILL_GRACE = 3000;
 
 function getDefaultShell(): string {
   if (process.platform === 'win32') {
@@ -241,18 +242,46 @@ export function resizePty(ptyId: PtyId, cols: number, rows: number): void {
 
 export function killPty(ptyId: PtyId): void {
   const managed = activePtys.get(ptyId);
-  if (managed) {
-    managed.process.kill();
-    activePtys.delete(ptyId);
+  if (!managed) return;
+
+  const pid = managed.process.pid;
+
+  // Kill the entire process group (negative PID) to ensure child processes
+  // (dev servers, watchers, etc.) are terminated — not just the shell.
+  // node-pty uses forkpty() which creates a new session, so pid === pgid.
+  try {
+    process.kill(-pid, 'SIGTERM');
+  } catch {
+    // Process group kill failed (already dead), fall back to node-pty kill
+    try {
+      managed.process.kill();
+    } catch {
+      // Already dead
+    }
   }
+
+  // Escalate to SIGKILL after grace period if process is still alive
+  setTimeout(() => {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      // Already dead
+    }
+  }, SIGKILL_GRACE);
+
+  activePtys.delete(ptyId);
 }
 
 export function cleanupAllPtys(): void {
   for (const [, managed] of activePtys) {
     try {
-      managed.process.kill();
+      process.kill(-managed.process.pid, 'SIGTERM');
     } catch {
-      // Ignore errors during cleanup
+      try {
+        managed.process.kill();
+      } catch {
+        // Ignore errors during cleanup
+      }
     }
   }
   activePtys.clear();
