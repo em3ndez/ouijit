@@ -44,12 +44,97 @@ OUIJIT_HOOK_TYPE       # Which hook is running
 
 ## Development
 
+### Prerequisites
+
+- **Node.js 20+** and npm
+- **Xcode Command Line Tools** — required for compiling native modules (node-pty, koffi)
+  ```bash
+  xcode-select --install
+  ```
+- **git**
+
+### Setup
+
 ```bash
 npm install
-npm run start    # Dev mode
-npm run check    # Type check
-npm run make     # Package for distribution
 ```
+
+This compiles native C/C++ modules (node-pty, koffi) and may take a minute on first run.
+
+### Running in dev mode
+
+```bash
+npm start
+```
+
+Launches the app via electron-forge with Vite HMR for the renderer process.
+
+### Type checking
+
+```bash
+npm run check
+```
+
+### Project structure
+
+```
+src/main.ts          # Electron main process
+src/preload.ts       # Preload script (IPC bridge)
+src/renderer.ts      # Renderer entry point
+src/components/      # UI components
+src/components/theatre/  # Theatre mode (terminal/task runner UI)
+src/utils/           # Shared utilities
+src/ouijit/          # Core app logic (import/export, dependencies)
+```
+
+### Native modules
+
+Ouijit depends on **node-pty** and **koffi**, both native C/C++ modules that compile platform-specific `.node` binaries. ASAR packaging is disabled because native binaries need to live on the real filesystem — Node's module loader can't resolve them from inside an archive. The `afterCopy` hook in `forge.config.ts` copies these modules into the packaged app before code signing.
+
+## Packaging
+
+### macOS
+
+```bash
+npm run make
+```
+
+Produces a ZIP in `out/make/zip/darwin/`. For local/unsigned builds, skip signing and notarization:
+
+```bash
+SKIP_SIGN=1 SKIP_NOTARIZE=1 npm run make
+```
+
+### macOS code signing & notarization
+
+Distributing outside the App Store requires signing and notarization so macOS Gatekeeper doesn't block the app.
+
+1. **Apple Developer Program** membership is required
+2. **Install your signing certificate** via Xcode or Keychain Access (Developer ID Application certificate)
+3. **Create a notarization keychain profile:**
+   ```bash
+   xcrun notarytool store-credentials ouijit-notarize \
+     --apple-id <your-apple-id-email> \
+     --team-id <your-team-id> \
+     --password <app-specific-password>
+   ```
+4. **Build:** `npm run make` will automatically sign (via `osxSign` in forge.config.ts) and notarize (via the `postPackage` hook)
+
+The entitlements in `entitlements.mac.plist` grant JIT, unsigned executable memory, and library validation exceptions required by Electron's V8 engine.
+
+### Linux
+
+See [docs/building-linux.md](docs/building-linux.md) for the full guide. In short, `npm run make:linux` uses Lima + Docker to cross-compile native modules for x64 from macOS. Alternatively, build natively on a Linux x64 machine with `npm install && npm run make`.
+
+## Scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm start` | Run in development mode |
+| `npm run check` | TypeScript type checking |
+| `npm run package` | Package app (no installer) |
+| `npm run make` | Package + create distributable |
+| `npm run make:linux` | Cross-compile Linux build from macOS |
 
 ## Tech Stack
 
@@ -58,7 +143,3 @@ Electron, Vite, TypeScript, xterm.js, node-pty, @preact/signals-core
 ## Platforms
 
 macOS and Linux
-
-## License
-
-MIT
