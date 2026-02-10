@@ -46,21 +46,23 @@ async function showWorktreeNamePrompt(): Promise<WorktreePromptResult | null> {
 
     dialog.innerHTML = `
       <form class="new-task-composer">
-        <input
-          type="text"
-          id="worktree-name"
-          class="new-task-composer-name"
-          placeholder="Task name"
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <textarea
-          id="worktree-prompt"
-          class="new-task-composer-prompt"
-          placeholder="Describe what needs to be done..."
-          spellcheck="false"
-          rows="2"
-        ></textarea>
+        <div class="new-task-composer-scroll">
+          <input
+            type="text"
+            id="worktree-name"
+            class="new-task-composer-name"
+            placeholder="Task name"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <textarea
+            id="worktree-prompt"
+            class="new-task-composer-prompt"
+            placeholder="Describe what needs to be done..."
+            spellcheck="false"
+            rows="2"
+          ></textarea>
+        </div>
         ${limaAvailable ? `
         <div class="new-task-composer-footer">
           <div class="new-task-sandbox-toggle">
@@ -85,6 +87,12 @@ async function showWorktreeNamePrompt(): Promise<WorktreePromptResult | null> {
     const form = dialog.querySelector('.new-task-composer') as HTMLFormElement;
     const nameInput = dialog.querySelector('#worktree-name') as HTMLInputElement;
     const promptInput = dialog.querySelector('#worktree-prompt') as HTMLTextAreaElement;
+
+    // Auto-resize textarea to grow with content
+    promptInput.addEventListener('input', () => {
+      promptInput.style.height = 'auto';
+      promptInput.style.height = promptInput.scrollHeight + 'px';
+    });
 
     // Wire up sandbox toggle if present
     const sandboxToggleRow = dialog.querySelector('.new-task-sandbox-toggle');

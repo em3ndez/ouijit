@@ -1702,19 +1702,21 @@ export function buildEmptyStateHtml(limaAvailable: boolean): string {
         <div class="theatre-stack-empty-section-label"><span class="theatre-stack-empty-section-shortcut">${isMac ? '⌘' : 'Ctrl+'}<span class="shortcut-number">N</span></span>New Task</div>
         <form class="theatre-stack-empty-form">
           <div class="theatre-stack-empty-composer">
-            <input
-              type="text"
-              class="theatre-stack-empty-name"
-              placeholder="Task name"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <textarea
-              class="theatre-stack-empty-prompt"
-              placeholder="Describe what needs to be done..."
-              rows="2"
-              spellcheck="false"
-            ></textarea>
+            <div class="theatre-stack-empty-scroll">
+              <input
+                type="text"
+                class="theatre-stack-empty-name"
+                placeholder="Task name"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <textarea
+                class="theatre-stack-empty-prompt"
+                placeholder="Describe what needs to be done..."
+                rows="2"
+                spellcheck="false"
+              ></textarea>
+            </div>
             ${limaAvailable ? `
             <div class="new-task-composer-footer">
               <div class="new-task-sandbox-toggle">
@@ -1867,6 +1869,12 @@ export async function showStackEmptyState(): Promise<void> {
   const nameInput = emptyState.querySelector('.theatre-stack-empty-name') as HTMLInputElement;
   const promptInput = emptyState.querySelector('.theatre-stack-empty-prompt') as HTMLTextAreaElement;
   const submitBtn = emptyState.querySelector('.theatre-stack-empty-btn') as HTMLButtonElement;
+
+  // Auto-resize textarea to grow with content
+  promptInput.addEventListener('input', () => {
+    promptInput.style.height = 'auto';
+    promptInput.style.height = promptInput.scrollHeight + 'px';
+  });
 
   // Wire up sandbox toggle if present
   const sandboxToggleRow = emptyState.querySelector('.new-task-sandbox-toggle');

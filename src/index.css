@@ -651,6 +651,11 @@ textarea,
   @apply border-accent ring-3 ring-accent-light;
 }
 
+.new-task-composer-scroll {
+  @apply flex flex-col overflow-y-auto pb-2;
+  max-height: 40vh;
+}
+
 .new-task-composer-name {
   @apply w-full px-4 pt-3.5 pb-1 font-sans text-base font-medium text-text-primary bg-transparent border-none outline-none;
 }
@@ -1865,6 +1870,11 @@ body > .diff-panel--visible {
 
 .theatre-stack-empty-composer {
   @apply relative flex flex-col bg-white/[0.08] border border-white/[0.12] rounded-xl overflow-hidden transition-all duration-150 ease-out;
+}
+
+.theatre-stack-empty-scroll {
+  @apply flex flex-col overflow-y-auto pb-2;
+  max-height: 40vh;
 }
 
 .theatre-stack-empty-composer:focus-within {
