@@ -311,19 +311,17 @@ export async function removeTaskWorktree(
     const branchName = task?.branch;
 
     // Remove the worktree
-    execSync(`git worktree remove "${worktreePath}" --force`, {
+    await execAsync(`git worktree remove "${worktreePath}" --force`, {
       cwd: projectPath,
       encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     // Delete the branch
     if (branchName) {
       try {
-        execSync(`git branch -D "${branchName}"`, {
+        await execAsync(`git branch -D "${branchName}"`, {
           cwd: projectPath,
           encoding: 'utf8',
-          stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch {
         // Branch may already be deleted, ignore
