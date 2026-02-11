@@ -326,7 +326,7 @@ textarea,
 }
 
 .project-icon-image {
-  @apply w-[130%] h-[130%] -m-[15%] object-contain;
+  @apply w-full h-full object-cover;
 }
 
 .project-icon-placeholder {
