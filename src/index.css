@@ -224,8 +224,9 @@ textarea,
 
 /* Header Icon Button */
 .btn-icon-header {
-  @apply flex items-center justify-center w-9 h-9 p-0 bg-transparent border-none rounded-md text-text-secondary transition-all duration-150 ease-out shrink-0;
+  @apply flex items-center justify-center w-9 h-9 p-0 border-none rounded-md text-text-secondary transition-all duration-150 ease-out shrink-0;
   -webkit-app-region: no-drag;
+  background: rgba(0, 0, 0, 0.001);
 }
 
 .btn-icon-header:hover {
