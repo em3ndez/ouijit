@@ -403,26 +403,6 @@ textarea,
   transform: translateY(0);
 }
 
-.launch-option {
-  @apply relative flex items-center gap-2 w-full px-4 py-2 bg-transparent border-none font-sans text-sm text-text-primary text-left transition-colors duration-150 ease-out;
-}
-
-.launch-option:hover {
-  @apply bg-background;
-}
-
-.launch-option-icon {
-  @apply w-4 h-4 shrink-0 text-text-tertiary;
-}
-
-.launch-option-name {
-  @apply font-medium flex-1 min-w-0 truncate;
-}
-
-.launch-dropdown-divider {
-  @apply h-px bg-border my-1;
-}
-
 /* Empty State */
 .empty-state {
   @apply flex flex-col items-center justify-center text-center p-12 min-h-[400px];
@@ -1839,7 +1819,7 @@ body > .diff-panel--visible {
 }
 
 .hooks-container {
-  @apply flex flex-col gap-0.5 px-1;
+  @apply flex flex-col gap-0.5 px-1 pb-1;
 }
 
 .hook-row {
@@ -1880,6 +1860,14 @@ body > .diff-panel--visible {
 
 .hook-configure-btn:hover {
   @apply text-accent;
+}
+
+.hook-row-wrapper {
+  @apply flex flex-col;
+}
+
+.hook-hint {
+  @apply text-[11px] text-text-tertiary leading-snug px-2 pb-1;
 }
 
 /* Hook config dialog */

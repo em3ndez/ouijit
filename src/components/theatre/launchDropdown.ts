@@ -9,6 +9,12 @@ import { stringToColor, getInitials } from '../../utils/projectIcon';
 import { showToast } from '../importDialog';
 import { showHookConfigDialog } from '../hookConfigDialog';
 
+const HOOK_HINTS: Record<string, string> = {
+  start: 'Runs when a new task is created',
+  continue: 'Runs when reopening an existing task',
+  cleanup: 'Runs before archiving a task',
+};
+
 /**
  * Build the theatre mode header content
  * Note: Git status is now displayed per-terminal on card labels, not in the header
@@ -111,7 +117,17 @@ function buildHookRow(
   }
 
   row.appendChild(rightSection);
-  return row;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'hook-row-wrapper';
+  wrapper.appendChild(row);
+
+  const hint = document.createElement('div');
+  hint.className = 'hook-hint';
+  hint.textContent = HOOK_HINTS[hookType];
+  wrapper.appendChild(hint);
+
+  return wrapper;
 }
 
 /**
@@ -142,31 +158,6 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
   hooksContainer.appendChild(buildHookRow('cleanup', 'Cleanup', hooks.cleanup, path));
 
   dropdown.appendChild(hooksContainer);
-
-  // Divider
-  const divider = document.createElement('div');
-  divider.className = 'launch-dropdown-divider';
-  dropdown.appendChild(divider);
-
-  // Open in file manager option (platform-aware text)
-  const finderOption = document.createElement('button');
-  finderOption.className = 'launch-option';
-  finderOption.innerHTML = '<i data-lucide="folder-open" class="launch-option-icon"></i>';
-  const finderText = document.createElement('span');
-  finderText.className = 'launch-option-name';
-  // Platform-aware label
-  const isMac = navigator.platform.toLowerCase().includes('mac');
-  const isWin = navigator.platform.toLowerCase().includes('win');
-  finderText.textContent = isMac ? 'Open in Finder' : isWin ? 'Open in Explorer' : 'Open in Files';
-  finderOption.appendChild(finderText);
-  finderOption.addEventListener('click', (e) => {
-    e.stopPropagation();
-    hideLaunchDropdown();
-    if (path) {
-      window.api.openInFinder(path);
-    }
-  });
-  dropdown.appendChild(finderOption);
 }
 
 /**
