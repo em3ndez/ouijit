@@ -48,7 +48,6 @@ import {
   buildTheatreHeader,
   toggleLaunchDropdown,
   hideLaunchDropdown,
-  runDefaultCommand,
 } from './launchDropdown';
 import { createNewAgentShell } from './worktreeDropdown';
 import { toggleTaskIndex } from './taskIndex';
@@ -91,19 +90,10 @@ export async function enterTheatreMode(
       exitBtn.addEventListener('click', () => exitTheatreMode());
     }
 
-    // Wire up play button (runs default command)
-    const playBtn = headerContent.querySelector('.theatre-play-btn');
-    if (playBtn) {
-      playBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        await runDefaultCommand();
-      });
-    }
-
-    // Wire up chevron button (opens dropdown)
-    const chevronBtn = headerContent.querySelector('.theatre-launch-chevron-btn');
-    if (chevronBtn) {
-      chevronBtn.addEventListener('click', (e) => {
+    // Wire up scripts button (opens dropdown)
+    const scriptsBtn = headerContent.querySelector('.theatre-scripts-btn');
+    if (scriptsBtn) {
+      scriptsBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleLaunchDropdown();
       });
@@ -519,19 +509,10 @@ export async function restoreTheatreMode(
       exitBtn.addEventListener('click', () => exitTheatreMode());
     }
 
-    // Wire up play button
-    const playBtn = headerContent.querySelector('.theatre-play-btn');
-    if (playBtn) {
-      playBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        await runDefaultCommand();
-      });
-    }
-
-    // Wire up chevron button
-    const chevronBtn = headerContent.querySelector('.theatre-launch-chevron-btn');
-    if (chevronBtn) {
-      chevronBtn.addEventListener('click', (e) => {
+    // Wire up scripts button (opens dropdown)
+    const scriptsBtn = headerContent.querySelector('.theatre-scripts-btn');
+    if (scriptsBtn) {
+      scriptsBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleLaunchDropdown();
       });

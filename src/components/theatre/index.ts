@@ -100,7 +100,6 @@ export {
   showLaunchDropdown,
   hideLaunchDropdown,
   toggleLaunchDropdown,
-  runDefaultCommand,
 } from './launchDropdown';
 
 // Theatre mode orchestration

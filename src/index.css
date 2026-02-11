@@ -1730,27 +1730,21 @@ body > .diff-panel--visible {
   -webkit-app-region: no-drag;
 }
 
-.theatre-play-btn,
-.theatre-launch-chevron-btn {
-  @apply w-8 h-8 flex items-center justify-center bg-background-secondary border border-border text-text-secondary transition-all duration-150 ease-out;
+.theatre-scripts-btn {
+  @apply relative h-8 flex items-center justify-center gap-1.5 px-2 bg-background-secondary border border-border rounded-md text-text-secondary ease-out;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
 }
 
-.theatre-play-btn {
-  @apply rounded-l-md rounded-r-none border-r-0;
-}
-
-.theatre-launch-chevron-btn {
-  @apply rounded-l-none rounded-r-md;
-}
-
-.theatre-play-btn:hover,
-.theatre-launch-chevron-btn:hover {
+.theatre-scripts-btn:hover {
   @apply bg-background-tertiary text-text-primary;
 }
 
-.theatre-play-btn svg,
-.theatre-launch-chevron-btn svg {
+.theatre-scripts-btn svg {
   @apply w-4 h-4;
+}
+
+.theatre-scripts-caret {
+  @apply !w-3 !h-3 opacity-50;
 }
 
 /* Launch dropdown - reuses .launch-dropdown pattern */

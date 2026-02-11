@@ -2,13 +2,12 @@
  * Launch dropdown for theatre mode - hooks configuration and project actions
  */
 
-import type { RunConfig, ScriptHook, HookType } from '../../types';
-import { theatreState, MAX_THEATRE_TERMINALS } from './state';
-import { projectPath, projectData, terminals, launchDropdownVisible } from './signals';
+import type { ScriptHook, HookType } from '../../types';
+import { theatreState } from './state';
+import { projectPath, projectData, launchDropdownVisible } from './signals';
 import { stringToColor, getInitials } from '../../utils/projectIcon';
 import { showToast } from '../importDialog';
 import { showHookConfigDialog } from '../hookConfigDialog';
-import { addTheatreTerminal, killExistingCommandInstances } from './terminalCards';
 
 /**
  * Build the theatre mode header content
@@ -39,11 +38,9 @@ export function buildTheatreHeader(): string {
         </button>
       </div>
       <div class="theatre-launch-wrapper">
-        <button class="theatre-play-btn" title="Run script">
-          <i data-lucide="play"></i>
-        </button>
-        <button class="theatre-launch-chevron-btn" title="Configure scripts">
-          <i data-lucide="chevron-down"></i>
+        <button class="theatre-scripts-btn" title="Configure scripts">
+          <i data-lucide="code"></i>
+          <i data-lucide="chevron-down" class="theatre-scripts-caret"></i>
         </button>
       </div>
       <button class="theatre-exit-btn" title="Exit theatre mode">
@@ -61,7 +58,6 @@ function buildHookRow(
   label: string,
   hook: ScriptHook | undefined,
   path: string,
-  options?: { killExistingOnRun?: boolean }
 ): HTMLElement {
   const row = document.createElement('div');
   row.className = 'hook-row';
@@ -90,9 +86,7 @@ function buildHookRow(
     editBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       hideLaunchDropdown();
-      const result = await showHookConfigDialog(path, hookType, hook,
-        hookType === 'run' ? { killExistingOnRun: options?.killExistingOnRun } : undefined
-      );
+      const result = await showHookConfigDialog(path, hookType, hook);
       if (result?.saved && result.hook) {
         showToast(`${label} updated`, 'success');
       }
@@ -105,9 +99,7 @@ function buildHookRow(
     configureBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       hideLaunchDropdown();
-      const result = await showHookConfigDialog(path, hookType, undefined,
-        hookType === 'run' ? { killExistingOnRun: options?.killExistingOnRun } : undefined
-      );
+      const result = await showHookConfigDialog(path, hookType, undefined);
       if (result?.saved && result.hook) {
         showToast(`${label} configured`, 'success');
       }
@@ -120,37 +112,6 @@ function buildHookRow(
 }
 
 /**
- * Run a hook in a terminal
- */
-async function runHook(hook: ScriptHook): Promise<void> {
-  const path = projectPath.value;
-  if (!path) return;
-
-  // Check terminal limit
-  if (terminals.value.length >= MAX_THEATRE_TERMINALS) {
-    showToast(`Maximum ${MAX_THEATRE_TERMINALS} terminals`, 'info');
-    return;
-  }
-
-  const config: RunConfig = {
-    name: hook.name,
-    command: hook.command,
-    source: 'custom',
-    description: hook.description,
-    priority: 0,
-    isCustom: true,
-  };
-
-  // Kill existing instances unless disabled in settings
-  const settings = await window.api.getProjectSettings(path);
-  if (settings.killExistingOnRun !== false) {
-    killExistingCommandInstances(hook.command);
-  }
-
-  await addTheatreTerminal(config);
-}
-
-/**
  * Build the launch dropdown content
  */
 export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise<void> {
@@ -160,11 +121,8 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
 
   dropdown.innerHTML = '';
 
-  // Fetch hooks and settings
-  const [hooks, settings] = await Promise.all([
-    window.api.hooks.get(path),
-    window.api.getProjectSettings(path),
-  ]);
+  // Fetch hooks
+  const hooks = await window.api.hooks.get(path);
 
   // Section header
   const header = document.createElement('div');
@@ -178,9 +136,6 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
 
   hooksContainer.appendChild(buildHookRow('start', 'Start', hooks.start, path));
   hooksContainer.appendChild(buildHookRow('continue', 'Continue', hooks.continue, path));
-  hooksContainer.appendChild(buildHookRow('run', 'Run', hooks.run, path, {
-    killExistingOnRun: settings.killExistingOnRun,
-  }));
   hooksContainer.appendChild(buildHookRow('cleanup', 'Cleanup', hooks.cleanup, path));
 
   dropdown.appendChild(hooksContainer);
@@ -284,37 +239,3 @@ export function toggleLaunchDropdown(): void {
   }
 }
 
-/**
- * Run the run hook immediately
- */
-export async function runDefaultCommand(): Promise<void> {
-  const path = projectPath.value;
-  if (!path) return;
-
-  // Check if at max terminals
-  if (terminals.value.length >= MAX_THEATRE_TERMINALS) {
-    showToast(`Maximum ${MAX_THEATRE_TERMINALS} terminals`, 'info');
-    return;
-  }
-
-  // Fetch hooks and settings
-  const [hooks, settings] = await Promise.all([
-    window.api.hooks.get(path),
-    window.api.getProjectSettings(path),
-  ]);
-
-  if (!hooks.run) {
-    // Open config dialog directly when no run hook is set
-    const result = await showHookConfigDialog(path, 'run', undefined, {
-      killExistingOnRun: settings.killExistingOnRun,
-    });
-    if (result?.saved && result.hook) {
-      showToast('Run script configured', 'success');
-      // Run it immediately after configuring
-      await runHook(result.hook);
-    }
-    return;
-  }
-
-  await runHook(hooks.run);
-}
