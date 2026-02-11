@@ -25,6 +25,31 @@ let currentWindow: BrowserWindow | null = null;
 
 const MAX_BUFFER_SIZE = 100 * 1024;
 
+/**
+ * Track which setup scripts have already run for each VM session.
+ * Key: `${instanceName}:${scriptHash}`, Value: true if completed.
+ * Editing the hook changes the hash, so the script re-runs automatically.
+ */
+const completedSetups = new Map<string, boolean>();
+
+/** djb2 string hash */
+function djb2Hash(str: string): string {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/** Reset setup tracking for a VM instance (call after VM start/recreate) */
+export function resetSetupTracking(instanceName: string): void {
+  for (const key of completedSetups.keys()) {
+    if (key.startsWith(`${instanceName}:`)) {
+      completedSetups.delete(key);
+    }
+  }
+}
+
 function handleOutput(ptyId: PtyId, channel: string, data: string): void {
   const managed = activeSandboxPtys.get(ptyId);
   if (!managed) return;
@@ -93,7 +118,17 @@ export async function spawnSandboxedPty(
 
     // Build the command to run inside the VM
     let innerCmd: string;
-    const setupPrefix = setupScript?.trim() ? `${setupScript.trim()}\n` : '';
+    let setupPrefix = '';
+    if (setupScript?.trim()) {
+      const scriptHash = djb2Hash(setupScript.trim());
+      const trackingKey = `${instanceName}:${scriptHash}`;
+      if (completedSetups.has(trackingKey)) {
+        setupPrefix = '';
+      } else {
+        completedSetups.set(trackingKey, true);
+        setupPrefix = `if ! ( ${setupScript.trim()} ); then\n  echo -e '\\033[31m● sandbox-setup hook failed\\033[0m' >&2\n  echo -e '\\033[90mEdit the setup hook in the sandbox dropdown to fix.\\033[0m' >&2\nfi\n`;
+      }
+    }
     if (options.command) {
       // Run command then drop to interactive bash
       const escapedCmd = options.command.replace(/'/g, "'\\''");

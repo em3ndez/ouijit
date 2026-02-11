@@ -7,8 +7,21 @@ import * as os from 'node:os';
 import { app } from 'electron';
 import type { LimaInstance } from './types';
 import { generateLimaYaml, buildLimaConfig } from './config';
+import { resetSetupTracking } from './spawn';
 
 const execFileAsync = promisify(execFile);
+
+/** Add actionable context to common Lima error messages */
+function contextualizeError(msg: string): string {
+  const lower = msg.toLowerCase();
+  if (lower.includes('etimedout') || lower.includes('timeout') || lower.includes('timed out')) {
+    return `${msg} — timed out, check your network connection`;
+  }
+  if (lower.includes('enospc') || lower.includes('no space')) {
+    return `${msg} — not enough disk space`;
+  }
+  return msg;
+}
 
 /** Get the path to the bundled limactl binary */
 export function getLimactlPath(): string {
@@ -104,7 +117,15 @@ export async function createInstance(
     return { success: true };
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    return { success: false, error: `Failed to create VM: ${msg}` };
+    // Clean up partially-created VM so we don't leave it in a broken state
+    try {
+      await execFileAsync(getLimactlPath(), ['delete', '--force', instanceName], {
+        timeout: 30_000, env: getLimaEnv(),
+      });
+    } catch {
+      // Ignore — VM may not have been created at all
+    }
+    return { success: false, error: `Failed to create VM: ${contextualizeError(msg)}` };
   } finally {
     // Clean up temp file
     try {
@@ -181,7 +202,7 @@ export async function startInstance(name: string, onProgress?: (message: string)
     return { success: true };
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    return { success: false, error: `Failed to start VM: ${msg}` };
+    return { success: false, error: `Failed to start VM: ${contextualizeError(msg)}` };
   } finally {
     stopTailing?.();
   }
@@ -220,9 +241,15 @@ export async function deleteInstance(name: string): Promise<{ success: boolean; 
 /**
  * Wait for SSH to be ready by probing with a simple command.
  * Lima may report "Running" before SSH is fully accepting connections.
+ * Uses exponential backoff: 1s, 2s, 4s, 8s, 10s, 10s, ... (~60s total)
  */
-async function waitForSsh(instanceName: string, maxRetries = 5): Promise<boolean> {
+async function waitForSsh(
+  instanceName: string,
+  maxRetries = 10,
+  onProgress?: (message: string) => void,
+): Promise<boolean> {
   for (let i = 0; i < maxRetries; i++) {
+    onProgress?.(`Waiting for SSH (attempt ${i + 1}/${maxRetries})…`);
     try {
       await execFileAsync(getLimactlPath(), ['shell', instanceName, '--', 'echo', 'ok'], {
         timeout: 10_000, env: getLimaEnv(),
@@ -230,7 +257,8 @@ async function waitForSsh(instanceName: string, maxRetries = 5): Promise<boolean
       return true;
     } catch {
       if (i < maxRetries - 1) {
-        await new Promise(r => setTimeout(r, 2000));
+        const delay = Math.min(1000 * Math.pow(2, i), 10_000);
+        await new Promise(r => setTimeout(r, delay));
       }
     }
   }
@@ -253,8 +281,8 @@ export async function ensureRunning(
 
   if (instance.status === 'Running') {
     progress('Waiting for SSH…');
-    if (!await waitForSsh(instanceName)) {
-      return { success: false, instanceName, error: 'VM is running but SSH is not responding' };
+    if (!await waitForSsh(instanceName, 10, progress)) {
+      return { success: false, instanceName, error: 'VM is running but SSH is not responding after multiple attempts. The VM may need to be recreated.' };
     }
     return { success: true, instanceName };
   }
@@ -270,6 +298,7 @@ export async function ensureRunning(
     if (!startResult.success) {
       return { success: false, instanceName, error: startResult.error };
     }
+    resetSetupTracking(instanceName);
     return { success: true, instanceName };
   }
 
@@ -279,12 +308,16 @@ export async function ensureRunning(
     if (!startResult.success) {
       return { success: false, instanceName, error: startResult.error };
     }
+    resetSetupTracking(instanceName);
     return { success: true, instanceName };
   }
 
   // Broken — delete and recreate
   progress('Recreating sandbox VM…');
-  await deleteInstance(instanceName);
+  const deleteResult = await deleteInstance(instanceName);
+  if (!deleteResult.success) {
+    return { success: false, instanceName, error: `Cannot recreate VM: failed to delete broken instance. ${deleteResult.error}` };
+  }
   const createResult = await createInstance(projectPath, overrides);
   if (!createResult.success) {
     return { success: false, instanceName, error: createResult.error };
@@ -294,6 +327,7 @@ export async function ensureRunning(
   if (!startResult.success) {
     return { success: false, instanceName, error: startResult.error };
   }
+  resetSetupTracking(instanceName);
   return { success: true, instanceName };
 }
 

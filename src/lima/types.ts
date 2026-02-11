@@ -25,7 +25,7 @@ export interface LimaConfig {
 
 export interface SandboxStatus {
   available: boolean;
-  vmStatus: 'Running' | 'Stopped' | 'NotCreated' | 'Unavailable';
+  vmStatus: 'Running' | 'Stopped' | 'Broken' | 'NotCreated' | 'Unavailable';
   instanceName?: string;
   memory?: number;
   disk?: number;

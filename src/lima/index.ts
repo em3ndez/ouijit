@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import type { SandboxStatus } from './types';
 import { isLimaInstalled, getInstance, getInstanceName, stopInstance, deleteInstance, startInstance, createInstance, stopAllInstances, ensureRunning } from './manager';
-import { spawnSandboxedPty, cleanupSandboxPtys } from './spawn';
+import { spawnSandboxedPty, cleanupSandboxPtys, resetSetupTracking } from './spawn';
 import { getSandboxConfig, setSandboxConfig } from '../projectSettings';
 
 export { spawnSandboxedPty, isSandboxPty, writeSandboxPty, resizeSandboxPty, killSandboxPty } from './spawn';
@@ -26,6 +26,9 @@ export function registerLimaHandlers(mainWindow: BrowserWindow): void {
         break;
       case 'Stopped':
         vmStatus = 'Stopped';
+        break;
+      case 'Broken':
+        vmStatus = 'Broken';
         break;
       case 'NotFound':
         vmStatus = 'NotCreated';
@@ -114,6 +117,7 @@ export function registerLimaHandlers(mainWindow: BrowserWindow): void {
         return { success: false, error: startResult.error };
       }
 
+      resetSetupTracking(instanceName);
       sendProgress('VM recreated successfully');
       return { success: true };
     } catch (error) {

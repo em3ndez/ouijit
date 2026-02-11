@@ -1156,6 +1156,7 @@ async function buildSandboxDropdownContent(
   const vmStatusMap: Record<string, string> = {
     'Running': 'Running',
     'Stopped': 'Stopped',
+    'Broken': 'Broken',
     'NotCreated': 'Not created',
     'Unavailable': 'Unavailable',
   };
@@ -1212,6 +1213,11 @@ async function buildSandboxDropdownContent(
       const vmHint = document.createElement('div');
       vmHint.className = 'sandbox-dropdown-vm-hint';
       vmHint.textContent = 'Started automatically when you open a sandbox terminal';
+      detailsContainer.appendChild(vmHint);
+    } else if (s.vmStatus === 'Broken') {
+      const vmHint = document.createElement('div');
+      vmHint.className = 'sandbox-dropdown-vm-hint';
+      vmHint.textContent = 'VM is in a broken state. Recreate to fix.';
       detailsContainer.appendChild(vmHint);
     } else if (s.vmStatus === 'Running') {
       const vmHint = document.createElement('div');
@@ -1282,10 +1288,10 @@ async function buildSandboxDropdownContent(
   updateDetailRows(status);
 
   // Action buttons container
-  const vmExists = status.vmStatus === 'Running' || status.vmStatus === 'Stopped';
+  const vmExists = status.vmStatus === 'Running' || status.vmStatus === 'Stopped' || status.vmStatus === 'Broken';
 
   // Start VM button (when stopped or not created)
-  if (status.vmStatus === 'Stopped' || status.vmStatus === 'NotCreated') {
+  if (status.vmStatus === 'Stopped' || status.vmStatus === 'Broken' || status.vmStatus === 'NotCreated') {
     const startBtn = document.createElement('button');
     startBtn.className = 'sandbox-dropdown-stop-btn';
     startBtn.textContent = 'Start VM';
@@ -1370,8 +1376,8 @@ async function buildSandboxDropdownContent(
     });
     dropdown.appendChild(recreateBtn);
 
-    // Delete VM button (only when stopped, with confirmation)
-    if (status.vmStatus === 'Stopped') {
+    // Delete VM button (when stopped or broken, with confirmation)
+    if (status.vmStatus === 'Stopped' || status.vmStatus === 'Broken') {
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'sandbox-dropdown-delete-btn';
       deleteBtn.textContent = 'Delete VM';
@@ -1448,7 +1454,7 @@ async function buildSandboxDropdownContent(
   // Hint
   const hint = document.createElement('div');
   hint.className = 'sandbox-dropdown-hint';
-  hint.textContent = 'Runs once after VM creation';
+  hint.textContent = 'Runs once per VM session';
   dropdown.appendChild(hint);
 
   // Render lucide icons in the dropdown
