@@ -876,7 +876,7 @@ body.platform-darwin:not(.is-fullscreen) .theatre-header-content {
 }
 
 .theatre-terminal-btn {
-  @apply w-8 h-8 flex items-center justify-center bg-background-secondary border border-border rounded-md text-text-secondary transition-all duration-150 ease-out ml-auto;
+  @apply w-8 h-8 flex items-center justify-center bg-background-secondary border border-border rounded-md text-text-secondary transition-all duration-150 ease-out ml-3;
   -webkit-app-region: no-drag;
 }
 
@@ -885,6 +885,19 @@ body.platform-darwin:not(.is-fullscreen) .theatre-header-content {
 }
 
 .theatre-terminal-btn svg {
+  @apply w-4 h-4;
+}
+
+.theatre-newtask-btn {
+  @apply w-8 h-8 flex items-center justify-center bg-background-secondary border border-border rounded-md text-text-secondary transition-all duration-150 ease-out ml-3;
+  -webkit-app-region: no-drag;
+}
+
+.theatre-newtask-btn:hover {
+  @apply bg-background-tertiary text-text-primary;
+}
+
+.theatre-newtask-btn svg {
   @apply w-4 h-4;
 }
 
@@ -1139,16 +1152,16 @@ body.platform-darwin:not(.is-fullscreen) .theatre-header-content {
 }
 
 .theatre-exit-btn {
-  @apply w-8 h-8 flex items-center justify-center bg-background-secondary border border-border rounded-md text-text-secondary transition-all duration-150 ease-out ml-3;
+  @apply w-7 h-7 flex items-center justify-center p-0 bg-transparent border-none rounded-md text-text-secondary opacity-70 transition-all duration-150 ease-out mr-2;
   -webkit-app-region: no-drag;
 }
 
 .theatre-exit-btn:hover {
-  @apply bg-background-tertiary text-text-primary;
+  @apply bg-white/[0.08] text-text-primary opacity-100;
 }
 
 .theatre-exit-btn svg {
-  @apply w-4 h-4;
+  @apply w-3.5 h-3.5;
 }
 
 /* ==========================================

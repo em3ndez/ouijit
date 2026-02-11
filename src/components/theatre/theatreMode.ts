@@ -99,6 +99,15 @@ export async function enterTheatreMode(
       });
     }
 
+    // Wire up new task button (opens task overlay)
+    const newTaskBtn = headerContent.querySelector('.theatre-newtask-btn');
+    if (newTaskBtn) {
+      newTaskBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        createNewAgentShell();
+      });
+    }
+
     // Wire up terminal button (opens new shell)
     const terminalBtn = headerContent.querySelector('.theatre-terminal-btn');
     if (terminalBtn) {
@@ -515,6 +524,15 @@ export async function restoreTheatreMode(
       scriptsBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleLaunchDropdown();
+      });
+    }
+
+    // Wire up new task button (opens task overlay)
+    const newTaskBtn = headerContent.querySelector('.theatre-newtask-btn');
+    if (newTaskBtn) {
+      newTaskBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        createNewAgentShell();
       });
     }
 

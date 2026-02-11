@@ -23,14 +23,14 @@ export function buildTheatreHeader(): string {
 
   return `
     <div class="theatre-header-content">
+      <button class="theatre-exit-btn" title="Exit theatre mode">
+        <i data-lucide="arrow-left"></i>
+      </button>
       ${icon}
       <div class="theatre-project-info">
         <span class="theatre-project-name">${project.name}</span>
         <span class="theatre-project-path">${project.path}</span>
       </div>
-      <button class="theatre-terminal-btn" title="New terminal">
-        <i data-lucide="terminal"></i>
-      </button>
       <div class="theatre-sandbox-wrapper" style="display: none;">
         <button class="theatre-sandbox-btn" title="Sandbox">
           <i data-lucide="box"></i>
@@ -43,8 +43,11 @@ export function buildTheatreHeader(): string {
           <i data-lucide="chevron-down" class="theatre-scripts-caret"></i>
         </button>
       </div>
-      <button class="theatre-exit-btn" title="Exit theatre mode">
-        <i data-lucide="minimize-2"></i>
+      <button class="theatre-terminal-btn" title="New terminal">
+        <i data-lucide="terminal"></i>
+      </button>
+      <button class="theatre-newtask-btn" title="New task">
+        <i data-lucide="plus"></i>
       </button>
     </div>
   `;
