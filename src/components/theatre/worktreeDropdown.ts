@@ -7,8 +7,8 @@ import { MAX_THEATRE_TERMINALS } from './state';
 import { projectPath, terminals, invalidateTaskList } from './signals';
 import { showToast } from '../importDialog';
 import { theatreRegistry } from './helpers';
-import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../../utils/hotkeys';
 import { buildTaskFormHtml, setupTaskForm, type TaskFormValues } from './taskForm';
+import { showDialog } from '../../utils/dialog';
 
 /**
  * Show a simple prompt dialog for naming a worktree
@@ -27,67 +27,33 @@ async function showWorktreeNamePrompt(): Promise<TaskFormValues | null> {
     }
   }
 
-  return new Promise((resolve) => {
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+  let formHandle: ReturnType<typeof setupTaskForm> | undefined;
 
-    const dialog = document.createElement('div');
-    dialog.className = 'import-dialog new-task-dialog';
-
-    dialog.innerHTML = `
+  return showDialog<TaskFormValues>({
+    content: `
       <form class="new-task-composer">
         ${buildTaskFormHtml(limaAvailable)}
       </form>
-    `;
+    `,
+    className: 'new-task-dialog',
+    onMount({ dialog, resolve, cancel }) {
+      formHandle = setupTaskForm(dialog, currentProjectPath, limaAvailable);
+      const form = dialog.querySelector('.new-task-composer') as HTMLFormElement;
 
-    overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (!formHandle!.isValid()) return;
+        resolve(formHandle!.getValues());
+      });
 
-    const formHandle = setupTaskForm(dialog, currentProjectPath, limaAvailable);
-    const form = dialog.querySelector('.new-task-composer') as HTMLFormElement;
+      dialog.querySelector('[data-action="cancel"]')?.addEventListener('click', cancel);
 
-    const cleanup = () => {
-      formHandle.cleanup();
-      unregisterHotkey('escape', Scopes.MODAL);
-      popScope();
-      dialog.classList.remove('import-dialog--visible');
-      overlay.classList.remove('modal-overlay--visible');
-      setTimeout(() => overlay.remove(), 150);
-    };
-
-    const handleCreate = () => {
-      if (!formHandle.isValid()) return;
-      const values = formHandle.getValues();
-      cleanup();
-      resolve(values);
-    };
-
-    const handleCancel = () => {
-      cleanup();
-      resolve(null);
-    };
-
-    // Form submission
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      handleCreate();
-    });
-
-    // Click outside to cancel
-    overlay.addEventListener('mousedown', (e) => {
-      if (e.target === overlay) handleCancel();
-    });
-
-    // Set up hotkey scope for modal
-    pushScope(Scopes.MODAL);
-    registerHotkey('escape', Scopes.MODAL, handleCancel);
-
-    // Animate in and focus
-    requestAnimationFrame(() => {
-      overlay.classList.add('modal-overlay--visible');
-      dialog.classList.add('import-dialog--visible');
-      formHandle.focus();
-    });
+      // Focus via formHandle instead of focusSelector
+      requestAnimationFrame(() => formHandle!.focus());
+    },
+    onCleanup() {
+      formHandle?.cleanup();
+    },
   });
 }
 
@@ -95,15 +61,8 @@ async function showWorktreeNamePrompt(): Promise<TaskFormValues | null> {
  * Show a confirmation dialog for deleting a task
  */
 function showDeleteConfirmDialog(taskName: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-
-    const dialog = document.createElement('div');
-    dialog.className = 'import-dialog';
-    dialog.style.maxWidth = '380px';
-
-    dialog.innerHTML = `
+  return showDialog<boolean>({
+    content: `
       <h2 class="import-dialog-title">Delete Task?</h2>
       <p class="import-dialog-text">
         This will permanently remove the worktree and branch for "<strong>${taskName}</strong>".
@@ -112,46 +71,13 @@ function showDeleteConfirmDialog(taskName: string): Promise<boolean> {
         <button class="btn btn-secondary" data-action="cancel">Cancel</button>
         <button class="btn btn-danger" data-action="delete">Delete</button>
       </div>
-    `;
-
-    overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
-
-    const cleanup = () => {
-      unregisterHotkey('escape', Scopes.MODAL);
-      popScope();
-      dialog.classList.remove('import-dialog--visible');
-      overlay.classList.remove('modal-overlay--visible');
-      setTimeout(() => overlay.remove(), 150);
-    };
-
-    const handleDelete = () => {
-      cleanup();
-      resolve(true);
-    };
-
-    const handleCancel = () => {
-      cleanup();
-      resolve(false);
-    };
-
-    // Event listeners
-    dialog.querySelector('[data-action="delete"]')?.addEventListener('click', handleDelete);
-    dialog.querySelector('[data-action="cancel"]')?.addEventListener('click', handleCancel);
-    overlay.addEventListener('mousedown', (e) => {
-      if (e.target === overlay) handleCancel();
-    });
-
-    // Set up hotkey scope for modal
-    pushScope(Scopes.MODAL);
-    registerHotkey('escape', Scopes.MODAL, handleCancel);
-
-    // Animate in
-    requestAnimationFrame(() => {
-      overlay.classList.add('modal-overlay--visible');
-      dialog.classList.add('import-dialog--visible');
-    });
-  });
+    `,
+    style: { maxWidth: '380px' },
+    onMount({ dialog, resolve, cancel }) {
+      dialog.querySelector('[data-action="delete"]')?.addEventListener('click', () => resolve(true));
+      dialog.querySelector('[data-action="cancel"]')?.addEventListener('click', cancel);
+    },
+  }).then((r) => r ?? false);
 }
 
 /**

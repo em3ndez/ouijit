@@ -506,7 +506,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 /**
  * Cleanup function to be called when app is quitting
  */
-export function cleanupIpc(): void {
+export function cleanupIpc(opts?: { skipVm?: boolean }): void {
   cleanupAllPtys();
-  limaPlugin.cleanup();
+  if (!opts?.skipVm) limaPlugin.cleanup();
 }
