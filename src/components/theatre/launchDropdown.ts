@@ -7,11 +7,12 @@ import { theatreState } from './state';
 import { projectPath, projectData, launchDropdownVisible } from './signals';
 import { stringToColor, getInitials } from '../../utils/projectIcon';
 import { showToast } from '../importDialog';
-import { showHookConfigDialog } from '../hookConfigDialog';
+import { showHookConfigDialog, type HookConfigDialogOptions } from '../hookConfigDialog';
 
 const HOOK_HINTS: Record<string, string> = {
   start: 'Runs when a new task is created',
   continue: 'Runs when reopening an existing task',
+  run: 'Runs when you click the play button',
   cleanup: 'Runs before archiving a task',
 };
 
@@ -67,6 +68,7 @@ function buildHookRow(
   label: string,
   hook: ScriptHook | undefined,
   path: string,
+  options?: HookConfigDialogOptions,
 ): HTMLElement {
   const row = document.createElement('div');
   row.className = 'hook-row';
@@ -95,7 +97,7 @@ function buildHookRow(
     editBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       hideLaunchDropdown();
-      const result = await showHookConfigDialog(path, hookType, hook);
+      const result = await showHookConfigDialog(path, hookType, hook, options);
       if (result?.saved && result.hook) {
         showToast(`${label} updated`, 'success');
       }
@@ -108,7 +110,7 @@ function buildHookRow(
     configureBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       hideLaunchDropdown();
-      const result = await showHookConfigDialog(path, hookType, undefined);
+      const result = await showHookConfigDialog(path, hookType, undefined, options);
       if (result?.saved && result.hook) {
         showToast(`${label} configured`, 'success');
       }
@@ -140,8 +142,11 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
 
   dropdown.innerHTML = '';
 
-  // Fetch hooks
-  const hooks = await window.api.hooks.get(path);
+  // Fetch hooks and settings
+  const [hooks, settings] = await Promise.all([
+    window.api.hooks.get(path),
+    window.api.getProjectSettings(path),
+  ]);
 
   // Section header
   const header = document.createElement('div');
@@ -155,6 +160,9 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
 
   hooksContainer.appendChild(buildHookRow('start', 'Start', hooks.start, path));
   hooksContainer.appendChild(buildHookRow('continue', 'Continue', hooks.continue, path));
+  hooksContainer.appendChild(buildHookRow('run', 'Run', hooks.run, path, {
+    killExistingOnRun: settings.killExistingOnRun,
+  }));
   hooksContainer.appendChild(buildHookRow('cleanup', 'Cleanup', hooks.cleanup, path));
 
   dropdown.appendChild(hooksContainer);
