@@ -1281,70 +1281,62 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
   await new Promise(resolve => requestAnimationFrame(resolve));
   fitAddon.fit();
 
-  // For sandbox opens without a loading card, add the terminal to signals immediately
-  // so the card is fully integrated into the stack (hotkeys, cycling, styling)
-  // during the slow VM startup. The ptyId gets updated after spawn completes.
-  const taskSandboxedEarly = options?.sandboxed ?? options?.existingWorktree?.sandboxed;
-  const addedEarly = !loadingCard && taskSandboxedEarly;
-  let theatreTerminal: TheatreTerminal | null = null;
+  // Create TheatreTerminal immediately with placeholder ptyId so the card is
+  // fully integrated into the stack (hotkeys, cycling, positioning) before
+  // PTY spawn — which may take time for sandbox VM startup.
+  const theatreTerminal: TheatreTerminal = {
+    ptyId: '' as PtyId,
+    projectPath: currentProjectPath,
+    command: undefined,
+    label,
+    terminal,
+    fitAddon,
+    container: card,
+    cleanupData: null,
+    cleanupExit: null,
+    resizeObserver: null,
+    summary: '',
+    summaryType: 'idle',
+    outputBuffer: '',
+    lastOscTitle: '',
+    isWorktree: !!worktreeInfo,
+    worktreePath: worktreeInfo?.path,
+    worktreeBranch: worktreeInfo?.branch,
+    readyToShip: worktreeInfo?.readyToShip,
+    gitStatus: null,
+    diffPanelOpen: false,
+    diffPanelFiles: [],
+    diffPanelSelectedFile: null,
+    diffPanelMode: 'uncommitted',
+    runnerPanelOpen: false,
+    runnerPtyId: null,
+    runnerTerminal: null,
+    runnerFitAddon: null,
+    runnerLabel: '',
+    runnerCommand: null,
+    runnerStatus: 'idle',
+    runnerCleanupData: null,
+    runnerCleanupExit: null,
+  };
 
-  if (addedEarly) {
-    theatreTerminal = {
-      ptyId: '' as PtyId,
-      projectPath: currentProjectPath,
-      command: undefined,
-      label,
-      terminal,
-      fitAddon,
-      container: card,
-      cleanupData: null,
-      cleanupExit: null,
-      resizeObserver: null,
-      summary: '',
-      summaryType: 'idle',
-      outputBuffer: '',
-      lastOscTitle: '',
-      isWorktree: !!worktreeInfo,
-      worktreePath: worktreeInfo?.path,
-      worktreeBranch: worktreeInfo?.branch,
-      readyToShip: worktreeInfo?.readyToShip,
-      gitStatus: null,
-      diffPanelOpen: false,
-      diffPanelFiles: [],
-      diffPanelSelectedFile: null,
-      diffPanelMode: 'uncommitted',
-      runnerPanelOpen: false,
-      runnerPtyId: null,
-      runnerTerminal: null,
-      runnerFitAddon: null,
-      runnerLabel: '',
-      runnerCommand: null,
-      runnerStatus: 'idle',
-      runnerCleanupData: null,
-      runnerCleanupExit: null,
-    };
+  // Set up close button and card click handlers
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const idx = terminals.value.indexOf(theatreTerminal);
+    if (idx !== -1) closeTheatreTerminal(idx);
+  });
+  card.addEventListener('click', () => {
+    const idx = terminals.value.indexOf(theatreTerminal);
+    if (idx !== -1 && idx !== activeIndex.value) switchToTheatreTerminal(idx);
+  });
 
-    // Set up close button and card click handlers
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const idx = terminals.value.indexOf(theatreTerminal!);
-      if (idx !== -1) closeTheatreTerminal(idx);
-    });
-    card.addEventListener('click', () => {
-      const idx = terminals.value.indexOf(theatreTerminal!);
-      if (idx !== -1 && idx !== activeIndex.value) switchToTheatreTerminal(idx);
-    });
+  // Set up card action buttons (runner pill, close-task for worktrees)
+  setupCardActions(theatreTerminal);
 
-    // Set up card action buttons and sandbox dot
-    setupCardActions(theatreTerminal);
-    const dot = card.querySelector('.theatre-card-status-dot');
-    if (dot) dot.classList.add('theatre-card-status-dot--sandboxed');
-
-    // Add to signals — effects handle updateCardStack, empty state, focus
-    terminals.value = [...terminals.value, theatreTerminal];
-    activeIndex.value = terminals.value.length - 1;
-    terminal.focus();
-  }
+  // Add to signals — effects handle updateCardStack, empty state, focus
+  terminals.value = [...terminals.value, theatreTerminal];
+  activeIndex.value = terminals.value.length - 1;
+  terminal.focus();
 
   // Determine command to run - use start/continue hooks for worktree terminals if configured
   // - start hook: runs on new task creation (options.useWorktree)
@@ -1380,6 +1372,12 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
   const limaStatus = await window.api.lima.status(currentProjectPath);
   const taskSandboxed = options?.sandboxed ?? options?.existingWorktree?.sandboxed;
   const useSandbox = limaStatus.available && taskSandboxed === true;
+
+  // Mark sandboxed terminals with a ring on the status dot
+  if (useSandbox) {
+    const dot = card.querySelector('.theatre-card-status-dot');
+    if (dot) dot.classList.add('theatre-card-status-dot--sandboxed');
+  }
 
   // Spawn PTY
   const spawnOptions: PtySpawnOptions = {
@@ -1420,8 +1418,8 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
 
     }
 
-    // If terminal was closed during loading (user clicked X), clean up and bail
-    if (addedEarly && !terminals.value.includes(theatreTerminal!)) {
+    // If terminal was closed during spawn (user clicked X), clean up and bail
+    if (!terminals.value.includes(theatreTerminal)) {
       if (result.success && result.ptyId) window.api.pty.kill(result.ptyId);
       return false;
     }
@@ -1429,113 +1427,16 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
     if (!result.success || !result.ptyId) {
       terminal.writeln(`\x1b[31mFailed to start terminal: ${result.error || 'Unknown error'}\x1b[0m`);
       terminal.writeln(`\x1b[90mThis card will close in 10 seconds.\x1b[0m`);
-      if (addedEarly && theatreTerminal) {
-        // Card is in signals — use closeTheatreTerminal for clean removal
-        setTimeout(() => {
-          const idx = terminals.value.indexOf(theatreTerminal!);
-          if (idx !== -1) closeTheatreTerminal(idx);
-        }, 10_000);
-      } else {
-        setTimeout(() => {
-          card.remove();
-          terminal.dispose();
-        }, 10_000);
-      }
+      setTimeout(() => {
+        const idx = terminals.value.indexOf(theatreTerminal);
+        if (idx !== -1) closeTheatreTerminal(idx);
+      }, 10_000);
       return false;
     }
 
-    // If added early, update the existing TheatreTerminal in-place
-    if (addedEarly && theatreTerminal) {
-      theatreTerminal.ptyId = result.ptyId;
-      theatreTerminal.command = startCommand;
-
-      // Set up resize observer
-      theatreTerminal.resizeObserver = new ResizeObserver(() => {
-        debouncedResize(result.ptyId!, terminal, fitAddon);
-      });
-      theatreTerminal.resizeObserver.observe(xtermContainer);
-
-      // Set up data listener
-      theatreTerminal.cleanupData = window.api.pty.onData(result.ptyId, (data) => {
-        terminal.write(data);
-        theatreTerminal!.outputBuffer = (theatreTerminal!.outputBuffer + data).slice(-2000);
-
-        const oscMatches = data.matchAll(/\x1b\]0;([^\x07]*)\x07/g);
-        for (const match of oscMatches) {
-          const newTitle = match[1];
-          if (newTitle !== theatreTerminal!.lastOscTitle) {
-            theatreTerminal!.lastOscTitle = newTitle;
-            updateTerminalCardLabel(theatreTerminal!);
-          }
-        }
-
-        scheduleTerminalSummaryUpdate(theatreTerminal!);
-        if (projectPath.value) {
-          scheduleTerminalGitStatusRefresh(theatreTerminal!, updateTerminalCardLabel);
-        }
-      });
-
-      // Set up exit listener
-      theatreTerminal.cleanupExit = window.api.pty.onExit(result.ptyId, (exitCode) => {
-        terminal.writeln('');
-        const exitColor = exitCode === 0 ? '32' : '31';
-        terminal.writeln(`\x1b[${exitColor}m● Process exited with code ${exitCode}\x1b[0m`);
-        theatreTerminal!.summary = exitCode === 0 ? 'Exited' : `Exit ${exitCode}`;
-        theatreTerminal!.summaryType = exitCode === 0 ? 'idle' : 'error';
-        updateTerminalCardLabel(theatreTerminal!);
-      });
-
-      // Forward terminal input
-      terminal.onData((data) => {
-        window.api.pty.write(result.ptyId!, data);
-      });
-
-      // Fetch initial git status
-      refreshTerminalGitStatus(theatreTerminal).then(() => {
-        updateTerminalCardLabel(theatreTerminal!);
-      });
-
-      terminal.focus();
-      return true;
-    }
-
-    // Normal path: create TheatreTerminal after spawn
-    theatreTerminal = {
-      ptyId: result.ptyId,
-      projectPath: currentProjectPath,
-      command: startCommand,
-      label,
-      terminal,
-      fitAddon,
-      container: card,
-      cleanupData: null,
-      cleanupExit: null,
-      resizeObserver: null,
-      summary: '',
-      summaryType: 'idle',
-      outputBuffer: '',
-      lastOscTitle: '',
-      isWorktree: !!worktreeInfo,
-      worktreePath: worktreeInfo?.path,
-      worktreeBranch: worktreeInfo?.branch,
-      readyToShip: worktreeInfo?.readyToShip,
-      // Per-terminal git status and diff panel state
-      gitStatus: null,
-      diffPanelOpen: false,
-      diffPanelFiles: [],
-      diffPanelSelectedFile: null,
-      diffPanelMode: 'uncommitted',
-      // Runner panel state
-      runnerPanelOpen: false,
-      runnerPtyId: null,
-      runnerTerminal: null,
-      runnerFitAddon: null,
-      runnerLabel: '',
-      runnerCommand: null,
-      runnerStatus: 'idle',
-      runnerCleanupData: null,
-      runnerCleanupExit: null,
-    };
+    // Patch ptyId and set up listeners now that PTY is ready
+    theatreTerminal.ptyId = result.ptyId;
+    theatreTerminal.command = startCommand;
 
     // Set up resize observer with debouncing to prevent zsh artifacts during animations
     theatreTerminal.resizeObserver = new ResizeObserver(() => {
@@ -1546,25 +1447,20 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
     // Set up data listener
     theatreTerminal.cleanupData = window.api.pty.onData(result.ptyId, (data) => {
       terminal.write(data);
+      theatreTerminal.outputBuffer = (theatreTerminal.outputBuffer + data).slice(-2000);
 
-      // Track output for summary analysis (rolling buffer of last 2000 chars)
-      theatreTerminal!.outputBuffer = (theatreTerminal!.outputBuffer + data).slice(-2000);
-
-      // Extract OSC title sequences (e.g., \x1b]0;Title Here\x07)
       const oscMatches = data.matchAll(/\x1b\]0;([^\x07]*)\x07/g);
       for (const match of oscMatches) {
         const newTitle = match[1];
-        if (newTitle !== theatreTerminal!.lastOscTitle) {
-          theatreTerminal!.lastOscTitle = newTitle;
-          updateTerminalCardLabel(theatreTerminal!);
+        if (newTitle !== theatreTerminal.lastOscTitle) {
+          theatreTerminal.lastOscTitle = newTitle;
+          updateTerminalCardLabel(theatreTerminal);
         }
       }
 
-      scheduleTerminalSummaryUpdate(theatreTerminal!);
-
+      scheduleTerminalSummaryUpdate(theatreTerminal);
       if (projectPath.value) {
-        // Only schedule a refresh of this terminal's git status (not all terminals)
-        scheduleTerminalGitStatusRefresh(theatreTerminal!, updateTerminalCardLabel);
+        scheduleTerminalGitStatusRefresh(theatreTerminal, updateTerminalCardLabel);
       }
     });
 
@@ -1573,11 +1469,9 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
       terminal.writeln('');
       const exitColor = exitCode === 0 ? '32' : '31';
       terminal.writeln(`\x1b[${exitColor}m● Process exited with code ${exitCode}\x1b[0m`);
-
-      // Update summary to show exit status
-      theatreTerminal!.summary = exitCode === 0 ? 'Exited' : `Exit ${exitCode}`;
-      theatreTerminal!.summaryType = exitCode === 0 ? 'idle' : 'error';
-      updateTerminalCardLabel(theatreTerminal!);
+      theatreTerminal.summary = exitCode === 0 ? 'Exited' : `Exit ${exitCode}`;
+      theatreTerminal.summaryType = exitCode === 0 ? 'idle' : 'error';
+      updateTerminalCardLabel(theatreTerminal);
     });
 
     // Forward terminal input
@@ -1585,42 +1479,10 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
       window.api.pty.write(result.ptyId!, data);
     });
 
-    // Close button handler
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const idx = terminals.value.indexOf(theatreTerminal!);
-      if (idx !== -1) {
-        closeTheatreTerminal(idx);
-      }
-    });
-
-    // Card click handler (to bring to front)
-    card.addEventListener('click', () => {
-      const idx = terminals.value.indexOf(theatreTerminal!);
-      if (idx !== -1 && idx !== activeIndex.value) {
-        switchToTheatreTerminal(idx);
-      }
-    });
-
-    // Set up card action buttons (runner pill, close-task for worktrees)
-    setupCardActions(theatreTerminal);
-
-    // Mark sandboxed terminals with a ring on the status dot
-    if (useSandbox) {
-      const dot = card.querySelector('.theatre-card-status-dot');
-      if (dot) {
-        dot.classList.add('theatre-card-status-dot--sandboxed');
-      }
-    }
-
     // Fetch initial git status for this terminal
     refreshTerminalGitStatus(theatreTerminal).then(() => {
-      updateTerminalCardLabel(theatreTerminal!);
+      updateTerminalCardLabel(theatreTerminal);
     });
-
-    // Add terminal to list and set as active - effects will handle updateCardStack
-    terminals.value = [...terminals.value, theatreTerminal];
-    activeIndex.value = terminals.value.length - 1;
 
     terminal.focus();
     return true;
@@ -1630,14 +1492,8 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
       setSandboxButtonStarting(false);
     }
     terminal.writeln(`\x1b[31mError: ${error instanceof Error ? error.message : 'Unknown error'}\x1b[0m`);
-    if (addedEarly && theatreTerminal) {
-      // Card is in signals — remove via closeTheatreTerminal
-      const idx = terminals.value.indexOf(theatreTerminal);
-      if (idx !== -1) closeTheatreTerminal(idx);
-    } else {
-      card.remove();
-      terminal.dispose();
-    }
+    const idx = terminals.value.indexOf(theatreTerminal);
+    if (idx !== -1) closeTheatreTerminal(idx);
     return false;
   }
 }
