@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { createIcons, icons } from 'lucide';
-import type { Project, ChangedFile, ActiveSession } from '../../types';
+import type { Project, ActiveSession } from '../../types';
 import {
   theatreState,
   projectSessions,
@@ -33,13 +33,11 @@ import {
   refreshAllTerminalGitStatus,
 } from './gitStatus';
 import {
-  toggleDiffPanel,
   hideDiffPanel,
   buildDiffPanelHtml,
-  selectDiffFile,
-  toggleDiffFileDropdown,
   hideTerminalDiffPanel,
-  selectTerminalDiffFile,
+  wireSidebarNavigation,
+  loadAllDiffs,
 } from './diffPanel';
 import {
   addTheatreTerminal,
@@ -197,23 +195,18 @@ export async function enterTheatreMode(
 
             const panel = cardBody.querySelector('.diff-panel');
             if (panel) {
-              // Wire up file selector dropdown toggle
-              const fileSelector = panel.querySelector('.diff-file-selector');
-              if (fileSelector) {
-                fileSelector.addEventListener('click', (e) => {
-                  e.stopPropagation();
-                  toggleDiffFileDropdown();
-                });
-              }
+              const termRef = term; // Capture for closure
 
               // Wire up close button
               const closeBtn = panel.querySelector('.diff-panel-close');
               if (closeBtn) {
-                const termRef = term; // Capture for closure
                 closeBtn.addEventListener('click', () => {
                   hideTerminalDiffPanel(termRef);
                 });
               }
+
+              // Wire sidebar navigation
+              wireSidebarNavigation(panel);
 
               // Add class to card
               term.container.classList.add('diff-panel-open');
@@ -223,11 +216,16 @@ export async function enterTheatreMode(
                 panel.classList.add('diff-panel--visible');
               });
 
-              // Select the previously selected file (or first file)
-              const fileToSelect = term.diffPanelSelectedFile || term.diffPanelFiles[0]?.path;
-              if (fileToSelect) {
-                selectTerminalDiffFile(term, fileToSelect);
-              }
+              // Load all diffs
+              const isWorktreeMode = term.diffPanelMode === 'worktree';
+              const gitPath = term.worktreePath || term.projectPath;
+              const basePath = projectPath.value;
+              loadAllDiffs(panel, term.diffPanelFiles, (filePath) => {
+                if (isWorktreeMode && basePath && termRef.worktreeBranch) {
+                  return window.api.worktree.getFileDiff(basePath, termRef.worktreeBranch, filePath);
+                }
+                return window.api.getFileDiff(gitPath, filePath);
+              });
             }
           }
         }
@@ -306,7 +304,6 @@ export async function enterTheatreMode(
   registerHotkey(platformHotkey('mod+i'), Scopes.THEATRE, () => addTheatreTerminal());
   registerHotkey(platformHotkey('mod+p'), Scopes.THEATRE, () => theatreRegistry.playOrToggleRunner?.());
   registerHotkey(platformHotkey('mod+d'), Scopes.THEATRE, () => theatreRegistry.toggleActiveDiffPanel?.());
-  registerHotkey(platformHotkey('mod+shift+s'), Scopes.THEATRE, () => theatreRegistry.toggleActiveShipItPanel?.());
   registerHotkey(platformHotkey('mod+w'), Scopes.THEATRE, () => {
     if (terminals.value.length > 0) {
       closeTheatreTerminal(activeIndex.value);
@@ -435,7 +432,6 @@ export function exitTheatreMode(): void {
   unregisterHotkey(platformHotkey('mod+i'), Scopes.THEATRE);
   unregisterHotkey(platformHotkey('mod+p'), Scopes.THEATRE);
   unregisterHotkey(platformHotkey('mod+d'), Scopes.THEATRE);
-  unregisterHotkey(platformHotkey('mod+shift+s'), Scopes.THEATRE);
   unregisterHotkey(platformHotkey('mod+w'), Scopes.THEATRE);
   for (let i = 1; i <= 9; i++) {
     unregisterHotkey(platformHotkey(`mod+${i}`), Scopes.THEATRE);
@@ -650,7 +646,6 @@ export async function restoreTheatreMode(
   registerHotkey(platformHotkey('mod+i'), Scopes.THEATRE, () => addTheatreTerminal());
   registerHotkey(platformHotkey('mod+p'), Scopes.THEATRE, () => theatreRegistry.playOrToggleRunner?.());
   registerHotkey(platformHotkey('mod+d'), Scopes.THEATRE, () => theatreRegistry.toggleActiveDiffPanel?.());
-  registerHotkey(platformHotkey('mod+shift+s'), Scopes.THEATRE, () => theatreRegistry.toggleActiveShipItPanel?.());
   registerHotkey(platformHotkey('mod+w'), Scopes.THEATRE, () => {
     if (terminals.value.length > 0) {
       closeTheatreTerminal(activeIndex.value);
@@ -714,6 +709,9 @@ async function reconnectTheatreTerminal(session: ActiveSession, worktreeBranch?:
   const stack = document.querySelector('.theatre-stack');
   if (!stack) return;
   stack.appendChild(card);
+
+  // Render lucide icons now that card is in the DOM
+  createIcons({ icons, nameAttr: 'data-lucide', attrs: {}, nodes: [card] });
 
   const xtermContainer = card.querySelector('.terminal-xterm-container') as HTMLElement;
 
@@ -809,6 +807,7 @@ async function reconnectTheatreTerminal(session: ActiveSession, worktreeBranch?:
     summaryType: 'idle',
     outputBuffer: '',
     lastOscTitle: '',
+    sandboxed: !!session.sandboxed,
     taskId: session.taskId ?? null,
     worktreePath: session.worktreePath,
     worktreeBranch,
@@ -880,6 +879,12 @@ async function reconnectTheatreTerminal(session: ActiveSession, worktreeBranch?:
 
   // Set up card action buttons (runner pill for all, close-task for worktrees)
   setupCardActions(theatreTerminal);
+
+  // Mark sandboxed terminals with a ring on the status dot
+  if (theatreTerminal.sandboxed) {
+    const dot = card.querySelector('.theatre-card-status-dot');
+    if (dot) dot.classList.add('theatre-card-status-dot--sandboxed');
+  }
 
   // Update card label
   updateTerminalCardLabel(theatreTerminal);

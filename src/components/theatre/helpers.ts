@@ -24,10 +24,6 @@ interface TheatreRegistry {
   syncKanbanStatusDots: (() => void) | null;
   // From diffPanel
   toggleActiveDiffPanel: (() => Promise<void>) | null;
-  // From shipItPanel
-  showShipItPanel: ((term: TheatreTerminal) => Promise<void>) | null;
-  hideShipItPanel: ((term: TheatreTerminal) => void) | null;
-  toggleActiveShipItPanel: (() => Promise<void>) | null;
 }
 
 export const theatreRegistry: TheatreRegistry = {
@@ -38,9 +34,6 @@ export const theatreRegistry: TheatreRegistry = {
   closeTheatreTerminal: null,
   playOrToggleRunner: null,
   toggleActiveDiffPanel: null,
-  showShipItPanel: null,
-  hideShipItPanel: null,
-  toggleActiveShipItPanel: null,
 };
 
 /**
@@ -109,12 +102,9 @@ export function hideRunnerPanel(term: TheatreTerminal): void {
     panel.classList.remove('runner-panel--visible');
   }
 
-  term.container.classList.remove('runner-panel-open');
-  term.runnerPanelOpen = false;
+  // Remove active state from run button
+  const runBtn = term.container.querySelector('.card-tab-run');
+  if (runBtn) runBtn.classList.remove('card-tab--active');
 
-  // Refit main terminal after animation
-  setTimeout(() => {
-    term.fitAddon.fit();
-    window.api.pty.resize(term.ptyId, term.terminal.cols, term.terminal.rows);
-  }, 250);
+  term.runnerPanelOpen = false;
 }
