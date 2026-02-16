@@ -317,7 +317,10 @@ export async function enterTheatreMode(
     });
   }
 
-  // 5. Start periodic git status refresh (for long-running commands)
+  // 5. Show kanban board by default (after THEATRE scope so KANBAN scope stacks on top)
+  await showKanbanBoard();
+
+  // 6. Start periodic git status refresh (for long-running commands)
   if (project.hasGit) {
     theatreState.gitStatusPeriodicInterval = setInterval(() => {
       refreshAllTerminalGitStatus().then(() => {
@@ -659,7 +662,10 @@ export async function restoreTheatreMode(
     });
   }
 
-  // 5. Refresh git status immediately and start periodic refresh
+  // 5. Show kanban board by default (after THEATRE scope so KANBAN scope stacks on top)
+  await showKanbanBoard();
+
+  // 6. Refresh git status immediately and start periodic refresh
   if (project.hasGit) {
     // Immediate refresh so git info shows right away
     refreshAllTerminalGitStatus().then(() => {
@@ -688,7 +694,7 @@ async function reconnectTheatreTerminal(session: ActiveSession, worktreeBranch?:
     cursorBlink: true,
     cursorStyle: 'bar',
     fontSize: 13,
-    fontFamily: 'ui-monospace, "SF Mono", Menlo, Monaco, monospace',
+    fontFamily: 'Iosevka Term Extended, "SF Mono", Menlo, Monaco, monospace',
     lineHeight: 1.2,
     theme: getTerminalTheme(),
     allowTransparency: true,
@@ -905,7 +911,7 @@ async function reconnectRunnerToParent(
   // Create runner terminal (hidden until panel is opened)
   const runnerTerminal = new Terminal({
     theme: getTerminalTheme(),
-    fontFamily: 'SF Mono, Monaco, Menlo, monospace',
+    fontFamily: 'Iosevka Term Extended, SF Mono, Monaco, Menlo, monospace',
     fontSize: 13,
     lineHeight: 1.2,
     cursorBlink: false,

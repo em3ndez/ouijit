@@ -1,6 +1,22 @@
 @import "tailwindcss";
 @import "./styles/compare.css";
 
+@font-face {
+  font-family: 'Iosevka Extended';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/iosevka-extended-regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Iosevka Term Extended';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/iosevka-term-extended-regular.woff2') format('woff2');
+}
+
 /* ===================================
    ouijit - Apple-Inspired Design System
    Tailwind CSS v4 Theme Configuration
@@ -55,7 +71,7 @@
 
   /* Typography */
   --font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: 'SF Mono', Monaco, Menlo, monospace;
+  --font-mono: 'Iosevka Extended', 'SF Mono', Monaco, Menlo, monospace;
   --font-size-xs: 11px;
   --font-size-sm: 13px;
   --font-size-base: 15px;
@@ -1552,7 +1568,7 @@ body.platform-darwin:not(.is-fullscreen) .theatre-header-content {
 .theatre-stack-empty-hint-shortcut {
   display: inline-flex;
   align-items: center;
-  font-family: 'SF Mono', Monaco, Menlo, monospace;
+  font-family: 'Iosevka Extended', 'SF Mono', Monaco, Menlo, monospace;
   font-size: 16px;
   color: rgba(255, 255, 255, 0.25);
 }
@@ -1800,6 +1816,7 @@ body.kanban-open .theatre-stack {
 
 .kanban-card-detail-value {
   @apply text-text-primary truncate;
+  cursor: text;
 }
 
 .kanban-card-detail-value--clamp {
@@ -1808,6 +1825,12 @@ body.kanban-open .theatre-stack {
   -webkit-box-orient: vertical;
   overflow: hidden;
   white-space: normal;
+}
+
+.kanban-card-detail-value--full {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
 }
 
 .kanban-card-detail-value--placeholder {
@@ -1825,14 +1848,11 @@ body.kanban-open .theatre-stack {
   overflow-wrap: break-word;
 }
 
-.kanban-card-description-textarea {
-  @apply w-full font-sans text-xs text-text-primary bg-transparent border border-white/10 rounded p-1 outline-none resize-none;
-  min-height: 3lh;
-  -webkit-app-region: no-drag;
-}
-
-.kanban-card-description-textarea:focus {
-  @apply border-accent;
+.kanban-card-detail-value--editing {
+  @apply outline-none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  line-height: 1.5;
 }
 
 
