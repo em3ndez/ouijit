@@ -9,7 +9,7 @@ import type { PtyId, PtySpawnOptions, RunConfig, WorktreeInfo } from '../../type
 import {
   TheatreTerminal,
   SummaryType,
-  MAX_THEATRE_TERMINALS,
+  STACK_PAGE_SIZE,
   theatreState,
 } from './state';
 import { getTerminalGitPath, hideRunnerPanel, theatreRegistry } from './helpers';
@@ -18,6 +18,8 @@ import {
   projectData,
   terminals,
   activeIndex,
+  activeStackPage,
+  totalStackPages,
   invalidateTaskList,
 } from './signals';
 import { showToast } from '../importDialog';
@@ -43,6 +45,12 @@ export function setupTerminalAppHotkeys(terminal: Terminal): void {
 
     if (hasModifier && !event.altKey) {
       const key = event.key.toLowerCase();
+
+      // Mod+Shift+Arrow for page navigation
+      if (event.shiftKey && (key === 'arrowleft' || key === 'arrowright')) {
+        return false; // Let it bubble up to app hotkey handler
+      }
+
       // App hotkeys that should pass through to hotkeys-js
       const appHotkeys = ['n', 't', 'b', 'i', 'p', 'd', 's', 'w', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
       if (appHotkeys.includes(key)) {
@@ -367,19 +375,24 @@ export function showLoadingCardInStack(label: string): HTMLElement {
 
   const currentTerminals = terminals.value;
   const currentActiveIndex = activeIndex.value;
+  const page = activeStackPage.value;
+  const pageStart = page * STACK_PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + STACK_PAGE_SIZE, currentTerminals.length);
 
-  // Push existing terminals back by one position relative to their current position
+  // Push existing terminals on the current page back by one position
   currentTerminals.forEach((term, index) => {
-    term.container.classList.remove('theatre-card--active', 'theatre-card--back-1', 'theatre-card--back-2', 'theatre-card--back-3', 'theatre-card--back-4');
+    term.container.classList.remove('theatre-card--active', 'theatre-card--back-1', 'theatre-card--back-2', 'theatre-card--back-3', 'theatre-card--back-4', 'theatre-card--hidden');
 
-    if (index === currentActiveIndex) {
+    if (index < pageStart || index >= pageEnd) {
+      term.container.classList.add('theatre-card--hidden');
+    } else if (index === currentActiveIndex) {
       // Active card becomes back-1
       term.container.classList.add('theatre-card--back-1');
     } else {
-      // Calculate current back position and increment it
+      // Calculate current back position within page and increment it
       const diff = index < currentActiveIndex
         ? currentActiveIndex - index
-        : currentTerminals.length - index + currentActiveIndex;
+        : (pageEnd - pageStart) - (index - pageStart) + (currentActiveIndex - pageStart);
       // Add 1 to push it back further
       const newBackPosition = Math.min(diff + 1, 4);
       term.container.classList.add(`theatre-card--back-${newBackPosition}`);
@@ -390,8 +403,9 @@ export function showLoadingCardInStack(label: string): HTMLElement {
   const loadingCard = createLoadingCard(label);
   stack.appendChild(loadingCard);
 
-  // Adjust stack top position to account for the loading card + existing cards
-  const backCardCount = Math.min(currentTerminals.length, 4);
+  // Adjust stack top position to account for the loading card + existing cards on this page
+  const pageCardCount = pageEnd - pageStart;
+  const backCardCount = Math.min(pageCardCount, 4);
   const tabSpace = backCardCount * 24;
   stack.style.top = `${82 + tabSpace}px`;
 
@@ -1127,7 +1141,7 @@ export async function runDefaultInCard(term: TheatreTerminal): Promise<void> {
 }
 
 /**
- * Update card stack visual positions
+ * Update card stack visual positions (page-scoped)
  */
 export function updateCardStack(): void {
   const stack = document.querySelector('.theatre-stack') as HTMLElement;
@@ -1135,24 +1149,31 @@ export function updateCardStack(): void {
 
   const currentTerminals = terminals.value;
   const currentActiveIndex = activeIndex.value;
+  const page = activeStackPage.value;
+  const pageStart = page * STACK_PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + STACK_PAGE_SIZE, currentTerminals.length);
+  const pageSize = pageEnd - pageStart;
 
-  // Calculate number of back cards and adjust stack position
-  // Each back card needs 24px of space for its visible tab
-  const backCardCount = Math.min(currentTerminals.length - 1, 4);
+  // Calculate stack top based on actual back cards on this page
+  const pages = totalStackPages.value;
+  const backCardCount = Math.max(Math.min(pageSize - 1, 4), 0);
   const tabSpace = backCardCount * 24;
   stack.style.top = `${82 + tabSpace}px`;
 
-  // First pass: calculate back positions for all cards
+  // First pass: calculate back positions for cards on the current page
   const backPositions: { index: number; diff: number }[] = [];
   currentTerminals.forEach((term, index) => {
     // Remove all position classes
-    term.container.classList.remove('theatre-card--active', 'theatre-card--back-1', 'theatre-card--back-2', 'theatre-card--back-3', 'theatre-card--back-4');
+    term.container.classList.remove('theatre-card--active', 'theatre-card--back-1', 'theatre-card--back-2', 'theatre-card--back-3', 'theatre-card--back-4', 'theatre-card--hidden');
 
-    if (index === currentActiveIndex) {
+    if (index < pageStart || index >= pageEnd) {
+      // Card is on a different page — hide it
+      term.container.classList.add('theatre-card--hidden');
+    } else if (index === currentActiveIndex) {
       term.container.classList.add('theatre-card--active');
     } else {
-      // Calculate back position relative to active
-      const diff = index < currentActiveIndex ? currentActiveIndex - index : currentTerminals.length - index + currentActiveIndex;
+      // Calculate back position relative to active within this page
+      const diff = index < currentActiveIndex ? currentActiveIndex - index : pageSize - (index - pageStart) + (currentActiveIndex - pageStart);
       const backClass = `theatre-card--back-${Math.min(diff, 4)}`;
       term.container.classList.add(backClass);
       backPositions.push({ index, diff });
@@ -1167,12 +1188,16 @@ export function updateCardStack(): void {
     const shortcutEl = term.container.querySelector('.theatre-card-shortcut') as HTMLElement;
     const runnerBtn = term.container.querySelector('.card-tab-run') as HTMLElement;
 
-    if (index === currentActiveIndex) {
+    if (index < pageStart || index >= pageEnd) {
+      // Hidden card — no shortcut or runner
+      if (shortcutEl) shortcutEl.style.display = 'none';
+      if (runnerBtn) runnerBtn.style.display = 'none';
+    } else if (index === currentActiveIndex) {
       // Active card: hide shortcut, show runner button
       if (shortcutEl) shortcutEl.style.display = 'none';
       if (runnerBtn) runnerBtn.style.display = '';
     } else {
-      // Back card: show shortcut, hide runner button
+      // Back card on current page: show shortcut, hide runner button
       if (shortcutEl) {
         const stackPosition = backPositions.findIndex(bp => bp.index === index);
         if (stackPosition !== -1 && stackPosition < 9) {
@@ -1187,26 +1212,34 @@ export function updateCardStack(): void {
       if (runnerBtn) runnerBtn.style.display = 'none';
     }
   });
+
+  // Update pagination arrows
+  updatePaginationArrows(stack);
 }
 
 /**
  * Get the terminal index for a given stack position (1 = bottom, 2 = second from bottom, etc.)
+ * Only considers terminals on the current page.
  * Returns -1 if no terminal at that position
  */
 export function getTerminalIndexByStackPosition(stackPosition: number): number {
   const currentTerminals = terminals.value;
   const currentActiveIndex = activeIndex.value;
+  const page = activeStackPage.value;
+  const pageStart = page * STACK_PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + STACK_PAGE_SIZE, currentTerminals.length);
+  const pageSize = pageEnd - pageStart;
 
   if (currentTerminals.length === 0) return -1;
 
-  // Build back positions array (same logic as updateCardStack)
+  // Build back positions array for current page only
   const backPositions: { index: number; diff: number }[] = [];
-  currentTerminals.forEach((_, index) => {
+  for (let index = pageStart; index < pageEnd; index++) {
     if (index !== currentActiveIndex) {
-      const diff = index < currentActiveIndex ? currentActiveIndex - index : currentTerminals.length - index + currentActiveIndex;
+      const diff = index < currentActiveIndex ? currentActiveIndex - index : pageSize - (index - pageStart) + (currentActiveIndex - pageStart);
       backPositions.push({ index, diff });
     }
-  });
+  }
 
   // Sort by diff descending (highest diff = bottom of stack = position 1)
   backPositions.sort((a, b) => b.diff - a.diff);
@@ -1265,10 +1298,7 @@ export async function addTheatreTerminal(runConfig?: RunConfig, options?: AddThe
   const currentProjectPath = projectPath.value;
   const currentTerminals = terminals.value;
 
-  if (!currentProjectPath || currentTerminals.length >= MAX_THEATRE_TERMINALS) {
-    if (currentTerminals.length >= MAX_THEATRE_TERMINALS) {
-      showToast(`Maximum ${MAX_THEATRE_TERMINALS} terminals`, 'info');
-    }
+  if (!currentProjectPath) {
     return false;
   }
 
@@ -1880,6 +1910,89 @@ export function hideStackEmptyState(): void {
   setTimeout(() => {
     emptyState.remove();
   }, 200);
+}
+
+/**
+ * Ensure the fixed-position pagination row exists in the DOM.
+ * Created once and reused; hidden/shown by updatePaginationArrows.
+ */
+function ensurePaginationRow(): HTMLElement {
+  let row = document.querySelector('.theatre-stack-pagination') as HTMLElement;
+  if (row) return row;
+
+  row = document.createElement('div');
+  row.className = 'theatre-stack-pagination';
+  row.style.display = 'none';
+
+  const leftBtn = document.createElement('button');
+  leftBtn.className = 'theatre-stack-page-arrow';
+  leftBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>';
+  leftBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    navigateStackPage(-1);
+  });
+
+  const indicator = document.createElement('span');
+  indicator.className = 'theatre-stack-page-indicator';
+
+  const rightBtn = document.createElement('button');
+  rightBtn.className = 'theatre-stack-page-arrow';
+  rightBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+  rightBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    navigateStackPage(1);
+  });
+
+  row.appendChild(leftBtn);
+  row.appendChild(indicator);
+  row.appendChild(rightBtn);
+  document.body.appendChild(row);
+  return row;
+}
+
+/**
+ * Update pagination row — show/hide and update content.
+ * The row is a fixed-position element anchored below the header.
+ */
+function updatePaginationArrows(_stack: HTMLElement): void {
+  const pages = totalStackPages.value;
+  const page = activeStackPage.value;
+
+  if (pages <= 1) {
+    const row = document.querySelector('.theatre-stack-pagination') as HTMLElement;
+    if (row) row.style.display = 'none';
+    return;
+  }
+
+  const row = ensurePaginationRow();
+  const buttons = row.querySelectorAll('.theatre-stack-page-arrow');
+  const leftBtn = buttons[0] as HTMLElement;
+  const rightBtn = buttons[1] as HTMLElement;
+  const indicator = row.querySelector('.theatre-stack-page-indicator') as HTMLElement;
+
+  row.style.display = '';
+  if (leftBtn) leftBtn.style.visibility = page > 0 ? 'visible' : 'hidden';
+  if (rightBtn) rightBtn.style.visibility = page < pages - 1 ? 'visible' : 'hidden';
+  if (indicator) indicator.textContent = `${page + 1} / ${pages}`;
+}
+
+/**
+ * Navigate to an adjacent page (-1 = left, 1 = right)
+ * Switches activeIndex to the first terminal on the target page
+ */
+export function navigateStackPage(direction: -1 | 1): void {
+  const page = activeStackPage.value;
+  const pages = totalStackPages.value;
+  const targetPage = page + direction;
+
+  if (targetPage < 0 || targetPage >= pages) return;
+
+  // Set activeIndex to the first terminal on the target page
+  const targetIndex = targetPage * STACK_PAGE_SIZE;
+  const currentTerminals = terminals.value;
+  if (targetIndex >= 0 && targetIndex < currentTerminals.length) {
+    activeIndex.value = targetIndex;
+  }
 }
 
 /**
