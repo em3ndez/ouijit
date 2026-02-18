@@ -1170,7 +1170,7 @@ body.platform-darwin:not(.is-fullscreen) .theatre-header-content {
 }
 
 .theatre-card-osc-title {
-  @apply font-mono text-[13px] text-white/40 bg-white/5 rounded-full px-2 py-px truncate;
+  @apply font-mono text-[11px] text-white/40 bg-white/5 rounded-full px-2 py-px truncate;
 }
 
 .theatre-card--back-1 .theatre-card-osc-title,
@@ -1236,27 +1236,6 @@ body.platform-darwin:not(.is-fullscreen) .theatre-header-content {
 
 .theatre-card-close svg {
   @apply w-4 h-4;
-}
-
-/* More actions (ellipsis) button — hidden until worktree setup adds --visible */
-.theatre-card-more {
-  @apply w-7 h-7 ml-1 hidden items-center justify-center bg-transparent border-none text-white/50 opacity-0 transition-colors duration-150 ease-out;
-}
-
-.theatre-card-more--visible {
-  @apply flex;
-}
-
-.theatre-card-more svg {
-  @apply w-4 h-4;
-}
-
-.theatre-card--active .theatre-card-more {
-  @apply opacity-100;
-}
-
-.theatre-card-more:hover {
-  @apply text-white/90;
 }
 
 
@@ -1360,7 +1339,6 @@ body.platform-darwin:not(.is-fullscreen) .theatre-header-content {
 .runner-panel--full {
   flex: 1 0 100% !important;
   border-left: none !important;
-  border-top: none;
 }
 
 /* Hide main terminal viewport and resize handle when runner is full-width */
