@@ -49,7 +49,7 @@ const config: ForgeConfig = {
         const staging = process.env.OUIJIT_CROSS_STAGING;
         const nodeModulesDest = path.join(buildPath, 'node_modules');
 
-        const modulesToCopy = ['node-pty', 'koffi'];
+        const modulesToCopy = ['node-pty', 'koffi', 'better-sqlite3'];
         for (const mod of modulesToCopy) {
           // For cross-builds, use staged native modules when available
           const stagedSrc = staging ? path.join(staging, 'node_modules', mod) : null;
@@ -99,7 +99,10 @@ const config: ForgeConfig = {
       },
     ],
   },
-  rebuildConfig: {},
+  rebuildConfig: {
+    force: true,
+    onlyModules: ['better-sqlite3'],
+  },
   hooks: {
     postPackage: async (_config, options) => {
       // Only notarize macOS builds when not skipping

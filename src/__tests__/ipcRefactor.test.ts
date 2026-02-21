@@ -5,7 +5,7 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import * as os from 'node:os';
-import { createTask, _resetCacheForTesting } from '../taskMetadata';
+import { createTask, _resetCacheForTesting } from '../db';
 
 // ── Mocks (superset needed by all describe blocks) ──────────────────
 

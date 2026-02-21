@@ -9,7 +9,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execSync } from 'node:child_process';
 import { checkTaskWorktree, recoverTaskWorktree } from '../../worktree';
-import { createTask, getTaskByNumber, _resetCacheForTesting } from '../../taskMetadata';
+import { createTask, getTaskByNumber, _resetCacheForTesting } from '../../db';
 
 let tmpDir: string;
 let repoDir: string;
