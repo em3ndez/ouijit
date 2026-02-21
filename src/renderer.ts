@@ -7,7 +7,7 @@
 import './index.css';
 import '@xterm/xterm/css/xterm.css';
 import { initIcons } from './utils/icons';
-import type { Project, ElectronAPI, ActiveSession } from './types';
+import type { Project, ActiveSession } from './types';
 import { renderProjects } from './components/projectGrid';
 import { setupSearch } from './components/searchBar';
 import { showToast } from './components/importDialog';
@@ -15,12 +15,6 @@ import { showNewProjectDialog } from './components/newProjectDialog';
 import { initHotkeys } from './utils/hotkeys';
 import { restoreProjectMode, orphanedSessions } from './components/project';
 
-// Declare the global window.api interface
-declare global {
-  interface Window {
-    api: ElectronAPI;
-  }
-}
 
 /**
  * Shows a loading state in the container

@@ -3,17 +3,16 @@
  * Creates isolated worktrees for CLI agents to work without affecting the main branch
  */
 
-import { execSync, exec } from 'node:child_process';
+import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import koffi from 'koffi';
-import { getNextTaskNumber, createTask, getTaskByNumber, deleteTaskByNumber, setTaskBranch, setTaskWorktreePath, setTaskMergeTarget, type TaskMetadata, type TaskStatus } from './taskMetadata';
+import { getNextTaskNumber, createTask, getTask, getTaskByNumber, deleteTaskByNumber, setTaskBranch, setTaskWorktreePath, setTaskMergeTarget, type TaskMetadata, type TaskStatus } from './taskMetadata';
+import { mergeWorktreeBranch } from './git';
 
 const execAsync = promisify(exec);
-
-const MAX_ERROR_LENGTH = 500;
 
 // Native CoW clone support via koffi FFI
 // macOS: clonefile() clones files and directories atomically in one kernel call
@@ -427,12 +426,12 @@ export async function removeTaskWorktree(
 /**
  * List all worktrees for a project
  */
-export function listWorktrees(projectPath: string): WorktreeInfo[] {
+export async function listWorktrees(projectPath: string): Promise<WorktreeInfo[]> {
   try {
     const projectName = path.basename(projectPath);
     const baseDir = getWorktreeBaseDir(projectName);
 
-    const output = execSync('git worktree list --porcelain', {
+    const { stdout: output } = await execAsync('git worktree list --porcelain', {
       cwd: projectPath,
       encoding: 'utf8',
     });
@@ -471,4 +470,51 @@ export function listWorktrees(projectPath: string): WorktreeInfo[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Ship a worktree branch: check for uncommitted changes, then merge into the target branch.
+ */
+export async function shipWorktree(
+  projectPath: string,
+  worktreeBranch: string,
+  commitMessage?: string,
+): Promise<{ success: boolean; error?: string; conflictFiles?: string[]; mergedBranch?: string }> {
+  // Check for uncommitted changes in the worktree
+  const worktrees = await listWorktrees(projectPath);
+  const worktree = worktrees.find(wt => wt.branch === worktreeBranch);
+
+  if (worktree) {
+    try {
+      const { stdout: status } = await execAsync('git status --porcelain', {
+        cwd: worktree.path,
+        encoding: 'utf8',
+      });
+      if (status.trim().length > 0) {
+        return {
+          success: false,
+          error: 'Uncommitted changes in worktree. Commit or stash first.',
+        };
+      }
+    } catch {
+      // Ignore check errors and proceed
+    }
+  }
+
+  // Get the merge target from task metadata
+  const task = await getTask(projectPath, worktreeBranch);
+  const targetBranch = task?.mergeTarget;
+
+  // Attempt to merge
+  const result = mergeWorktreeBranch(projectPath, worktreeBranch, commitMessage, targetBranch);
+
+  if (!result.success && result.error?.includes('conflict')) {
+    return {
+      success: false,
+      error: result.error,
+      conflictFiles: [],
+    };
+  }
+
+  return result;
 }
