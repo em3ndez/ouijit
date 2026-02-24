@@ -1,5 +1,6 @@
 import type { ScriptHook, HookType } from '../types';
 import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes } from '../utils/hotkeys';
+import { setupHighlightedTextarea } from '../utils/html';
 import { showToast } from './importDialog';
 import { generateId } from '../utils/ids';
 
@@ -16,26 +17,32 @@ export interface HookConfigDialogOptions {
 
 const HOOK_LABELS: Record<HookType, { title: string; description: string; placeholder: string; envVars?: boolean }> = {
   start: {
-    title: 'Start Script',
-    description: 'Runs as the first command when a new task is created (e.g., install dependencies and start Claude)',
+    title: 'Start Hook',
+    description: 'Runs when a task moves from To Do to In Progress (e.g., install dependencies and start Claude)',
     placeholder: 'npm install && claude "$OUIJIT_TASK_PROMPT"',
     envVars: true,
   },
   continue: {
-    title: 'Continue Script',
-    description: 'Runs as the first command when reopening an existing task (e.g., resume Claude session)',
+    title: 'Continue Hook',
+    description: 'Runs when reopening a task that is already In Progress (e.g., resume Claude session)',
     placeholder: 'claude -c',
     envVars: true,
   },
   run: {
-    title: 'Run Script',
-    description: 'Runs when you click the play button (e.g., start dev server)',
+    title: 'Run Hook',
+    description: 'Runs when you click Run (e.g., start dev server)',
     placeholder: 'npm run dev',
     envVars: true,
   },
+  review: {
+    title: 'Review Hook',
+    description: 'Runs when a task moves to In Review (e.g., open a PR, run linting)',
+    placeholder: 'gh pr create --fill',
+    envVars: true,
+  },
   cleanup: {
-    title: 'Cleanup Script',
-    description: 'Runs before archiving a task (e.g., push to remote)',
+    title: 'Cleanup Hook',
+    description: 'Runs when a task moves to Done (e.g., push to remote)',
     placeholder: 'git push origin HEAD',
     envVars: true,
   },
@@ -69,16 +76,17 @@ export function showHookConfigDialog(
     const dialog = document.createElement('div');
     dialog.className = 'import-dialog';
 
+    const envVarsList = [
+      '$OUIJIT_PROJECT_PATH',
+      '$OUIJIT_WORKTREE_PATH',
+      '$OUIJIT_TASK_BRANCH',
+      '$OUIJIT_TASK_NAME',
+      '$OUIJIT_TASK_PROMPT',
+    ];
     const envVarsHtml = labels.envVars ? `
-      <details class="hook-env-vars">
+      <details class="hook-env-vars" style="-webkit-app-region: no-drag;">
         <summary>Environment variables</summary>
-        <ul>
-          <li><code>OUIJIT_PROJECT_PATH</code> - main project path</li>
-          <li><code>OUIJIT_WORKTREE_PATH</code> - task worktree path</li>
-          <li><code>OUIJIT_TASK_BRANCH</code> - git branch name</li>
-          <li><code>OUIJIT_TASK_NAME</code> - task display name</li>
-          <li><code>OUIJIT_TASK_PROMPT</code> - task description (start/continue hooks)</li>
-        </ul>
+        <ul>${envVarsList.map(v => `<li><code class="hook-env-var" data-var="${v}">${v}</code></li>`).join('')}</ul>
       </details>
     ` : '';
 
@@ -95,7 +103,7 @@ export function showHookConfigDialog(
             placeholder="${labels.placeholder}"
             autocomplete="off"
             spellcheck="false"
-            rows="3"
+            rows="1"
           >${existingHook?.command || ''}</textarea>
         </div>
 
@@ -120,7 +128,23 @@ export function showHookConfigDialog(
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
 
+    // Wire up click-to-copy on env var codes
+    dialog.querySelectorAll('.hook-env-var').forEach(code => {
+      code.addEventListener('click', () => {
+        const varName = (code as HTMLElement).dataset.var!;
+        navigator.clipboard.writeText(varName);
+        code.classList.add('hook-env-var--copied');
+        const original = code.textContent;
+        code.textContent = 'Copied!';
+        setTimeout(() => {
+          code.textContent = original;
+          code.classList.remove('hook-env-var--copied');
+        }, 800);
+      });
+    });
+
     const commandInput = dialog.querySelector('#hook-command') as HTMLTextAreaElement;
+    setupHighlightedTextarea(commandInput);
 
     requestAnimationFrame(() => {
       overlay.classList.add('modal-overlay--visible');

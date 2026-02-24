@@ -9,86 +9,43 @@ import {
   setTaskStatus,
   deleteTaskByNumber,
   reorderTask,
-  getHook,
   type TaskStatus,
 } from './db';
 import { listWorktrees, removeTaskWorktree } from './worktree';
-import { executeHook } from './hookRunner';
 import type { TaskWithWorkspace } from './types';
 import log from './log';
 
 const taskLog = log.scope('task');
 
 /**
- * Run the cleanup hook if transitioning to 'done' from a non-done state.
- * Returns a warning message if the hook fails, undefined otherwise.
- */
-async function runCleanupHookIfNeeded(
-  projectPath: string,
-  taskNumber: number,
-  targetStatus: TaskStatus,
-): Promise<string | undefined> {
-  if (targetStatus !== 'done') return undefined;
-
-  const task = await getTaskByNumber(projectPath, taskNumber);
-  if (!task || task.status === 'done') return undefined;
-
-  const cleanupHook = await getHook(projectPath, 'cleanup');
-  if (!cleanupHook) return undefined;
-
-  const worktrees = await listWorktrees(projectPath);
-  const worktree = task.branch ? worktrees.find(wt => wt.branch === task.branch) : undefined;
-  if (!worktree) return undefined;
-
-  const hookResult = await executeHook(cleanupHook, worktree.path, {
-    projectPath,
-    worktreePath: worktree.path,
-    taskBranch: task.branch || '',
-    taskName: task.name,
-    taskPrompt: task.prompt,
-  });
-
-  if (!hookResult.success) {
-    const warningMessage = hookResult.error || hookResult.output;
-    return warningMessage && warningMessage.length > 500
-      ? warningMessage.slice(0, 500) + '...'
-      : warningMessage;
-  }
-
-  return undefined;
-}
-
-/**
- * Set task status with cleanup hook execution on transition to 'done'.
+ * Set task status. Hooks are handled by the renderer (shown in a terminal).
  */
 export async function setTaskStatusWithHooks(
   projectPath: string,
   taskNumber: number,
   status: TaskStatus,
-): Promise<{ success: boolean; error?: string; hookWarning?: string }> {
-  const hookWarning = await runCleanupHookIfNeeded(projectPath, taskNumber, status);
+): Promise<{ success: boolean; error?: string }> {
   const result = await setTaskStatus(projectPath, taskNumber, status);
   if (!result.success) {
-    taskLog.error('setStatusWithHooks failed', { taskNumber, status, error: result.error });
+    taskLog.error('setStatus failed', { taskNumber, status, error: result.error });
   }
-  return { ...result, hookWarning };
+  return result;
 }
 
 /**
- * Reorder task with cleanup hook execution when reordering into 'done'.
+ * Reorder task (status + position). Hooks are handled by the renderer (shown in a terminal).
  */
 export async function reorderTaskWithHooks(
   projectPath: string,
   taskNumber: number,
   newStatus: TaskStatus,
   targetIndex: number,
-): Promise<{ success: boolean; error?: string; hookWarning?: string }> {
-  const hookWarning = await runCleanupHookIfNeeded(projectPath, taskNumber, newStatus);
+): Promise<{ success: boolean; error?: string }> {
   const result = await reorderTask(projectPath, taskNumber, newStatus, targetIndex);
   if (!result.success) {
-    taskLog.error('reorderWithHooks failed', { taskNumber, status: newStatus, error: result.error });
+    taskLog.error('reorder failed', { taskNumber, status: newStatus, error: result.error });
   }
-  return { ...result, hookWarning };
+  return result;
 }
 
 /**

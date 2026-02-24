@@ -2,15 +2,16 @@
  * Kanban board view — spatial task management with drag-and-drop
  */
 
-import type { TaskWithWorkspace, TaskStatus, RunConfig } from '../../types';
+import type { TaskWithWorkspace, TaskStatus, RunConfig, HookType } from '../../types';
 import type { ProjectTerminal } from './state';
 import { projectState } from './state';
 import { projectPath, kanbanVisible, terminals, activeIndex, invalidateTaskList } from './signals';
 import { projectRegistry } from './helpers';
 import { showToast } from '../importDialog';
+import { showHookConfigDialog } from '../hookConfigDialog';
 import { reopenTask, deleteTask, closeTask, showMissingWorktreeDialog } from './worktreeDropdown';
 import { switchToProjectTerminal } from './terminalCards';
-import { escapeHtml } from '../../utils/html';
+import { escapeHtml, setupHighlightedTextarea } from '../../utils/html';
 import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes, platformHotkey } from '../../utils/hotkeys';
 import { createIcons, icons } from 'lucide';
 import Sortable from 'sortablejs';
@@ -197,21 +198,35 @@ const KANBAN_COLUMNS: { status: TaskStatus; label: string }[] = [
   { status: 'done', label: 'Done' },
 ];
 
+/** Map columns to their associated lifecycle hooks */
+const COLUMN_HOOKS: Partial<Record<TaskStatus, { hooks: HookType[]; tooltip: string }>> = {
+  in_progress: { hooks: ['start', 'continue'], tooltip: 'Configure start/continue hooks' },
+  in_review: { hooks: ['review'], tooltip: 'Configure review hook' },
+  done: { hooks: ['cleanup'], tooltip: 'Configure done hook' },
+};
+
 /**
  * Build the kanban board HTML shell
  */
 function buildKanbanHtml(): string {
-  const columnsHtml = KANBAN_COLUMNS.map(col => `
-    <div class="kanban-column" data-status="${col.status}">
-      <div class="kanban-column-header">
-        <span class="kanban-column-title">${col.label}</span>
-        <span class="kanban-column-count">0</span>
+  const columnsHtml = KANBAN_COLUMNS.map(col => {
+    const hookInfo = COLUMN_HOOKS[col.status];
+    const hookBtn = hookInfo
+      ? `<button class="kanban-column-hook-btn" data-hook-column="${col.status}" title="${hookInfo.tooltip}" style="-webkit-app-region: no-drag;"><i data-lucide="fishing-hook"></i></button>`
+      : '';
+    return `
+      <div class="kanban-column" data-status="${col.status}">
+        <div class="kanban-column-header">
+          <span class="kanban-column-title">${col.label}</span>
+          ${hookBtn}
+          <span class="kanban-column-count">0</span>
+        </div>
+        <div class="kanban-column-body">
+          ${col.status === 'todo' ? '<input type="text" class="kanban-add-input" placeholder="New task..." style="-webkit-app-region: no-drag;" />' : ''}
+        </div>
       </div>
-      <div class="kanban-column-body">
-        ${col.status === 'todo' ? '<input type="text" class="kanban-add-input" placeholder="New task..." style="-webkit-app-region: no-drag;" />' : ''}
-      </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 
   return `
     <div class="kanban-board">
@@ -477,21 +492,25 @@ function buildKanbanCard(task: TaskWithWorkspace, path: string, limaAvailable: b
           },
           taskId: task.taskNumber,
           sandboxed: false,
+          skipAutoHook: true,
         });
         return;
       }
       const worktreePath = await ensureWorktreeExists(path, task);
       if (!worktreePath) return;
+
       hideKanbanBoard();
       await projectRegistry.addProjectTerminal?.(undefined, {
         existingWorktree: {
           path: worktreePath,
           branch: task.branch || '',
+          prompt: task.prompt,
           createdAt: task.createdAt,
           sandboxed: task.sandboxed,
         },
         taskId: task.taskNumber,
         sandboxed: false,
+        skipAutoHook: true,
       });
     };
 
@@ -614,6 +633,59 @@ function setupSortable(): void {
 }
 
 /**
+ * Open a terminal based on a hook dialog result.
+ * Run → background terminal with command, stay on kanban.
+ * Run & Open → run command (if any) AND navigate to the terminal, hide kanban.
+ */
+async function openTerminalFromDialog(
+  dialogResult: { command: string; sandboxed: boolean; foreground: boolean },
+  hookName: string,
+  existingWorktree: { path: string; branch: string; prompt?: string; createdAt?: string; sandboxed?: boolean },
+  taskId: number,
+): Promise<void> {
+  const termOpts = {
+    existingWorktree,
+    taskId,
+    sandboxed: dialogResult.sandboxed,
+    skipAutoHook: true,
+    background: !dialogResult.foreground,
+  };
+
+  if (dialogResult.foreground) hideKanbanBoard();
+
+  if (dialogResult.command) {
+    const runConfig: RunConfig = { name: hookName, command: dialogResult.command, source: 'custom', priority: 0 };
+    await projectRegistry.addProjectTerminal?.(runConfig, termOpts);
+  } else {
+    await projectRegistry.addProjectTerminal?.(undefined, termOpts);
+  }
+}
+
+/**
+ * Check if a hook is configured and run it in a terminal.
+ * Shows a command dialog so the user can run/open/cancel before opening.
+ */
+async function runTransitionHookInTerminal(
+  path: string,
+  task: TaskWithWorkspace,
+  hookType: 'continue' | 'review' | 'cleanup',
+): Promise<void> {
+  const hooks = await window.api.hooks.get(path);
+  const hookMap: Record<string, typeof hooks.review> = { continue: hooks.continue, review: hooks.review, cleanup: hooks.cleanup };
+  if (!hookMap[hookType]) return; // no hook configured
+
+  const dialogResult = await showStartCommandDialog(path, hookType, task);
+  if (dialogResult === null) return; // cancelled
+
+  await openTerminalFromDialog(dialogResult, hookType, {
+    path: task.worktreePath!,
+    branch: task.branch || '',
+    createdAt: task.createdAt,
+    sandboxed: task.sandboxed,
+  }, task.taskNumber);
+}
+
+/**
  * Handle a SortableJS onEnd event — persist reorder and handle special status transitions.
  */
 async function handleSortableEnd(evt: Sortable.SortableEvent): Promise<void> {
@@ -649,8 +721,17 @@ async function handleSortableEnd(evt: Sortable.SortableEvent): Promise<void> {
       let worktreePath = task.worktreePath;
       let branch = task.branch || '';
 
-      // Create worktree if task doesn't have one yet
-      if (!worktreePath) {
+      if (worktreePath) {
+        // Worktree recorded — verify it still exists on disk
+        const verified = await ensureWorktreeExists(path, task);
+        if (!verified) {
+          await populateKanbanBoard();
+          return;
+        }
+        worktreePath = verified;
+        branch = task.branch || '';
+      } else {
+        // No worktree yet — create one
         const startResult = await window.api.task.start(path, taskNumber);
         if (!startResult.success || !startResult.worktreePath) {
           await populateKanbanBoard();
@@ -665,37 +746,30 @@ async function handleSortableEnd(evt: Sortable.SortableEvent): Promise<void> {
       invalidateTaskList();
 
       // Show start command dialog
-      const dialogResult = await showStartCommandDialog(path, task.name);
+      const dialogResult = await showStartCommandDialog(path, 'start', { ...task, worktreePath, branch });
       if (dialogResult === null) {
         // User cancelled — task stays in_progress but no terminal opened
         await populateKanbanBoard();
         return;
       }
 
-      // Build runConfig if user chose to run a command
-      let runConfig: RunConfig | undefined;
-      const sandboxed = dialogResult.sandboxed;
-      if (dialogResult.command) {
-        runConfig = {
-          name: 'start',
-          command: dialogResult.command,
-          source: 'custom',
-          priority: 0,
-        };
-      }
-
-      await projectRegistry.addProjectTerminal?.(runConfig, {
-        existingWorktree: {
-          path: worktreePath,
-          branch,
-          prompt: task.prompt,
-          createdAt: task.createdAt,
-          sandboxed: task.sandboxed,
-        },
-        taskId: taskNumber,
-        sandboxed,
-      });
+      await openTerminalFromDialog(dialogResult, 'start', {
+        path: worktreePath,
+        branch,
+        prompt: task.prompt,
+        createdAt: task.createdAt,
+        sandboxed: task.sandboxed,
+      }, taskNumber);
       await populateKanbanBoard();
+      return;
+    }
+
+    // Non-todo task dragged back to in_progress (e.g., from in_review/done)
+    if (task && task.status !== 'todo' && task.worktreePath) {
+      await window.api.task.reorder(path, taskNumber, 'in_progress', targetIndex);
+      invalidateTaskList();
+      await populateKanbanBoard();
+      await runTransitionHookInTerminal(path, task, 'continue');
       return;
     }
   }
@@ -708,11 +782,30 @@ async function handleSortableEnd(evt: Sortable.SortableEvent): Promise<void> {
         projectRegistry.closeProjectTerminal?.(i);
       }
     }
-    // Reorder handles status change, closedAt, and position in one write;
-    // the IPC handler also runs the cleanup hook.
     await window.api.task.reorder(path, taskNumber, 'done', targetIndex);
     invalidateTaskList();
     await populateKanbanBoard();
+
+    // Run cleanup hook in a terminal if configured
+    const tasks = await window.api.task.getAll(path);
+    const task = tasks.find(t => t.taskNumber === taskNumber);
+    if (task?.worktreePath) {
+      await runTransitionHookInTerminal(path, task, 'cleanup');
+    }
+    return;
+  }
+
+  if (newStatus === 'in_review') {
+    await window.api.task.reorder(path, taskNumber, 'in_review', targetIndex);
+    invalidateTaskList();
+    await populateKanbanBoard();
+
+    // Run review hook in a terminal if configured
+    const tasks = await window.api.task.getAll(path);
+    const task = tasks.find(t => t.taskNumber === taskNumber);
+    if (task?.worktreePath) {
+      await runTransitionHookInTerminal(path, task, 'review');
+    }
     return;
   }
 
@@ -723,6 +816,33 @@ async function handleSortableEnd(evt: Sortable.SortableEvent): Promise<void> {
   } else {
     kanbanLog.error('reorder failed', { taskNumber, newStatus, error: result.error });
   }
+}
+
+/**
+ * Update column hook icon active state based on configured hooks
+ */
+function updateColumnHookIcons(board: Element, hooks: Awaited<ReturnType<typeof window.api.hooks.get>>): void {
+  const configured: Record<string, boolean> = {
+    in_progress: !!hooks.start || !!hooks.continue,
+    in_review: !!hooks.review,
+    done: !!hooks.cleanup,
+  };
+  for (const [status, isActive] of Object.entries(configured)) {
+    const btn = board.querySelector(`.kanban-column[data-status="${status}"] .kanban-column-hook-btn`);
+    if (btn) btn.classList.toggle('kanban-column-hook-btn--active', isActive);
+  }
+}
+
+/**
+ * Re-fetch hooks and update all column hook icon colors
+ */
+async function refreshColumnHookIcons(): Promise<void> {
+  const path = projectPath.value;
+  if (!path) return;
+  const board = document.querySelector('.kanban-board');
+  if (!board) return;
+  const hooks = await window.api.hooks.get(path).catch(() => ({} as Awaited<ReturnType<typeof window.api.hooks.get>>));
+  updateColumnHookIcons(board, hooks);
 }
 
 /**
@@ -741,6 +861,9 @@ async function populateKanbanBoard(): Promise<void> {
     window.api.hooks.get(path).catch(() => ({} as Awaited<ReturnType<typeof window.api.hooks.get>>)),
   ]);
   const editorConfigured = !!hooks.editor;
+
+  // Update column hook icon colors
+  updateColumnHookIcons(board, hooks);
 
   // Distribute tasks into columns
   for (const col of KANBAN_COLUMNS) {
@@ -822,24 +945,38 @@ function wireAddInput(board: Element): void {
 
 /**
  * Show a start command dialog before opening a terminal.
- * Returns { command: string } to run a command, 'skip' to open terminal with no command, or null to cancel.
+ * Returns { command, sandboxed, foreground } to run/open a terminal, or null to cancel.
  */
-async function showStartCommandDialog(path: string, taskName: string): Promise<{ command: string; sandboxed: boolean } | null> {
-  // Fetch start hook command and lima status before opening the dialog
-  let startCommand = '';
+const HOOK_DIALOG_TITLES: Record<string, string> = {
+  start: 'Start Task',
+  continue: 'Continue Task',
+  review: 'Review Task',
+  cleanup: 'Done — Cleanup',
+};
+
+async function showStartCommandDialog(path: string, hookType: 'start' | 'continue' | 'review' | 'cleanup' = 'start', task?: TaskWithWorkspace): Promise<{ command: string; sandboxed: boolean; foreground: boolean } | null> {
+  // Fetch hook command and lima status before opening the dialog
+  let hookCommand = '';
   let limaAvailable = false;
   try {
     const [hooks, limaStatus] = await Promise.all([
       window.api.hooks.get(path),
       window.api.lima.status(path).then(s => s.available).catch(() => false),
     ]);
-    if (hooks.start?.command) startCommand = hooks.start.command;
+    const hookMap: Record<string, typeof hooks.start> = {
+      start: hooks.start,
+      continue: hooks.continue,
+      review: hooks.review,
+      cleanup: hooks.cleanup,
+    };
+    const hook = hookMap[hookType];
+    if (hook?.command) hookCommand = hook.command;
     limaAvailable = limaStatus;
   } catch { /* no hook configured */ }
 
   return new Promise((resolve) => {
     let resolved = false;
-    const finish = (result: { command: string; sandboxed: boolean } | null) => {
+    const finish = (result: { command: string; sandboxed: boolean; foreground: boolean } | null) => {
       if (resolved) return;
       resolved = true;
       cleanup();
@@ -855,28 +992,44 @@ async function showStartCommandDialog(path: string, taskName: string): Promise<{
 
     const title = document.createElement('div');
     title.className = 'import-dialog-title';
-    title.textContent = 'Start Command';
+    title.textContent = HOOK_DIALOG_TITLES[hookType] || 'Run Command';
     dialog.appendChild(title);
 
     // Textarea for the command
     const textarea = document.createElement('textarea');
     textarea.className = 'form-input form-textarea start-command-textarea';
-    textarea.value = startCommand;
+    textarea.value = hookCommand;
     textarea.placeholder = 'e.g. npm run dev';
-    textarea.rows = 3;
+    textarea.rows = 1;
     textarea.setAttribute('style', '-webkit-app-region: no-drag;');
     dialog.appendChild(textarea);
+    const envVarValues = task ? {
+      '$OUIJIT_TASK_NAME': task.name || undefined,
+      '$OUIJIT_PROJECT_PATH': path || undefined,
+      '$OUIJIT_WORKTREE_PATH': task.worktreePath || undefined,
+      '$OUIJIT_BRANCH': task.branch || undefined,
+    } : undefined;
+    setupHighlightedTextarea(textarea, 240, envVarValues);
 
     // Environment variables hint
+    const envVars = ['$OUIJIT_TASK_NAME', '$OUIJIT_PROJECT_PATH', '$OUIJIT_WORKTREE_PATH', '$OUIJIT_BRANCH'];
     const envHint = document.createElement('details');
     envHint.className = 'hook-env-vars';
-    envHint.innerHTML = `<summary>Available environment variables</summary>
-<ul>
-  <li><code>OUIJIT_TASK_NAME</code> — ${escapeHtml(taskName)}</li>
-  <li><code>OUIJIT_PROJECT_PATH</code></li>
-  <li><code>OUIJIT_WORKTREE_PATH</code></li>
-  <li><code>OUIJIT_BRANCH</code></li>
-</ul>`;
+    envHint.setAttribute('style', '-webkit-app-region: no-drag;');
+    envHint.innerHTML = `<summary>Available environment variables</summary><ul>${envVars.map(v => `<li><code class="hook-env-var" data-var="${v}">${v}</code></li>`).join('')}</ul>`;
+    envHint.querySelectorAll('.hook-env-var').forEach(code => {
+      code.addEventListener('click', () => {
+        const varName = (code as HTMLElement).dataset.var!;
+        navigator.clipboard.writeText(varName);
+        code.classList.add('hook-env-var--copied');
+        const original = code.textContent;
+        code.textContent = 'Copied!';
+        setTimeout(() => {
+          code.textContent = original;
+          code.classList.remove('hook-env-var--copied');
+        }, 800);
+      });
+    });
     dialog.appendChild(envHint);
 
     // Sandbox toggle (only if lima is available)
@@ -920,12 +1073,19 @@ async function showStartCommandDialog(path: string, taskName: string): Promise<{
     const btnGroup = document.createElement('div');
     btnGroup.style.cssText = 'display: flex; gap: 8px;';
 
-    const skipBtn = document.createElement('button');
-    skipBtn.className = 'btn btn-secondary';
-    skipBtn.textContent = 'Skip';
-    skipBtn.setAttribute('style', '-webkit-app-region: no-drag;');
-    skipBtn.addEventListener('click', () => finish({ command: '', sandboxed }));
-    btnGroup.appendChild(skipBtn);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn btn-secondary';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.setAttribute('style', '-webkit-app-region: no-drag;');
+    cancelBtn.addEventListener('click', () => finish(null));
+    btnGroup.appendChild(cancelBtn);
+
+    const runOpenBtn = document.createElement('button');
+    runOpenBtn.className = 'btn btn-primary';
+    runOpenBtn.textContent = 'Run & Open';
+    runOpenBtn.setAttribute('style', '-webkit-app-region: no-drag; white-space: nowrap;');
+    runOpenBtn.addEventListener('click', () => finish({ command: textarea.value.trim(), sandboxed, foreground: true }));
+    btnGroup.appendChild(runOpenBtn);
 
     const runBtn = document.createElement('button');
     runBtn.className = 'btn btn-primary';
@@ -933,7 +1093,7 @@ async function showStartCommandDialog(path: string, taskName: string): Promise<{
     runBtn.setAttribute('style', '-webkit-app-region: no-drag;');
     runBtn.addEventListener('click', () => {
       const cmd = textarea.value.trim();
-      finish({ command: cmd, sandboxed });
+      finish({ command: cmd, sandboxed, foreground: false });
     });
     btnGroup.appendChild(runBtn);
     actions.appendChild(btnGroup);
@@ -1061,6 +1221,122 @@ export function syncKanbanStatusDots(): void {
 }
 
 /**
+ * Show a small dropdown for the In Progress column with Start/Continue hook options
+ */
+function showColumnHookMenu(btn: HTMLElement, path: string): void {
+  // Remove any existing menu
+  document.querySelector('.column-hook-menu')?.remove();
+
+  const menu = document.createElement('div');
+  menu.className = 'column-hook-menu';
+
+  const items: { hookType: HookType; label: string; hint: string }[] = [
+    { hookType: 'start', label: 'Start', hint: 'Runs when a task starts' },
+    { hookType: 'continue', label: 'Continue', hint: 'Runs when reopening a task' },
+  ];
+
+  // Fetch hooks to show configured indicators
+  window.api.hooks.get(path).then(hooks => {
+    for (const { hookType, label, hint } of items) {
+      const item = document.createElement('button');
+      item.className = 'column-hook-menu-item';
+
+      const indicator = document.createElement('span');
+      const isConfigured = !!hooks[hookType as keyof typeof hooks];
+      indicator.className = isConfigured ? 'column-hook-menu-check' : 'column-hook-menu-check column-hook-menu-check--unconfigured';
+      indicator.innerHTML = isConfigured ? '<i data-lucide="check"></i>' : '<i data-lucide="help-circle"></i>';
+      item.appendChild(indicator);
+
+      const textWrap = document.createElement('div');
+      textWrap.className = 'column-hook-menu-text';
+      const labelEl = document.createElement('span');
+      labelEl.className = 'column-hook-menu-label';
+      labelEl.textContent = label;
+      textWrap.appendChild(labelEl);
+      const hintEl = document.createElement('span');
+      hintEl.className = 'column-hook-menu-hint';
+      hintEl.textContent = hint;
+      textWrap.appendChild(hintEl);
+      item.appendChild(textWrap);
+
+      item.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        dismiss();
+        const freshHooks = await window.api.hooks.get(path);
+        const existing = freshHooks[hookType as keyof typeof freshHooks];
+        const result = await showHookConfigDialog(path, hookType, existing);
+        if (result?.saved) {
+          showToast(`${label} hook ${result.hook ? 'updated' : 'removed'}`, 'success');
+          await refreshColumnHookIcons();
+        }
+      });
+
+      menu.appendChild(item);
+    }
+
+    // Render icons inside menu items if needed
+    createIcons({ icons, nameAttr: 'data-lucide', attrs: {}, nodes: [menu] });
+  });
+
+  document.body.appendChild(menu);
+
+  // Position below the button
+  const rect = btn.getBoundingClientRect();
+  menu.style.left = `${rect.left}px`;
+  menu.style.top = `${rect.bottom + 4}px`;
+
+  // Animate in
+  requestAnimationFrame(() => menu.classList.add('column-hook-menu--visible'));
+
+  // Dismiss on click outside
+  const dismiss = () => {
+    menu.classList.remove('column-hook-menu--visible');
+    setTimeout(() => menu.remove(), 100);
+    document.removeEventListener('mousedown', handleOutsideClick);
+  };
+  const handleOutsideClick = (e: MouseEvent) => {
+    if (menu.contains(e.target as Node)) return;
+    dismiss();
+  };
+  setTimeout(() => document.addEventListener('mousedown', handleOutsideClick), 0);
+}
+
+/**
+ * Wire up click handlers for column header hook icons
+ */
+function setupColumnHookHandlers(board: Element): void {
+  const path = projectPath.value;
+  if (!path) return;
+
+  const hookBtns = board.querySelectorAll('.kanban-column-hook-btn');
+  for (const btn of hookBtns) {
+    const column = (btn as HTMLElement).dataset.hookColumn as TaskStatus;
+    const hookInfo = COLUMN_HOOKS[column];
+    if (!hookInfo) continue;
+
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+
+      if (hookInfo.hooks.length > 1) {
+        // In Progress: show dropdown with Start/Continue
+        showColumnHookMenu(btn as HTMLElement, path);
+      } else {
+        // In Review / Done: open dialog directly
+        const hookType = hookInfo.hooks[0];
+        const label = hookType === 'review' ? 'Review' : 'Done';
+        const hooks = await window.api.hooks.get(path);
+        const existing = hooks[hookType as keyof typeof hooks];
+        const result = await showHookConfigDialog(path, hookType, existing);
+        if (result?.saved) {
+          showToast(`${label} hook ${result.hook ? 'updated' : 'removed'}`, 'success');
+          await refreshColumnHookIcons();
+        }
+      }
+    });
+  }
+}
+
+/**
  * Show the kanban board
  */
 export async function showKanbanBoard(): Promise<void> {
@@ -1083,6 +1359,9 @@ export async function showKanbanBoard(): Promise<void> {
 
   // Wire up persistent add input in the todo column
   wireAddInput(board);
+
+  // Wire up column header hook icon click handlers
+  setupColumnHookHandlers(board);
 
   // Populate with tasks (also sets up SortableJS)
   await populateKanbanBoard();

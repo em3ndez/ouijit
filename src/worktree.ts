@@ -534,6 +534,27 @@ export async function recoverTaskWorktree(
       return { success: false, error: 'Branch not found' };
     }
 
+    // Check if the branch is already checked out in another worktree
+    // (use raw git output — listWorktrees filters to managed dirs only)
+    const { stdout: wtList } = await execAsync('git worktree list --porcelain', { cwd: projectPath, encoding: 'utf8' });
+    let existing: { path: string } | undefined;
+    for (const entry of wtList.split('\n\n').filter(Boolean)) {
+      const lines = entry.split('\n');
+      const wtLine = lines.find(l => l.startsWith('worktree '));
+      const brLine = lines.find(l => l.startsWith('branch refs/heads/'));
+      if (wtLine && brLine && brLine.replace('branch refs/heads/', '') === task.branch) {
+        existing = { path: wtLine.replace('worktree ', '') };
+        break;
+      }
+    }
+    if (existing) {
+      // Branch is already checked out — reuse that worktree path
+      worktreeLog.info('branch already checked out, reusing worktree', { taskNumber, worktreePath: existing.path });
+      await setTaskWorktreePath(projectPath, taskNumber, existing.path);
+      const updated = await getTaskByNumber(projectPath, taskNumber);
+      return { success: true, task: updated || undefined, worktreePath: existing.path };
+    }
+
     // Find a new worktree directory path
     const projectName = path.basename(projectPath);
     const baseDir = getWorktreeBaseDir(projectName);

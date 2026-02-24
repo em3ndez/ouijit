@@ -596,12 +596,7 @@ async function closeTaskFromTerminal(term: ProjectTerminal): Promise<void> {
     if (idx !== -1) {
       closeProjectTerminal(idx);
     }
-    // Show warning if cleanup hook failed
-    if (result.hookWarning) {
-      showToast(`Task closed (cleanup hook failed)`, 'warning');
-    } else {
-      showToast('Task closed', 'success');
-    }
+    showToast('Task closed', 'success');
     invalidateTaskList();
   } else {
     showToast(result.error || 'Failed to close task', 'error');
@@ -742,7 +737,7 @@ export function showRunnerPanel(term: ProjectTerminal): void {
       });
     }
 
-    // Wire up restart button (re-runs the run script)
+    // Wire up restart button (re-runs the run hook)
     const restartBtn = panel.querySelector('.runner-panel-restart');
     if (restartBtn) {
       restartBtn.addEventListener('click', (e) => {
@@ -982,7 +977,7 @@ export function killRunner(term: ProjectTerminal): void {
 }
 
 /**
- * Restart the runner — kill current process and re-run the run script
+ * Restart the runner — kill current process and re-run the run hook
  */
 async function restartRunner(term: ProjectTerminal): Promise<void> {
   const wasFullWidth = term.runnerFullWidth;
@@ -1040,7 +1035,7 @@ export async function runDefaultInCard(term: ProjectTerminal): Promise<void> {
       killExistingOnRun: settings.killExistingOnRun,
     });
     if (result?.saved && result.hook) {
-      showToast('Run script configured', 'success');
+      showToast('Run hook configured', 'success');
       // Run it now that it's configured
       await runDefaultInCard(term);
     }
@@ -1312,6 +1307,10 @@ export interface AddProjectTerminalOptions {
   worktreeBranchName?: string;
   sandboxed?: boolean;
   taskId?: number;
+  /** Skip automatic start/continue hook lookup — caller handles hooks explicitly */
+  skipAutoHook?: boolean;
+  /** Create terminal in background without navigating to it */
+  background?: boolean;
 }
 
 /**
@@ -1528,8 +1527,10 @@ export async function addProjectTerminal(runConfig?: RunConfig, options?: AddPro
 
     // Add to signals — effects handle updateCardStack, empty state, focus
     terminals.value = [...terminals.value, projectTerminal];
-    activeIndex.value = terminals.value.length - 1;
-    terminal.focus();
+    if (!options?.background) {
+      activeIndex.value = terminals.value.length - 1;
+      terminal.focus();
+    }
   }
 
   // Determine command to run - use start/continue hooks for worktree terminals if configured
@@ -1555,7 +1556,7 @@ export async function addProjectTerminal(runConfig?: RunConfig, options?: AddPro
     }
 
     // Use start/continue hooks if no explicit command was provided
-    if (!runConfig) {
+    if (!runConfig && !options?.skipAutoHook) {
       const hooks = await window.api.hooks.get(currentProjectPath);
       const hook = isNewTask ? hooks.start : hooks.continue;
       if (hook) {
@@ -1799,11 +1800,12 @@ export async function addProjectTerminal(runConfig?: RunConfig, options?: AddPro
       updateTerminalCardLabel(projectTerminal!);
     });
 
-    // Add terminal to list and set as active - effects will handle updateCardStack
+    // Add terminal to list - effects will handle updateCardStack
     terminals.value = [...terminals.value, projectTerminal];
-    activeIndex.value = terminals.value.length - 1;
-
-    terminal.focus();
+    if (!options?.background) {
+      activeIndex.value = terminals.value.length - 1;
+      terminal.focus();
+    }
     return true;
   } catch (error) {
     if (useSandbox) {

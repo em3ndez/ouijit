@@ -10,10 +10,11 @@ import { showToast } from '../importDialog';
 import { showHookConfigDialog, type HookConfigDialogOptions } from '../hookConfigDialog';
 
 const HOOK_HINTS: Record<string, string> = {
-  start: 'Runs when a new task is created',
-  continue: 'Runs when reopening an existing task',
-  run: 'Runs when you click the play button',
-  cleanup: 'Runs before archiving a task',
+  start: 'Runs when a task moves from To Do to In Progress',
+  continue: 'Runs when reopening an In Progress task',
+  run: 'Runs when you click Run',
+  review: 'Runs when a task moves to In Review',
+  cleanup: 'Runs when a task moves to Done',
   editor: 'Opens the task worktree in your editor',
 };
 
@@ -48,9 +49,9 @@ export function buildProjectHeader(): string {
         </button>
       </div>
       <div class="project-launch-wrapper">
-        <button class="project-scripts-btn" title="Configure scripts">
+        <button class="project-hooks-btn" title="Scripts">
           <i data-lucide="code"></i>
-          <i data-lucide="chevron-down" class="project-scripts-caret"></i>
+          <i data-lucide="chevron-down" class="project-hooks-caret"></i>
         </button>
       </div>
       <div class="project-sandbox-wrapper" style="display: none;">
@@ -167,12 +168,9 @@ export async function buildLaunchDropdownContent(dropdown: HTMLElement): Promise
   const hooksContainer = document.createElement('div');
   hooksContainer.className = 'hooks-container';
 
-  hooksContainer.appendChild(buildHookRow('start', 'Start', hooks.start, path));
-  hooksContainer.appendChild(buildHookRow('continue', 'Continue', hooks.continue, path));
   hooksContainer.appendChild(buildHookRow('run', 'Run', hooks.run, path, {
     killExistingOnRun: settings.killExistingOnRun,
   }));
-  hooksContainer.appendChild(buildHookRow('cleanup', 'Cleanup', hooks.cleanup, path));
   hooksContainer.appendChild(buildHookRow('editor', 'Editor', hooks.editor, path));
 
   dropdown.appendChild(hooksContainer);
