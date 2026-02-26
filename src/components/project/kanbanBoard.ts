@@ -8,7 +8,7 @@ import { projectState } from './state';
 import { projectPath, kanbanVisible, terminals, activeIndex, invalidateTaskList } from './signals';
 import { projectRegistry } from './helpers';
 import { showToast } from '../importDialog';
-import { showHookConfigDialog } from '../hookConfigDialog';
+import { showHookConfigDialog, showCombinedHookConfigDialog } from '../hookConfigDialog';
 import { reopenTask, deleteTask, closeTask, showMissingWorktreeDialog } from './worktreeDropdown';
 import { switchToProjectTerminal } from './terminalCards';
 import { escapeHtml, setupHighlightedTextarea } from '../../utils/html';
@@ -1011,10 +1011,10 @@ async function showStartCommandDialog(path: string, hookType: 'start' | 'continu
     overlay.className = 'modal-overlay';
 
     const dialog = document.createElement('div');
-    dialog.className = 'import-dialog';
+    dialog.className = 'dialog';
 
     const title = document.createElement('div');
-    title.className = 'import-dialog-title';
+    title.className = 'dialog-title';
     title.textContent = HOOK_DIALOG_TITLES[hookType] || 'Run Command';
     dialog.appendChild(title);
 
@@ -1082,7 +1082,7 @@ async function showStartCommandDialog(path: string, hookType: 'start' | 'continu
 
     // Action buttons
     const actions = document.createElement('div');
-    actions.className = 'import-actions';
+    actions.className = 'dialog-actions';
     actions.style.justifyContent = 'space-between';
 
     if (limaAvailable) {
@@ -1131,7 +1131,7 @@ async function showStartCommandDialog(path: string, hookType: 'start' | 'continu
     const cleanup = () => {
       unregisterHotkey('escape', Scopes.MODAL);
       popScope();
-      dialog.classList.remove('import-dialog--visible');
+      dialog.classList.remove('dialog--visible');
       overlay.classList.remove('modal-overlay--visible');
       setTimeout(() => overlay.remove(), 150);
     };
@@ -1154,7 +1154,7 @@ async function showStartCommandDialog(path: string, hookType: 'start' | 'continu
     // Animate in
     requestAnimationFrame(() => {
       overlay.classList.add('modal-overlay--visible');
-      dialog.classList.add('import-dialog--visible');
+      dialog.classList.add('dialog--visible');
       textarea.focus();
     });
   });
@@ -1244,87 +1244,6 @@ export function syncKanbanStatusDots(): void {
 }
 
 /**
- * Show a small dropdown for the In Progress column with Start/Continue hook options
- */
-function showColumnHookMenu(btn: HTMLElement, path: string): void {
-  // Remove any existing menu
-  document.querySelector('.column-hook-menu')?.remove();
-
-  const menu = document.createElement('div');
-  menu.className = 'column-hook-menu';
-
-  const items: { hookType: HookType; label: string; hint: string }[] = [
-    { hookType: 'start', label: 'Start', hint: 'Runs when a task starts' },
-    { hookType: 'continue', label: 'Continue', hint: 'Runs when reopening a task' },
-  ];
-
-  // Fetch hooks to show configured indicators
-  window.api.hooks.get(path).then(hooks => {
-    for (const { hookType, label, hint } of items) {
-      const item = document.createElement('button');
-      item.className = 'column-hook-menu-item';
-
-      const indicator = document.createElement('span');
-      const isConfigured = !!hooks[hookType as keyof typeof hooks];
-      indicator.className = isConfigured ? 'column-hook-menu-check' : 'column-hook-menu-check column-hook-menu-check--unconfigured';
-      indicator.innerHTML = isConfigured ? '<i data-lucide="check"></i>' : '<i data-lucide="help-circle"></i>';
-      item.appendChild(indicator);
-
-      const textWrap = document.createElement('div');
-      textWrap.className = 'column-hook-menu-text';
-      const labelEl = document.createElement('span');
-      labelEl.className = 'column-hook-menu-label';
-      labelEl.textContent = label;
-      textWrap.appendChild(labelEl);
-      const hintEl = document.createElement('span');
-      hintEl.className = 'column-hook-menu-hint';
-      hintEl.textContent = hint;
-      textWrap.appendChild(hintEl);
-      item.appendChild(textWrap);
-
-      item.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        dismiss();
-        const freshHooks = await window.api.hooks.get(path);
-        const existing = freshHooks[hookType as keyof typeof freshHooks];
-        const result = await showHookConfigDialog(path, hookType, existing);
-        if (result?.saved) {
-          showToast(`${label} hook ${result.hook ? 'updated' : 'removed'}`, 'success');
-          await refreshColumnHookIcons();
-        }
-      });
-
-      menu.appendChild(item);
-    }
-
-    // Render icons inside menu items if needed
-    createIcons({ icons, nameAttr: 'data-lucide', attrs: {}, nodes: [menu] });
-  });
-
-  document.body.appendChild(menu);
-
-  // Position below the button
-  const rect = btn.getBoundingClientRect();
-  menu.style.left = `${rect.left}px`;
-  menu.style.top = `${rect.bottom + 4}px`;
-
-  // Animate in
-  requestAnimationFrame(() => menu.classList.add('column-hook-menu--visible'));
-
-  // Dismiss on click outside
-  const dismiss = () => {
-    menu.classList.remove('column-hook-menu--visible');
-    setTimeout(() => menu.remove(), 100);
-    document.removeEventListener('mousedown', handleOutsideClick);
-  };
-  const handleOutsideClick = (e: MouseEvent) => {
-    if (menu.contains(e.target as Node)) return;
-    dismiss();
-  };
-  setTimeout(() => document.addEventListener('mousedown', handleOutsideClick), 0);
-}
-
-/**
  * Wire up click handlers for column header hook icons
  */
 function setupColumnHookHandlers(board: Element): void {
@@ -1341,8 +1260,13 @@ function setupColumnHookHandlers(board: Element): void {
       e.stopPropagation();
 
       if (hookInfo.hooks.length > 1) {
-        // In Progress: show dropdown with Start/Continue
-        showColumnHookMenu(btn as HTMLElement, path);
+        // In Progress: show combined start/continue dialog
+        const hooks = await window.api.hooks.get(path);
+        const result = await showCombinedHookConfigDialog(path, hooks.start, hooks.continue);
+        if (result?.saved) {
+          showToast('Hooks updated', 'success');
+          await refreshColumnHookIcons();
+        }
       } else {
         // In Review / Done: open dialog directly
         const hookType = hookInfo.hooks[0];
