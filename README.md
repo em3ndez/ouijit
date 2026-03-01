@@ -1,8 +1,17 @@
-# Ouijit
 
-Kanban terminal manager for CLI agent workflows with automatic git worktree isolation per task and optional VM sandboxing for agents out of the box.
+<div align=center><img width="93" height="16" alt="ouijit" src="https://github.com/user-attachments/assets/311f50f6-910a-4f99-8879-1cb81b42527f" /></div>
 
-**Download:** [macOS (Apple Silicon)](https://github.com/ouijit/ouijit/releases/latest/download/ouijit-darwin-arm64.zip) | [macOS (Intel)](https://github.com/ouijit/ouijit/releases/latest/download/ouijit-darwin-x64.zip) | [Linux](https://github.com/ouijit/ouijit/releases/latest/download/ouijit-linux-x64.zip)
+  <p align="center">
+    Kanban terminal manager for CLI agent workflows with automatic git worktree isolation and VM sandbox support included.
+    <br />
+    <span align=center>
+    <a href="https://github.com/ouijit/ouijit/releases/latest/download/ouijit-darwin-arm64.zip">macOS (Apple Silicon)</a>
+    ·
+    <a href="https://github.com/ouijit/ouijit/releases/latest/download/ouijit-darwin-x64.zip">macOS (Intel)</a>
+    ·
+    <a href="https://github.com/ouijit/ouijit/releases/latest/download/ouijit-linux-x64.zip">Linux</a>
+    </span>
+  </p>
 
 ![Ouijit Project Mode](board.gif)
 
