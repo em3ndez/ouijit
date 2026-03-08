@@ -17,6 +17,7 @@ import { projectSessions } from './components/project/state';
 import { renderSidebar, wireSidebarClicks, updateSidebarActiveState } from './components/sidebar';
 import { enterHomeView, exitHomeView } from './components/homeView';
 import { notifyReady, readyBody } from './utils/notifications';
+import { addTooltip } from './utils/tooltip';
 
 const rendererLog = log.scope('renderer');
 
@@ -306,6 +307,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Set up sidebar home button
   const homeBtn = document.getElementById('sidebar-home-btn');
   if (homeBtn) {
+    const homeIcon = homeBtn.querySelector('.sidebar-icon') as HTMLElement;
+    if (homeIcon) addTooltip(homeIcon, { text: 'Sessions' });
     homeBtn.addEventListener('click', () => {
       handleHomeSelect();
     });
@@ -314,6 +317,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Set up sidebar add button (shows menu with add/new options)
   const addBtn = document.getElementById('sidebar-add-btn');
   if (addBtn) {
+    addTooltip(addBtn, { text: 'Add project' });
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       showSidebarAddMenu(addBtn);
@@ -346,6 +350,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Back arrow button to reveal sidebar
     const revealBtn = document.getElementById('sidebar-reveal-btn');
     if (revealBtn) {
+      addTooltip(revealBtn, { text: 'Show sidebar', placement: 'bottom' });
       revealBtn.addEventListener('click', showSidebar);
     }
   }
