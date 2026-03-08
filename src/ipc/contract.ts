@@ -31,8 +31,10 @@ import type {
   ScriptHook,
   HookType,
   BranchInfo,
+  TagRow,
 } from '../types';
 import type { SandboxStatus } from '../lima/types';
+import type { HookStatusEntry } from '../hookServer';
 
 /** Hooks object returned by hooks:get — derived from the canonical ProjectSettings type */
 export type ProjectHooks = NonNullable<ProjectSettings['hooks']>;
@@ -55,6 +57,7 @@ export interface IpcInvokeContract {
   'remove-project':               { args: [folderPath: string];                                             return: { success: boolean } };
   'get-project-settings':         { args: [projectPath: string];                                            return: ProjectSettings };
   'settings:set-kill-existing-on-run': { args: [projectPath: string, kill: boolean];                        return: { success: boolean } };
+  'get-home-path':                { args: [];                                                               return: string };
 
   // ── Git ──────────────────────────────────────────────────────────────
   'get-git-status':               { args: [projectPath: string];                                            return: GitStatus | null };
@@ -102,8 +105,20 @@ export interface IpcInvokeContract {
 
   // ── Hooks ────────────────────────────────────────────────────────────
   'hooks:get':                    { args: [projectPath: string];                                            return: ProjectHooks };
+  'hooks:get-status':             { args: [ptyId: string];                                                  return: HookStatusEntry | null };
   'hooks:save':                   { args: [projectPath: string, hook: ScriptHook];                          return: { success: boolean } };
   'hooks:delete':                 { args: [projectPath: string, hookType: HookType];                        return: { success: boolean } };
+
+  // ── Tags ─────────────────────────────────────────────────────────────
+  'tags:get-all':                 { args: [];                                                               return: TagRow[] };
+  'tags:get-for-task':            { args: [projectPath: string, taskNumber: number];                        return: TagRow[] };
+  'tags:add-to-task':             { args: [projectPath: string, taskNumber: number, tagName: string];       return: TagRow };
+  'tags:remove-from-task':        { args: [projectPath: string, taskNumber: number, tagName: string];       return: void };
+  'tags:set-task-tags':           { args: [projectPath: string, taskNumber: number, tagNames: string[]];    return: TagRow[] };
+
+  // ── Global Settings ──────────────────────────────────────────────────
+  'settings:get-global':          { args: [key: string];                                                    return: string | undefined };
+  'settings:set-global':          { args: [key: string, value: string];                                     return: { success: boolean } };
 
   // ── Lima ─────────────────────────────────────────────────────────────
   'lima:status':                  { args: [projectPath: string];                                            return: SandboxStatus };
@@ -135,6 +150,6 @@ export interface IpcSendContract {
  */
 export interface IpcPushContract {
   'fullscreen-change':            { args: [isFullscreen: boolean] };
-  'claude-hook-status':           { args: [ptyId: string, status: string] };
+  'claude-hook-status':           { args: [ptyId: string, status: import('../hookServer').HookStatus] };
   'lima:spawn-progress':          { args: [message: string] };
 }

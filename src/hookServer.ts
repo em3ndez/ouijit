@@ -11,6 +11,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { BrowserWindow } from 'electron';
+import { isPtyActive } from './ptyManager';
 import log from './log';
 
 const hookServerLog = log.scope('hookServer');
@@ -24,18 +25,61 @@ export function getApiPort(): number {
   return apiPort;
 }
 
+// ── Hook status state (main-process, survives renderer reloads) ──────
+
+export type HookStatus = 'thinking' | 'ready';
+
+export interface HookStatusEntry {
+  status: HookStatus;
+  thinkingCount: number;
+}
+
+const hookStatusMap = new Map<string, HookStatusEntry>();
+
+/** Get the current hook status for a ptyId. Returns null if no hook activity. */
+export function getHookStatus(ptyId: string): HookStatusEntry | null {
+  return hookStatusMap.get(ptyId) ?? null;
+}
+
+/** Clear hook status for a ptyId (call on PTY exit). */
+export function clearHookStatus(ptyId: string): void {
+  hookStatusMap.delete(ptyId);
+}
+
+/** Clear all hook statuses (call on app cleanup). */
+export function clearAllHookStatuses(): void {
+  hookStatusMap.clear();
+}
+
 // ── Action handlers ──────────────────────────────────────────────────
 
 type ActionHandler = (body: Record<string, unknown>) => void;
 
-const VALID_STATUSES = new Set(['thinking', 'ready']);
+const VALID_STATUSES = new Set<HookStatus>(['thinking', 'ready']);
 
 const actionHandlers: Record<string, ActionHandler> = {
   status(body) {
     const { ptyId, status } = body;
     if (typeof ptyId !== 'string' || typeof status !== 'string') return;
-    if (!VALID_STATUSES.has(status)) return;
+    if (!VALID_STATUSES.has(status as HookStatus)) return;
+    if (!isPtyActive(ptyId)) return;
     hookServerLog.info('status update', { ptyId, status });
+
+    // Update main-process state map
+    const entry = hookStatusMap.get(ptyId);
+    if (status === 'thinking') {
+      hookStatusMap.set(ptyId, {
+        status: 'thinking',
+        thinkingCount: (entry?.thinkingCount ?? 0) + 1,
+      });
+    } else {
+      hookStatusMap.set(ptyId, {
+        status: 'ready',
+        thinkingCount: entry?.thinkingCount ?? 0,
+      });
+    }
+
+    // Forward to renderer for real-time UI updates
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('claude-hook-status', ptyId, status);
     }

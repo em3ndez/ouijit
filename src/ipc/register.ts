@@ -8,7 +8,9 @@ import { registerPtyHandlers } from './handlers/pty';
 import { registerTaskHandlers } from './handlers/task';
 import { registerWorktreeHandlers } from './handlers/worktree';
 import { registerHookHandlers } from './handlers/hooks';
+import { registerTagHandlers } from './handlers/tags';
 import { registerLimaHandlers } from './handlers/lima';
+import { registerSettingsHandlers } from './handlers/settings';
 
 /**
  * Registers all IPC handlers for the main process.
@@ -27,7 +29,9 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow): Promise<vo
   registerTaskHandlers();
   registerWorktreeHandlers();
   registerHookHandlers();
+  registerTagHandlers();
   registerLimaHandlers(mainWindow);
+  registerSettingsHandlers();
 }
 
 /**

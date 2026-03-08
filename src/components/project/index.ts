@@ -40,6 +40,7 @@ export {
   diffPanelSelectedFile,
   gitDropdownVisible,
   launchDropdownVisible,
+  homeViewActive,
   resetSignals,
 } from './signals';
 
@@ -91,6 +92,7 @@ export {
   setupCardActions,
   registerHookStatusListener,
   unregisterHookStatusListener,
+  reconnectTerminal,
 } from './terminalCards';
 
 // Launch dropdown

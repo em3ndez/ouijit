@@ -7,53 +7,41 @@
     <link rel="stylesheet" href="/src/index.css" />
   </head>
   <body>
-    <header class="header">
-      <div class="header-content">
-        <button id="refresh-btn" class="btn-icon-header" title="Refresh projects">
-          <i data-icon="arrows-clockwise"></i>
-        </button>
-        <div class="search-container">
-<i data-icon="magnifying-glass" class="search-icon"></i>
-          <input
-            type="text"
-            id="search-input"
-            class="search-input"
-            placeholder="Search projects..."
-            autocomplete="off"
-          />
+    <div class="app-layout">
+      <!-- Thin trigger zone on left edge to reveal sidebar -->
+      <div id="sidebar-trigger" class="sidebar-trigger"></div>
+      <!-- Sidebar: hidden until mouse reaches left edge -->
+      <aside id="project-sidebar" class="sidebar">
+        <div class="sidebar-drag-region"></div>
+        <div id="sidebar-home-btn" class="sidebar-home sidebar-home--active" title="Home">
+          <div class="sidebar-pill"></div>
+          <div class="sidebar-icon">
+            <div class="sidebar-home-logo"></div>
+          </div>
         </div>
-        <button id="add-folder-btn" class="btn-icon-header btn-icon-header--after" title="Add existing folder">
-          <i data-icon="folder-plus"></i>
-        </button>
-        <button id="new-project-btn" class="btn-icon-header btn-icon-header--after" title="New project">
-          <i data-icon="plus"></i>
-        </button>
-      </div>
-    </header>
+        <div class="sidebar-divider"></div>
+        <div id="sidebar-projects" class="sidebar-projects">
+          <!-- Project icons rendered here, add button appended after them -->
+          <button id="sidebar-add-btn" class="sidebar-action-btn" title="Add project">
+            <i data-icon="plus"></i>
+          </button>
+        </div>
+      </aside>
 
-    <main class="main-content">
-      <div class="project-list-header">
-        <span></span>
-        <span>Name</span>
-        <span>Description</span>
-        <span>Tags</span>
-        <span class="text-right">Modified</span>
-      </div>
-      <div id="project-grid" class="project-grid--minimal">
-        <!-- Project cards will be rendered here -->
-      </div>
+      <!-- Main area: header + content -->
+      <div class="app-main">
+        <header class="header">
+          <div class="header-content">
+            <!-- Populated dynamically: project header when active, empty when not -->
+          </div>
+          <button id="sidebar-reveal-btn" class="sidebar-reveal-btn" title="Show sidebar">
+            <i data-icon="arrow-left"></i>
+          </button>
+        </header>
 
-      <div id="empty-state" class="empty-state" style="display: none;">
-<i data-icon="folder-open" class="empty-state-icon"></i>
-        <h2 class="empty-state-title">No projects found</h2>
-        <p class="empty-state-description">Try adjusting your search or add some projects to get started.</p>
+        <main class="main-content"></main>
       </div>
-
-      <div id="loading-state" class="loading-state" style="display: none;">
-        <div class="loading-spinner"></div>
-        <p class="loading-text">Loading projects...</p>
-      </div>
-    </main>
+    </div>
 
     <script type="module" src="/src/renderer.ts"></script>
   </body>

@@ -120,13 +120,28 @@ contextBridge.exposeInMainWorld('api', {
     delete: (projectPath: string, hookType: HookType) => typedInvoke('hooks:delete', projectPath, hookType),
   },
 
+  tags: {
+    getAll: () => typedInvoke('tags:get-all'),
+    getForTask: (projectPath: string, taskNumber: number) => typedInvoke('tags:get-for-task', projectPath, taskNumber),
+    addToTask: (projectPath: string, taskNumber: number, tagName: string) => typedInvoke('tags:add-to-task', projectPath, taskNumber, tagName),
+    removeFromTask: (projectPath: string, taskNumber: number, tagName: string) => typedInvoke('tags:remove-from-task', projectPath, taskNumber, tagName),
+    setTaskTags: (projectPath: string, taskNumber: number, tagNames: string[]) => typedInvoke('tags:set-task-tags', projectPath, taskNumber, tagNames),
+  },
+
   onFullscreenChange: (callback: (isFullscreen: boolean) => void) => typedListen('fullscreen-change', callback),
 
   claudeHooks: {
     onStatus: (callback: (ptyId: string, status: string) => void) => typedListen('claude-hook-status', callback),
+    getStatus: (ptyId: string) => typedInvoke('hooks:get-status', ptyId),
+  },
+
+  globalSettings: {
+    get: (key: string) => typedInvoke('settings:get-global', key),
+    set: (key: string, value: string) => typedInvoke('settings:set-global', key, value),
   },
 
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+  homePath: (): Promise<string> => typedInvoke('get-home-path'),
 
   lima: {
     status: (projectPath: string) => typedInvoke('lima:status', projectPath),

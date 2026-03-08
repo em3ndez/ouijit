@@ -4,17 +4,30 @@ export type { GitStatus, GitDropdownInfo, ExtendedGitStatus, RecentBranch, Uncom
 export type { TaskWorktreeResult, WorktreeInfo, WorktreeRemoveResult, CheckWorktreeResult } from './worktree';
 // Re-export task types from db layer (single source of truth)
 export type { TaskStatus, TaskMetadata } from './db';
+// Re-export tag types from db layer (single source of truth)
+export type { TagRow } from './db';
 // Re-export PTY session type from ptyManager.ts (single source of truth)
 export type { ActiveSession } from './ptyManager';
 // Re-export sandbox status from lima/types.ts (single source of truth)
 export type { SandboxStatus } from './lima/types';
+// Re-export hook status types from hookServer.ts (single source of truth)
+export type { HookStatus, HookStatusEntry } from './hookServer';
 
 // Import for local use within this file
 import type { GitStatus, CompactGitStatus, GitDropdownInfo, ChangedFile, FileDiff, WorktreeDiffSummary, BranchInfo } from './git';
 import type { TaskWorktreeResult, WorktreeInfo, WorktreeRemoveResult, CheckWorktreeResult } from './worktree';
 import type { TaskStatus, TaskMetadata } from './db';
+import type { TagRow } from './db';
 import type { ActiveSession } from './ptyManager';
 import type { SandboxStatus } from './lima/types';
+import type { HookStatus, HookStatusEntry } from './hookServer';
+
+/**
+ * Persisted last active view for session recovery
+ */
+export type LastActiveView =
+  | { type: 'home' }
+  | { type: 'project'; path: string };
 
 /**
  * Represents a run configuration for launching a project
@@ -159,6 +172,10 @@ export interface PtyReconnectResult {
   success: boolean;
   /** Buffered output that was missed during disconnection */
   bufferedOutput?: string;
+  /** Whether the PTY is currently in alternate screen mode (TUI) */
+  isAltScreen?: boolean;
+  /** Terminal cols at time of last resize (for accurate buffer replay) */
+  lastCols?: number;
   error?: string;
 }
 
@@ -204,6 +221,14 @@ export interface HooksAPI {
   save(projectPath: string, hook: ScriptHook): Promise<{ success: boolean }>;
   /** Delete a hook for a project */
   delete(projectPath: string, hookType: HookType): Promise<{ success: boolean }>;
+}
+
+export interface TagsAPI {
+  getAll(): Promise<TagRow[]>;
+  getForTask(projectPath: string, taskNumber: number): Promise<TagRow[]>;
+  addToTask(projectPath: string, taskNumber: number, tagName: string): Promise<TagRow>;
+  removeFromTask(projectPath: string, taskNumber: number, tagName: string): Promise<void>;
+  setTaskTags(projectPath: string, taskNumber: number, tagNames: string[]): Promise<TagRow[]>;
 }
 
 export interface TaskAPI {
@@ -306,19 +331,26 @@ export interface ElectronAPI {
   setKillExistingOnRun(projectPath: string, kill: boolean): Promise<{ success: boolean }>;
   /** Script hooks API */
   hooks: HooksAPI;
+  /** Tags API */
+  tags: TagsAPI;
   /** Claude Code hook events */
   claudeHooks: ClaudeHooksAPI;
   /** Get file path from a dropped File object */
   getPathForFile(file: File): string;
+  /** User's home directory */
+  homePath(): Promise<string>;
   /** Lima sandbox API */
   lima: LimaAPI;
+  /** Global settings API */
+  globalSettings: GlobalSettingsAPI;
 }
 
 /**
  * Claude Code hook events API exposed to the renderer
  */
 export interface ClaudeHooksAPI {
-  onStatus(callback: (ptyId: PtyId, status: string) => void): () => void;
+  onStatus(callback: (ptyId: PtyId, status: HookStatus) => void): () => void;
+  getStatus(ptyId: PtyId): Promise<HookStatusEntry | null>;
 }
 
 /**
@@ -333,6 +365,14 @@ export interface LimaAPI {
   recreate(projectPath: string): Promise<{ success: boolean; error?: string }>;
   delete(projectPath: string): Promise<{ success: boolean; error?: string }>;
   onSpawnProgress(callback: (message: string) => void): () => void;
+}
+
+/**
+ * Global settings API exposed to the renderer
+ */
+export interface GlobalSettingsAPI {
+  get(key: string): Promise<string | undefined>;
+  set(key: string, value: string): Promise<{ success: boolean }>;
 }
 
 /**

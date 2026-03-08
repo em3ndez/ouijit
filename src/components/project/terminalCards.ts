@@ -5,11 +5,13 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import type { PtyId, PtySpawnOptions, RunConfig, WorktreeInfo } from '../../types';
+import type { PtyId, PtySpawnOptions, RunConfig, WorktreeInfo, ActiveSession } from '../../types';
 import {
   ProjectTerminal,
+  SummaryType,
   STACK_PAGE_SIZE,
   projectState,
+  projectSessions,
 } from './state';
 import { getTerminalGitPath, hideRunnerPanel, projectRegistry } from './helpers';
 import {
@@ -27,6 +29,7 @@ import { refreshTerminalGitStatus, buildCardGitBranchHtml, buildCardGitStatsHtml
 import { toggleTerminalDiffPanel, toggleTerminalWorktreeDiffPanel, hideTerminalDiffPanel } from './diffPanel';
 import { setSandboxButtonStarting, refreshSandboxButton } from './projectMode';
 import { convertIconsIn } from '../../utils/icons';
+import { escapeHtml } from '../../utils/html';
 import { notifyReady, readyBody } from '../../utils/notifications';
 
 // Platform detection for shortcuts display
@@ -85,10 +88,80 @@ export function setupTerminalAppHotkeys(terminal: Terminal): void {
 
 // Track pending resize timeouts per PTY (debounce rapid resize events)
 const pendingResizes = new Map<PtyId, ReturnType<typeof setTimeout>>();
+// Track pending rAF per PTY to deduplicate fit() calls
+const pendingResizeFrames = new Map<PtyId, number>();
+
+// ── Throttled data handler side-effects ───────────────────────────────
+// Per-chunk side-effects (idle timer, OSC title, git status) are throttled
+// to fire at most once per 250ms per terminal to reduce CPU overhead.
+const SIDE_EFFECT_THROTTLE_MS = 250;
+const sideEffectTimers = new Map<PtyId, ReturnType<typeof setTimeout>>();
+const pendingDataChunks = new Map<PtyId, string[]>();
+
+function throttledDataSideEffects(
+  ptyId: PtyId,
+  data: string,
+  term: ProjectTerminal,
+): void {
+  let chunks = pendingDataChunks.get(ptyId);
+  if (!chunks) { chunks = []; pendingDataChunks.set(ptyId, chunks); }
+  chunks.push(data);
+
+  if (sideEffectTimers.has(ptyId)) return; // Already scheduled, data accumulated
+
+  // Fire immediately (leading edge)
+  fireDataSideEffects(ptyId, term);
+
+  // Schedule trailing edge
+  sideEffectTimers.set(ptyId, setTimeout(() => {
+    sideEffectTimers.delete(ptyId);
+    const remaining = pendingDataChunks.get(ptyId);
+    if (remaining && remaining.length > 0) {
+      fireDataSideEffects(ptyId, term);
+    }
+  }, SIDE_EFFECT_THROTTLE_MS));
+}
+
+function fireDataSideEffects(ptyId: PtyId, term: ProjectTerminal): void {
+  // Skip expensive side-effects for preserved (background) projects
+  if (projectPath.value !== term.projectPath) {
+    pendingDataChunks.set(ptyId, []);
+    return;
+  }
+
+  resetIdleTimer(ptyId);
+
+  const chunks = pendingDataChunks.get(ptyId) || [];
+  const batch = chunks.join('');
+  pendingDataChunks.set(ptyId, []);
+
+  // OSC title extraction on batched data
+  const oscMatches = batch.matchAll(/\x1b\]0;([^\x07]*)\x07/g);
+  for (const match of oscMatches) {
+    const newTitle = match[1];
+    if (newTitle !== term.lastOscTitle) {
+      term.lastOscTitle = newTitle;
+      updateTerminalCardLabel(term);
+    }
+  }
+
+  if (projectPath.value) {
+    scheduleTerminalGitStatusRefresh(term, updateTerminalCardLabel);
+  }
+}
+
+/** Clean up throttle state for a terminal (call on terminal close) */
+export function clearDataThrottle(ptyId: PtyId): void {
+  const timer = sideEffectTimers.get(ptyId);
+  if (timer) clearTimeout(timer);
+  sideEffectTimers.delete(ptyId);
+  pendingDataChunks.delete(ptyId);
+}
 
 /**
  * Debounced resize handler to avoid rapid SIGWINCH signals that cause
  * text wrapping artifacts in shells like zsh during panel animations.
+ * Uses rAF to avoid layout thrashing inside ResizeObserver callbacks.
  */
 export function debouncedResize(ptyId: PtyId, terminal: Terminal, fitAddon: FitAddon): void {
   // Clear any pending resize for this terminal
@@ -97,14 +170,41 @@ export function debouncedResize(ptyId: PtyId, terminal: Terminal, fitAddon: FitA
     clearTimeout(pending);
   }
 
-  // Fit immediately (updates xterm.js display)
-  fitAddon.fit();
+  // Cancel pending rAF for this terminal
+  const pendingFrame = pendingResizeFrames.get(ptyId);
+  if (pendingFrame) cancelAnimationFrame(pendingFrame);
+
+  // Preserve scroll position across fit() — defer to rAF to avoid layout thrashing
+  pendingResizeFrames.set(ptyId, requestAnimationFrame(() => {
+    pendingResizeFrames.delete(ptyId);
+    scrollSafeFit(terminal, fitAddon);
+  }));
 
   // Debounce the PTY resize signal (50ms delay for animation settling)
   pendingResizes.set(ptyId, setTimeout(() => {
     pendingResizes.delete(ptyId);
     window.api.pty.resize(ptyId, terminal.cols, terminal.rows);
   }, 50));
+}
+
+/**
+ * Call fitAddon.fit() while preserving the terminal's scroll position.
+ * xterm.js resets the viewport to the bottom on reflow; this saves and
+ * restores the scroll offset when the user was reading scrollback.
+ */
+export function scrollSafeFit(terminal: Terminal, fitAddon: FitAddon): void {
+  const buf = terminal.buffer.active;
+  const atBottom = buf.viewportY >= buf.baseY;
+  const savedY = buf.viewportY;
+
+  fitAddon.fit();
+
+  // Only restore if the user had scrolled up — if at bottom, let it follow output
+  if (!atBottom) {
+    // baseY may have changed after fit, clamp to valid range
+    const newY = Math.min(savedY, terminal.buffer.active.baseY);
+    terminal.scrollToLine(newY);
+  }
 }
 
 /**
@@ -207,7 +307,12 @@ export function updateTerminalCardLabel(term: ProjectTerminal): void {
       if (!oscPill) {
         oscPill = document.createElement('span');
         oscPill.className = 'project-card-osc-title';
-        labelTop.appendChild(oscPill);
+        const tagsAnchor = labelTop.querySelector('.project-card-tags-row');
+        if (tagsAnchor) {
+          labelTop.insertBefore(oscPill, tagsAnchor);
+        } else {
+          labelTop.appendChild(oscPill);
+        }
       }
       oscPill.textContent = term.lastOscTitle;
       oscPill.title = term.lastOscTitle;
@@ -215,6 +320,17 @@ export function updateTerminalCardLabel(term: ProjectTerminal): void {
       oscPill.remove();
     }
   }
+
+  // Update tag pills display
+  const tagsRow = labelEl.querySelector('.project-card-tags-row') as HTMLElement;
+  if (tagsRow && !tagsRow.querySelector('.tag-input-container')) {
+    const tagsHtml = term.tags.map(t => `<span class="project-card-tag-pill">${escapeHtml(t)}</span>`).join('');
+    if (tagsRow.dataset.lastHtml !== tagsHtml) {
+      tagsRow.dataset.lastHtml = tagsHtml;
+      tagsRow.innerHTML = tagsHtml;
+    }
+  }
+  term.container.classList.toggle('project-card--has-tags', term.tags.length > 0);
 
   // Update git branch display (second line under label)
   const branchRow = labelEl.querySelector('.project-card-git-branch-row') as HTMLElement;
@@ -276,7 +392,9 @@ export function createProjectCard(label: string, index: number): HTMLElement {
       <div class="project-card-label-top">
         <span class="project-card-status-dot" data-status="ready"></span>
         <kbd class="project-card-shortcut" style="display: none;"></kbd>
-        <span class="project-card-label-text">${label}</span>
+        <span class="project-card-label-text">${escapeHtml(label)}</span>
+        <button class="project-card-tag-btn" title="Tags"><i data-icon="tag"></i></button>
+        <span class="project-card-tags-row"></span>
       </div>
       <div class="project-card-git-branch-row"></div>
     </div>
@@ -320,7 +438,7 @@ export function createLoadingCard(label: string): HTMLElement {
     <div class="project-card-label-left">
       <div class="project-card-label-top">
         <span class="project-card-status-dot project-card-status-dot--loading"></span>
-        <span class="project-card-label-text">${label || 'New task'}</span>
+        <span class="project-card-label-text">${escapeHtml(label || 'New task')}</span>
       </div>
     </div>
     <div class="project-card-label-right"></div>
@@ -410,6 +528,16 @@ export function setupCardActions(term: ProjectTerminal): void {
       e.preventDefault();
       e.stopPropagation();
       showCardContextMenu(e as MouseEvent, term);
+    });
+  }
+
+  // Tag button — works for all terminals (task tags persist, non-task are session-only)
+  const tagBtn = labelEl.querySelector('.project-card-tag-btn') as HTMLElement;
+  if (tagBtn) {
+    tagBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleTagInput(term);
     });
   }
 
@@ -1280,6 +1408,10 @@ export function switchToProjectTerminal(index: number): void {
   const currentTerminals = terminals.value;
   if (index < 0 || index >= currentTerminals.length || index === activeIndex.value) return;
 
+  // Collapse any open tag input on the previous active card
+  const prev = currentTerminals[activeIndex.value];
+  if (prev) collapseTagInput(prev);
+
   // Set the new active index - effects will handle updateCardStack, focus, and resize
   activeIndex.value = index;
 }
@@ -1489,6 +1621,7 @@ export async function addProjectTerminal(runConfig?: RunConfig, options?: AddPro
       sandboxed: true,
       taskId: options?.taskId ?? null,
       taskPrompt,
+      tags: [],
       worktreePath: worktreeInfo?.path,
       worktreeBranch: worktreeInfo?.branch,
       gitStatus: null,
@@ -1640,23 +1773,10 @@ export async function addProjectTerminal(runConfig?: RunConfig, options?: AddPro
       });
       projectTerminal.resizeObserver.observe(xtermContainer);
 
-      // Set up data listener
+      // Set up data listener (terminal.write is unthrottled, side-effects are throttled)
       projectTerminal.cleanupData = window.api.pty.onData(result.ptyId, (data) => {
         terminal.write(data);
-        resetIdleTimer(result.ptyId!);
-
-        const oscMatches = data.matchAll(/\x1b\]0;([^\x07]*)\x07/g);
-        for (const match of oscMatches) {
-          const newTitle = match[1];
-          if (newTitle !== projectTerminal!.lastOscTitle) {
-            projectTerminal!.lastOscTitle = newTitle;
-            updateTerminalCardLabel(projectTerminal!);
-          }
-        }
-
-        if (projectPath.value) {
-          scheduleTerminalGitStatusRefresh(projectTerminal!, updateTerminalCardLabel);
-        }
+        throttledDataSideEffects(result.ptyId!, data, projectTerminal!);
       });
 
       // Set up exit listener
@@ -1678,6 +1798,14 @@ export async function addProjectTerminal(runConfig?: RunConfig, options?: AddPro
       refreshTerminalGitStatus(projectTerminal).then(() => {
         updateTerminalCardLabel(projectTerminal!);
       });
+
+      // Load tags for task terminals
+      if (projectTerminal.taskId != null) {
+        window.api.tags.getForTask(currentProjectPath, projectTerminal.taskId).then((tags) => {
+          projectTerminal!.tags = tags.map(t => t.name);
+          updateTerminalCardLabel(projectTerminal!);
+        }).catch(() => {});
+      }
 
       terminal.focus();
       return true;
@@ -1701,6 +1829,7 @@ export async function addProjectTerminal(runConfig?: RunConfig, options?: AddPro
       sandboxed: useSandbox,
       taskId: options?.taskId ?? null,
       taskPrompt,
+      tags: [],
       worktreePath: worktreeInfo?.path,
       worktreeBranch: worktreeInfo?.branch,
       // Per-terminal git status and diff panel state
@@ -1731,25 +1860,10 @@ export async function addProjectTerminal(runConfig?: RunConfig, options?: AddPro
     });
     projectTerminal.resizeObserver.observe(xtermContainer);
 
-    // Set up data listener
+    // Set up data listener (terminal.write is unthrottled, side-effects are throttled)
     projectTerminal.cleanupData = window.api.pty.onData(result.ptyId, (data) => {
       terminal.write(data);
-      resetIdleTimer(result.ptyId!);
-
-      // Extract OSC title sequences (e.g., \x1b]0;Title Here\x07)
-      const oscMatches = data.matchAll(/\x1b\]0;([^\x07]*)\x07/g);
-      for (const match of oscMatches) {
-        const newTitle = match[1];
-        if (newTitle !== projectTerminal!.lastOscTitle) {
-          projectTerminal!.lastOscTitle = newTitle;
-          updateTerminalCardLabel(projectTerminal!);
-        }
-      }
-
-      if (projectPath.value) {
-        // Only schedule a refresh of this terminal's git status (not all terminals)
-        scheduleTerminalGitStatusRefresh(projectTerminal!, updateTerminalCardLabel);
-      }
+      throttledDataSideEffects(result.ptyId!, data, projectTerminal!);
     });
 
     // Set up exit listener
@@ -1802,6 +1916,14 @@ export async function addProjectTerminal(runConfig?: RunConfig, options?: AddPro
       updateTerminalCardLabel(projectTerminal!);
     });
 
+    // Load tags for task terminals
+    if (projectTerminal.taskId != null) {
+      window.api.tags.getForTask(currentProjectPath, projectTerminal.taskId).then((tags) => {
+        projectTerminal!.tags = tags.map(t => t.name);
+        updateTerminalCardLabel(projectTerminal!);
+      });
+    }
+
     // Add terminal to list - effects will handle updateCardStack
     terminals.value = [...terminals.value, projectTerminal];
     if (!options?.background) {
@@ -1835,9 +1957,13 @@ export function closeProjectTerminal(index: number): void {
 
   const term = currentTerminals[index];
 
+  // Collapse tag input to clean up click-outside listener
+  collapseTagInput(term);
+
   // Kill main PTY
   window.api.pty.kill(term.ptyId);
   clearIdleTimer(term.ptyId);
+  clearDataThrottle(term.ptyId);
 
   // Clean up main terminal
   if (term.cleanupData) term.cleanupData();
@@ -2229,6 +2355,427 @@ export function unregisterHookStatusListener(): void {
     hookStatusCleanup = null;
   }
   clearAllIdleTimers();
+}
+
+/**
+ * Shared terminal reconnection — creates Terminal + card, reconnects PTY, replays buffer.
+ * Returns a ProjectTerminal with data forwarding wired. Callers add their own
+ * close-button, card-click, and exit handlers.
+ *
+ * @param session  - ActiveSession from the main process
+ * @param container - DOM element to append the card to
+ * @param opts.worktreeBranch - optional branch name for worktree terminals
+ * @param opts.onData - optional extra callback when PTY emits data
+ */
+export async function reconnectTerminal(
+  session: ActiveSession,
+  container: HTMLElement,
+  opts: { worktreeBranch?: string; onData?: (ptyId: PtyId, data: string) => void; initialStatus?: SummaryType } = {},
+): Promise<ProjectTerminal | null> {
+  const terminal = new Terminal({
+    cursorBlink: true,
+    cursorStyle: 'bar',
+    fontSize: 14,
+    fontFamily: 'Iosevka Term Extended, "SF Mono", Menlo, Monaco, monospace',
+    lineHeight: 1.2,
+    theme: getTerminalTheme(),
+    allowTransparency: false,
+    scrollback: 2000,
+  });
+
+  const fitAddon = new FitAddon();
+  terminal.loadAddon(fitAddon);
+  terminal.loadAddon(new WebLinksAddon((_event, uri) => {
+    window.api.openExternal(uri);
+  }));
+
+  const card = createProjectCard(session.label, 0);
+  container.appendChild(card);
+  convertIconsIn(card);
+
+  const xtermContainer = card.querySelector('.terminal-xterm-container') as HTMLElement;
+  terminal.open(xtermContainer);
+  setupTerminalAppHotkeys(terminal);
+
+  // Enable native drag/drop on the terminal
+  const screen = xtermContainer.querySelector('.xterm-screen');
+  const dragTarget = screen || xtermContainer;
+  dragTarget.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if ((e as DragEvent).dataTransfer) {
+      (e as DragEvent).dataTransfer!.dropEffect = 'copy';
+    }
+  });
+  dragTarget.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const dt = (e as DragEvent).dataTransfer;
+    if (dt?.files.length) {
+      const paths = Array.from(dt.files)
+        .map(f => window.api.getPathForFile(f))
+        .filter((p): p is string => !!p)
+        .map(p => p.includes(' ') ? `"${p}"` : p)
+        .join(' ');
+      if (paths) terminal.paste(paths);
+    }
+  });
+
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  fitAddon.fit();
+
+  // Reconnect to existing PTY
+  const result = await window.api.pty.reconnect(session.ptyId);
+  if (!result.success) {
+    card.remove();
+    terminal.dispose();
+    return null;
+  }
+
+  // Replay buffered output and extract last OSC title
+  let lastOscTitle = '';
+  if (result.bufferedOutput) {
+    let buffer = result.bufferedOutput;
+
+    // Strip zsh PROMPT_EOL_MARK artifact from start of buffer.
+    // zsh outputs: SGR escapes + mark char (% or #) + SGR escapes + padding spaces + CR space CR.
+    // The erasure sequence doesn't reliably self-erase during bulk replay into a fresh xterm.js
+    // terminal, leaving a stray "%" on the first line.
+    buffer = buffer.replace(/^(?:\x1b\[[0-9;]*m)*[%#](?:\x1b\[[0-9;]*m)* +\r \r/, '');
+
+    // Replay at original terminal width so content wraps correctly,
+    // then resize to current dimensions after replay completes
+    const currentCols = terminal.cols;
+    const currentRows = terminal.rows;
+    if (result.lastCols && result.lastCols !== currentCols) {
+      terminal.resize(result.lastCols, currentRows);
+    }
+
+    // If PTY is in alternate screen mode, enter it before replay so TUI content
+    // renders on the alt screen (the enter sequence may have been trimmed from buffer)
+    if (result.isAltScreen) {
+      terminal.write('\x1b[?1049h');
+    }
+
+    terminal.write(buffer);
+
+    // Restore current dimensions (the upcoming resize event will sync the PTY)
+    if (result.lastCols && result.lastCols !== currentCols) {
+      terminal.resize(currentCols, currentRows);
+    }
+
+    // Extract the last OSC title from the buffer so the card label is correct
+    const oscMatches = buffer.matchAll(/\x1b\]0;([^\x07]*)\x07/g);
+    for (const match of oscMatches) {
+      lastOscTitle = match[1];
+    }
+  }
+
+  // Resize observer
+  const resizeObserver = new ResizeObserver(() => {
+    debouncedResize(session.ptyId, terminal, fitAddon);
+  });
+  resizeObserver.observe(xtermContainer);
+
+  // Trigger resize to sync terminal size
+  setTimeout(() => {
+    debouncedResize(session.ptyId, terminal, fitAddon);
+  }, 50);
+
+  const projectTerminal: ProjectTerminal = {
+    ptyId: session.ptyId,
+    projectPath: session.projectPath,
+    command: session.command,
+    label: session.label,
+    terminal,
+    fitAddon,
+    container: card,
+    cleanupData: null,
+    cleanupExit: null,
+    resizeObserver,
+    summary: '',
+    summaryType: opts.initialStatus ?? 'ready',
+    lastOscTitle,
+    sandboxed: !!session.sandboxed,
+    taskId: session.taskId ?? null,
+    tags: [],
+    worktreePath: session.worktreePath,
+    worktreeBranch: opts.worktreeBranch,
+    gitStatus: null,
+    diffPanelOpen: false,
+    diffPanelFiles: [],
+    diffPanelSelectedFile: null,
+    diffPanelMode: (session.taskId != null) ? 'worktree' : 'uncommitted',
+    runnerPanelOpen: false,
+    runnerPtyId: null,
+    runnerTerminal: null,
+    runnerFitAddon: null,
+    runnerLabel: '',
+    runnerCommand: null,
+    runnerStatus: 'idle',
+    runnerCleanupData: null,
+    runnerCleanupExit: null,
+    runnerFullWidth: true,
+    runnerSplitRatio: 0.5,
+    runnerResizeObserver: null,
+    runnerResizeCleanup: null,
+  };
+
+  // Wire PTY → terminal data flow
+  projectTerminal.cleanupData = window.api.pty.onData(session.ptyId, (data) => {
+    terminal.write(data);
+    opts.onData?.(session.ptyId, data);
+  });
+
+  // Wire terminal → PTY input forwarding
+  terminal.onData((data) => {
+    window.api.pty.write(session.ptyId, data);
+  });
+
+  // Force SIGWINCH so shell/TUI redraws at correct dimensions.
+  // node-pty may skip SIGWINCH if dimensions haven't changed, so bump cols
+  // by 1 then immediately restore to guarantee the signal fires.
+  window.api.pty.resize(session.ptyId, terminal.cols + 1, terminal.rows);
+  window.api.pty.resize(session.ptyId, terminal.cols, terminal.rows);
+
+  // Load tags for task terminals
+  if (projectTerminal.taskId != null) {
+    window.api.tags.getForTask(session.projectPath, projectTerminal.taskId).then((tags) => {
+      projectTerminal!.tags = tags.map(t => t.name);
+      updateTerminalCardLabel(projectTerminal!);
+    }).catch(() => {});
+  }
+
+  // Kick off initial git status so the card shows branch/changes immediately
+  refreshTerminalGitStatus(projectTerminal).then(() => {
+    updateTerminalCardLabel(projectTerminal);
+  }).catch(() => {});
+
+  updateTerminalCardLabel(projectTerminal);
+  return projectTerminal;
+}
+
+// ── Tag autocomplete from active sessions ────────────────────────────
+
+/** Collect unique tags from all active terminal sessions */
+function getActiveSessionTags(): { name: string }[] {
+  const seen = new Map<string, string>(); // lowercase → original
+  for (const [, session] of projectSessions) {
+    for (const term of session.terminals) {
+      for (const tag of term.tags) {
+        const key = tag.toLowerCase();
+        if (!seen.has(key)) seen.set(key, tag);
+      }
+    }
+  }
+  return Array.from(seen.values()).map(name => ({ name }));
+}
+
+// ── Tag input ────────────────────────────────────────────────────────
+
+function toggleTagInput(term: ProjectTerminal): void {
+  const tagsRow = term.container.querySelector('.project-card-tags-row') as HTMLElement;
+  if (!tagsRow) return;
+
+  if (tagsRow.querySelector('.tag-input-container')) {
+    collapseTagInput(term);
+  } else {
+    expandTagInput(term);
+  }
+}
+
+function expandTagInput(term: ProjectTerminal): void {
+  const tagsRow = term.container.querySelector('.project-card-tags-row') as HTMLElement;
+  if (!tagsRow || tagsRow.querySelector('.tag-input-container')) return;
+
+  const container = document.createElement('div');
+  container.className = 'tag-input-container';
+
+  // Render existing tags as removable chips
+  for (const t of term.tags) {
+    container.appendChild(createTagChip(t, term));
+  }
+
+  // Text input
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'tag-input-field';
+  input.placeholder = term.tags.length ? '' : 'Add tag…';
+  container.appendChild(input);
+
+  // Autocomplete dropdown
+  const dropdown = document.createElement('div');
+  dropdown.className = 'tag-autocomplete-dropdown';
+  dropdown.style.display = 'none';
+  container.appendChild(dropdown);
+
+  tagsRow.innerHTML = '';
+  delete tagsRow.dataset.lastHtml;
+  tagsRow.appendChild(container);
+
+  input.focus();
+
+  // Input event handler for autocomplete
+  input.addEventListener('input', async () => {
+    const value = input.value.trim();
+    if (!value) {
+      dropdown.style.display = 'none';
+      return;
+    }
+    try {
+      const allTags = getActiveSessionTags();
+      const existing = new Set(term.tags.map(t => t.toLowerCase()));
+      const matches = allTags
+        .filter(t => t.name.toLowerCase().includes(value.toLowerCase()) && !existing.has(t.name.toLowerCase()))
+        .slice(0, 8);
+
+      if (matches.length === 0) {
+        dropdown.style.display = 'none';
+        return;
+      }
+
+      dropdown.innerHTML = '';
+      for (const match of matches) {
+        const item = document.createElement('div');
+        item.className = 'tag-autocomplete-item';
+        item.textContent = match.name;
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault(); // prevent input blur
+          addTag(term, match.name, container, input);
+        });
+        dropdown.appendChild(item);
+      }
+      dropdown.style.display = 'block';
+    } catch {
+      dropdown.style.display = 'none';
+    }
+  });
+
+  // Key handlers
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const value = input.value.trim();
+      if (value) {
+        addTag(term, value, container, input);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      collapseTagInput(term);
+    } else if (e.key === 'Backspace' && !input.value && term.tags.length > 0) {
+      e.preventDefault();
+      const lastTag = term.tags[term.tags.length - 1];
+      removeTag(term, lastTag, container);
+    }
+  });
+
+  // Click outside to collapse (tag button handled by toggleTagInput, so exclude it)
+  const tagBtn = term.container.querySelector('.project-card-tag-btn');
+  const onClickOutside = (e: MouseEvent) => {
+    if (!container.contains(e.target as Node) && !tagBtn?.contains(e.target as Node)) {
+      collapseTagInput(term);
+      document.removeEventListener('mousedown', onClickOutside);
+    }
+  };
+  // Delay attaching to avoid immediate trigger
+  requestAnimationFrame(() => {
+    document.addEventListener('mousedown', onClickOutside);
+  });
+
+  // Store cleanup reference on the container element
+  (container as any)._cleanupClickOutside = onClickOutside;
+}
+
+export function collapseTagInput(term: ProjectTerminal): void {
+  const tagsRow = term.container.querySelector('.project-card-tags-row') as HTMLElement;
+  if (!tagsRow) return;
+
+  const container = tagsRow.querySelector('.tag-input-container');
+  if (!container) return;
+
+  const cleanup = (container as any)._cleanupClickOutside;
+  if (cleanup) document.removeEventListener('mousedown', cleanup);
+
+  // Remove input container so updateTerminalCardLabel can re-render pills
+  container.remove();
+  delete tagsRow.dataset.lastHtml;
+  updateTerminalCardLabel(term);
+}
+
+function createTagChip(tagName: string, term: ProjectTerminal): HTMLElement {
+  const chip = document.createElement('span');
+  chip.className = 'tag-chip';
+  chip.innerHTML = `${escapeHtml(tagName)}<button class="tag-chip-remove" title="Remove tag">&times;</button>`;
+
+  const removeBtn = chip.querySelector('.tag-chip-remove')!;
+  removeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const container = chip.closest('.tag-input-container') as HTMLElement;
+    if (container) {
+      removeTag(term, tagName, container);
+    }
+  });
+
+  return chip;
+}
+
+async function addTag(term: ProjectTerminal, tagName: string, container: HTMLElement, input: HTMLInputElement): Promise<void> {
+  const normalized = tagName.trim();
+  if (!normalized) return;
+
+  // Same tag already — no-op
+  if (term.tags.length === 1 && term.tags[0].toLowerCase() === normalized.toLowerCase()) {
+    input.value = '';
+    const dropdown = container.querySelector('.tag-autocomplete-dropdown') as HTMLElement;
+    if (dropdown) dropdown.style.display = 'none';
+    return;
+  }
+
+  // Single tag only — replace existing
+  if (term.taskId != null) {
+    try {
+      await window.api.tags.setTaskTags(term.projectPath, term.taskId, [normalized]);
+    } catch { /* DB not ready or task gone — still set in-memory */ }
+  }
+  term.tags = [normalized];
+
+
+  // Replace all chips with the new one
+  container.querySelectorAll('.tag-chip').forEach(c => c.remove());
+  const chip = createTagChip(normalized, term);
+  container.insertBefore(chip, input);
+
+  input.value = '';
+  input.placeholder = '';
+  const dropdown = container.querySelector('.tag-autocomplete-dropdown') as HTMLElement;
+  if (dropdown) dropdown.style.display = 'none';
+}
+
+async function removeTag(term: ProjectTerminal, tagName: string, container: HTMLElement): Promise<void> {
+  // Persist for task terminals, in-memory only for non-task
+  if (term.taskId != null) {
+    try {
+      await window.api.tags.removeFromTask(term.projectPath, term.taskId, tagName);
+    } catch { /* DB not ready or task gone */ }
+  }
+  term.tags = term.tags.filter(t => t.toLowerCase() !== tagName.toLowerCase());
+
+
+  // Remove the chip from DOM
+  const chips = container.querySelectorAll('.tag-chip');
+  for (const chip of chips) {
+    const text = chip.childNodes[0]?.textContent?.trim();
+    if (text?.toLowerCase() === tagName.toLowerCase()) {
+      chip.remove();
+      break;
+    }
+  }
+
+  // Update placeholder
+  const input = container.querySelector('.tag-input-field') as HTMLInputElement;
+  if (input && term.tags.length === 0) {
+    input.placeholder = 'Add tag…';
+  }
 }
 
 // Register functions in the project registry for cross-module access

@@ -32,6 +32,9 @@ import { initializeEffects } from './effects';
 import {
   hideGitDropdown,
   refreshAllTerminalGitStatus,
+  shouldSkipPeriodicRefresh,
+  clearAllPendingGitRefreshes,
+  resetDataDrivenRefreshTimestamp,
 } from './gitStatus';
 import {
   hideDiffPanel,
@@ -50,6 +53,7 @@ import {
   setupTerminalAppHotkeys,
   debouncedResize,
   closeProjectTerminal,
+  clearDataThrottle,
   getTerminalTheme,
   createProjectCard,
   updateTerminalCardLabel,
@@ -58,6 +62,7 @@ import {
   registerHookStatusListener,
   unregisterHookStatusListener,
   resetIdleTimer,
+  reconnectTerminal,
 } from './terminalCards';
 import {
   buildProjectHeader,
@@ -67,11 +72,53 @@ import {
 import { hideKanbanBoard, showKanbanBoard, showKanbanAndFocusInput, syncViewToggle } from './kanbanBoard';
 import { projectRegistry } from './helpers';
 import { registerHotkey, unregisterHotkey, pushScope, popScope, Scopes, platformHotkey } from '../../utils/hotkeys';
-import { showNewProjectDialog } from '../newProjectDialog';
-import { showToast } from '../importDialog';
 import { showHookConfigDialog } from '../hookConfigDialog';
 
 const projectLog = log.scope('project');
+
+/**
+ * Wire up event listeners on the project header buttons
+ */
+function wireProjectHeader(headerContent: Element, path: string): void {
+  convertIconsIn(headerContent as HTMLElement);
+
+  // Wire up hooks button (opens dropdown)
+  const hooksBtn = headerContent.querySelector('.project-hooks-btn');
+  if (hooksBtn) {
+    hooksBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleLaunchDropdown();
+    });
+  }
+
+  // Wire up new task button (opens task overlay)
+  const newTaskBtn = headerContent.querySelector('.project-newtask-btn');
+  if (newTaskBtn) {
+    newTaskBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showKanbanAndFocusInput();
+    });
+  }
+
+  // Wire up terminal button (opens new shell)
+  const terminalBtn = headerContent.querySelector('.project-terminal-btn');
+  if (terminalBtn) {
+    terminalBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (kanbanVisible.value) hideKanbanBoard();
+      await addProjectTerminal();
+    });
+  }
+
+  // Wire up sandbox button (dropdown)
+  const sandboxWrapper = headerContent.querySelector('.project-sandbox-wrapper') as HTMLElement;
+  if (sandboxWrapper) {
+    wireSandboxButton(sandboxWrapper, path);
+  }
+
+  // Wire up view toggle buttons
+  wireViewToggle(headerContent);
+}
 
 /**
  * Enter project mode for the specified project
@@ -90,6 +137,9 @@ export async function enterProjectMode(
   projectPath.value = path;
   projectData.value = existingSession?.projectData || project;
 
+  // Persist last active view for session recovery
+  window.api.globalSettings.set('lastActiveView', JSON.stringify({ type: 'project', path }));
+
   // Initialize reactive effects
   initializeEffects();
 
@@ -100,58 +150,19 @@ export async function enterProjectMode(
   document.body.classList.add('project-mode');
 
   // 2. Update header content
-  // Note: Git status is now displayed per-terminal on card labels, not in the header
   const headerContent = document.querySelector('.header-content');
   if (headerContent) {
-    projectState.originalHeaderContent = headerContent.innerHTML;
     headerContent.innerHTML = buildProjectHeader();
-
-    // Wire up exit button
-    const exitBtn = headerContent.querySelector('.project-exit-btn');
-    if (exitBtn) {
-      exitBtn.addEventListener('click', () => exitProjectMode());
-    }
-
-    // Wire up hooks button (opens dropdown)
-    const hooksBtn = headerContent.querySelector('.project-hooks-btn');
-    if (hooksBtn) {
-      hooksBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleLaunchDropdown();
-      });
-    }
-
-    // Wire up new task button (opens task overlay)
-    const newTaskBtn = headerContent.querySelector('.project-newtask-btn');
-    if (newTaskBtn) {
-      newTaskBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        showKanbanAndFocusInput();
-      });
-    }
-
-    // Wire up terminal button (opens new shell)
-    const terminalBtn = headerContent.querySelector('.project-terminal-btn');
-    if (terminalBtn) {
-      terminalBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (kanbanVisible.value) hideKanbanBoard();
-        await addProjectTerminal();
-      });
-    }
-
-    // Wire up sandbox button (dropdown)
-    const sandboxWrapper = headerContent.querySelector('.project-sandbox-wrapper') as HTMLElement;
-    if (sandboxWrapper) {
-      wireSandboxButton(sandboxWrapper, path);
-    }
-
-    // Wire up view toggle buttons
-    wireViewToggle(headerContent);
-
+    wireProjectHeader(headerContent, path);
   }
 
   // 3. Handle stack - restore existing or create new
+  // Pre-hide stack if kanban will be shown, to avoid a flash of terminals
+  const willShowKanban = !existingSession || existingSession.kanbanWasVisible;
+  if (willShowKanban) {
+    document.body.classList.add('kanban-open');
+  }
+
   const mainContent = document.querySelector('.main-content');
   if (mainContent) {
     if (existingSession) {
@@ -178,6 +189,17 @@ export async function enterProjectMode(
           window.api.pty.resize(term.ptyId, term.terminal.cols, term.terminal.rows);
         });
       }
+
+      // Seed hook status from main process (may have changed while viewing another project)
+      const hookSeeds = terminals.value.map(async (term) => {
+        const hookStatus = await window.api.claudeHooks.getStatus(term.ptyId);
+        if (hookStatus) {
+          term.summaryType = hookStatus.status === 'thinking' ? 'thinking' : 'ready';
+          updateTerminalCardLabel(term);
+        }
+      });
+      await Promise.all(hookSeeds);
+      if (!projectPath.value) return; // exited during async hook status queries
 
       // Focus the active terminal (effect will handle this too, but ensure immediate focus)
       const currentTerminals = terminals.value;
@@ -310,7 +332,6 @@ export async function enterProjectMode(
   // Use platformHotkey() to convert 'mod+' to 'command+' on Mac or 'ctrl+' on Linux/Windows
   pushScope(Scopes.PROJECT);
   registerHotkey(platformHotkey('mod+n'), Scopes.PROJECT, () => showKanbanAndFocusInput());
-  registerHotkey(platformHotkey('mod+b'), Scopes.PROJECT, () => projectRegistry.toggleKanbanBoard?.());
   registerHotkey(platformHotkey('mod+t'), Scopes.PROJECT, () => projectRegistry.toggleKanbanBoard?.());
   registerHotkey(platformHotkey('mod+i'), Scopes.PROJECT, () => addProjectTerminal());
   registerHotkey(platformHotkey('mod+p'), Scopes.PROJECT, () => projectRegistry.playOrToggleRunner?.());
@@ -332,12 +353,18 @@ export async function enterProjectMode(
   registerHotkey(platformHotkey('mod+shift+left'), Scopes.PROJECT, () => navigateStackPage(-1));
   registerHotkey(platformHotkey('mod+shift+right'), Scopes.PROJECT, () => navigateStackPage(1));
 
-  // 5. Show kanban board by default (after PROJECT scope so KANBAN scope stacks on top)
-  await showKanbanBoard();
+  // 5. Restore view: kanban if previously visible (or first entry), otherwise terminal stack
+  if (!existingSession || existingSession.kanbanWasVisible) {
+    await showKanbanBoard();
+  } else {
+    syncViewToggle();
+  }
 
   // 6. Start periodic git status refresh (for long-running commands)
   if (project.hasGit) {
+    if (projectState.gitStatusPeriodicInterval) clearInterval(projectState.gitStatusPeriodicInterval);
     projectState.gitStatusPeriodicInterval = setInterval(() => {
+      if (shouldSkipPeriodicRefresh()) return;
       refreshAllTerminalGitStatus().then(() => {
         for (const term of terminals.value) {
           updateTerminalCardLabel(term);
@@ -369,16 +396,22 @@ export function exitProjectMode(): void {
         }
       }
 
+      // Clear trailing-edge data throttle timers for preserved terminals
+      for (const term of currentTerminals) {
+        clearDataThrottle(term.ptyId);
+      }
+
       // Move stack to hidden container
       const hiddenContainer = ensureHiddenSessionsContainer();
       hiddenContainer.appendChild(stack);
 
-      // Store session data including diff panel state
+      // Store session data including view and diff panel state
       projectSessions.set(currentProjectPath, {
         terminals: [...currentTerminals],
         activeIndex: activeIndex.value,
         projectData: currentProjectData,
         stackElement: stack,
+        kanbanWasVisible: kanbanVisible.value,
         diffPanelWasOpen: diffPanelVisible.value,
         diffSelectedFile: diffPanelSelectedFile.value,
         diffFiles: [...diffPanelFiles.value],
@@ -392,55 +425,10 @@ export function exitProjectMode(): void {
   // 2. Remove class from body
   document.body.classList.remove('project-mode');
 
-  // 3. Restore header content
+  // 3. Clear header content (sidebar handles project navigation now)
   const headerContent = document.querySelector('.header-content');
-  if (headerContent && projectState.originalHeaderContent) {
-    headerContent.innerHTML = projectState.originalHeaderContent;
-    // Re-attach refresh handler with full behavior
-    const refreshBtn = headerContent.querySelector('#refresh-btn');
-    if (refreshBtn) {
-      refreshBtn.addEventListener('click', async () => {
-        refreshBtn.classList.add('spinning');
-        refreshBtn.setAttribute('disabled', 'true');
-        try {
-          await (window as any).refreshProjects?.();
-        } finally {
-          refreshBtn.classList.remove('spinning');
-          refreshBtn.removeAttribute('disabled');
-        }
-      });
-    }
-    // Re-attach new project handler
-    const newProjectBtn = headerContent.querySelector('#new-project-btn');
-    if (newProjectBtn) {
-      newProjectBtn.addEventListener('click', async () => {
-        const result = await showNewProjectDialog();
-        if (result?.created) {
-          await (window as any).refreshProjects?.();
-          showToast(`Created project: ${result.projectName}`, 'success');
-        }
-      });
-    }
-    // Re-attach add folder handler
-    const addFolderBtn = headerContent.querySelector('#add-folder-btn');
-    if (addFolderBtn) {
-      addFolderBtn.addEventListener('click', async () => {
-        const result = await window.api.showFolderPicker();
-        if (!result.canceled && result.filePaths.length > 0) {
-          const folderPath = result.filePaths[0];
-          const addResult = await window.api.addProject(folderPath);
-          if (addResult.success) {
-            await (window as any).refreshProjects?.();
-            const folderName = folderPath.split('/').pop() || folderPath;
-            const { showToast } = await import('../importDialog');
-            showToast(`Added project: ${folderName}`, 'success');
-          } else {
-            const { showToast } = await import('../importDialog');
-            showToast(addResult.error || 'Failed to add project', 'error');
-          }
-        }
-      });
-    }
+  if (headerContent) {
+    headerContent.innerHTML = '';
   }
 
   // 4. Unregister Claude hook status listener
@@ -448,7 +436,6 @@ export function exitProjectMode(): void {
 
   // 5. Remove keyboard shortcuts and pop scope
   unregisterHotkey(platformHotkey('mod+n'), Scopes.PROJECT);
-  unregisterHotkey(platformHotkey('mod+b'), Scopes.PROJECT);
   unregisterHotkey(platformHotkey('mod+t'), Scopes.PROJECT);
   unregisterHotkey(platformHotkey('mod+i'), Scopes.PROJECT);
   unregisterHotkey(platformHotkey('mod+p'), Scopes.PROJECT);
@@ -470,6 +457,8 @@ export function exitProjectMode(): void {
     clearInterval(projectState.gitStatusPeriodicInterval);
     projectState.gitStatusPeriodicInterval = null;
   }
+  clearAllPendingGitRefreshes();
+  resetDataDrivenRefreshTimestamp();
 
   // 6. Hide and cleanup git dropdown
   hideGitDropdown();
@@ -489,8 +478,6 @@ export function exitProjectMode(): void {
 
   // 9. Hide kanban board
   hideKanbanBoard();
-
-  projectState.originalHeaderContent = null;
 
   // Reset all signals to initial values
   resetSignals();
@@ -562,6 +549,9 @@ export async function restoreProjectMode(
   projectPath.value = path;
   projectData.value = project;
 
+  // Persist last active view for session recovery
+  window.api.globalSettings.set('lastActiveView', JSON.stringify({ type: 'project', path }));
+
   // Initialize reactive effects
   initializeEffects();
 
@@ -574,52 +564,8 @@ export async function restoreProjectMode(
   // 2. Update header content
   const headerContent = document.querySelector('.header-content');
   if (headerContent) {
-    projectState.originalHeaderContent = headerContent.innerHTML;
     headerContent.innerHTML = buildProjectHeader();
-
-    // Wire up exit button
-    const exitBtn = headerContent.querySelector('.project-exit-btn');
-    if (exitBtn) {
-      exitBtn.addEventListener('click', () => exitProjectMode());
-    }
-
-    // Wire up hooks button (opens dropdown)
-    const hooksBtn = headerContent.querySelector('.project-hooks-btn');
-    if (hooksBtn) {
-      hooksBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleLaunchDropdown();
-      });
-    }
-
-    // Wire up new task button (opens kanban board)
-    const newTaskBtn = headerContent.querySelector('.project-newtask-btn');
-    if (newTaskBtn) {
-      newTaskBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        showKanbanAndFocusInput();
-      });
-    }
-
-    // Wire up terminal button (opens new shell)
-    const terminalBtn = headerContent.querySelector('.project-terminal-btn');
-    if (terminalBtn) {
-      terminalBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (kanbanVisible.value) hideKanbanBoard();
-        await addProjectTerminal();
-      });
-    }
-
-    // Wire up sandbox button (dropdown)
-    const sandboxWrapper = headerContent.querySelector('.project-sandbox-wrapper') as HTMLElement;
-    if (sandboxWrapper) {
-      wireSandboxButton(sandboxWrapper, path);
-    }
-
-    // Wire up view toggle buttons
-    wireViewToggle(headerContent);
-
+    wireProjectHeader(headerContent, path);
   }
 
   // 3. Create stack and restore terminals
@@ -672,7 +618,6 @@ export async function restoreProjectMode(
   // 4. Set up keyboard shortcuts
   pushScope(Scopes.PROJECT);
   registerHotkey(platformHotkey('mod+n'), Scopes.PROJECT, () => showKanbanAndFocusInput());
-  registerHotkey(platformHotkey('mod+b'), Scopes.PROJECT, () => projectRegistry.toggleKanbanBoard?.());
   registerHotkey(platformHotkey('mod+t'), Scopes.PROJECT, () => projectRegistry.toggleKanbanBoard?.());
   registerHotkey(platformHotkey('mod+i'), Scopes.PROJECT, () => addProjectTerminal());
   registerHotkey(platformHotkey('mod+p'), Scopes.PROJECT, () => projectRegistry.playOrToggleRunner?.());
@@ -707,7 +652,9 @@ export async function restoreProjectMode(
     });
 
     // Periodic refresh for ongoing changes
+    if (projectState.gitStatusPeriodicInterval) clearInterval(projectState.gitStatusPeriodicInterval);
     projectState.gitStatusPeriodicInterval = setInterval(() => {
+      if (shouldSkipPeriodicRefresh()) return;
       refreshAllTerminalGitStatus().then(() => {
         for (const term of terminals.value) {
           updateTerminalCardLabel(term);
@@ -721,194 +668,49 @@ export async function restoreProjectMode(
  * Reconnect to an existing PTY session and create a terminal card for it
  */
 async function reconnectProjectTerminal(session: ActiveSession, worktreeBranch?: string): Promise<void> {
-
-  const terminal = new Terminal({
-    cursorBlink: true,
-    cursorStyle: 'bar',
-    fontSize: 14,
-    fontFamily: 'Iosevka Term Extended, "SF Mono", Menlo, Monaco, monospace',
-    lineHeight: 1.2,
-    theme: getTerminalTheme(),
-    allowTransparency: false,
-    scrollback: 2000,
-  });
-
-  const fitAddon = new FitAddon();
-  terminal.loadAddon(fitAddon);
-  terminal.loadAddon(new WebLinksAddon((_event, uri) => {
-    window.api.openExternal(uri);
-  }));
-
-  // Create the card UI
-  const index = terminals.value.length;
-  const card = createProjectCard(session.label, index);
-
-  // Add to DOM
   const stack = document.querySelector('.project-stack');
   if (!stack) return;
-  stack.appendChild(card);
 
-  // Render icons now that card is in the DOM
-  convertIconsIn(card);
+  // Query main-process hook status for correct initial state
+  const hookStatus = await window.api.claudeHooks.getStatus(session.ptyId);
+  const initialStatus = hookStatus?.status === 'thinking' ? 'thinking' as const : 'ready' as const;
 
-  const xtermContainer = card.querySelector('.terminal-xterm-container') as HTMLElement;
-
-  // Open terminal in container
-  terminal.open(xtermContainer);
-
-  // Let app hotkeys pass through xterm (needed for Linux where Ctrl+key combos are captured)
-  setupTerminalAppHotkeys(terminal);
-
-  // Enable native drag/drop on the terminal
-  // xterm.js creates a .xterm-screen element that captures all mouse events
-  const screen = xtermContainer.querySelector('.xterm-screen');
-  const dragTarget = screen || xtermContainer;
-
-  dragTarget.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if ((e as DragEvent).dataTransfer) {
-      (e as DragEvent).dataTransfer!.dropEffect = 'copy';
-    }
+  const projectTerminal = await reconnectTerminal(session, stack as HTMLElement, {
+    worktreeBranch,
+    onData: (ptyId) => resetIdleTimer(ptyId),
+    initialStatus,
   });
-
-  dragTarget.addEventListener('drop', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const dt = (e as DragEvent).dataTransfer;
-    if (dt?.files.length) {
-      const paths = Array.from(dt.files)
-        .map(f => window.api.getPathForFile(f))
-        .filter((p): p is string => !!p)
-        .map(p => p.includes(' ') ? `"${p}"` : p)
-        .join(' ');
-      if (paths) {
-        terminal.paste(paths);
-      }
-    }
-  });
-
-  // Fit after opening
-  requestAnimationFrame(() => {
-    fitAddon.fit();
-  });
-
-  // Reconnect to existing PTY
-  const result = await window.api.pty.reconnect(session.ptyId);
 
   // Guard: project mode may have been exited during the async reconnect
-  if (!projectPath.value) {
-    terminal.dispose();
-    card.remove();
+  if (!projectTerminal || !projectPath.value) {
+    if (projectTerminal) {
+      projectTerminal.terminal.dispose();
+      projectTerminal.container.remove();
+    }
     return;
   }
 
-  if (!result.success) {
-    projectLog.error('failed to reconnect to PTY', { ptyId: session.ptyId, error: result.error });
-    card.remove();
-    terminal.dispose();
-    return;
-  }
-
-  // Replay buffered output (scroll history)
-  if (result.bufferedOutput) {
-    // Reset terminal state first
-    terminal.reset();
-    // Write the full buffered history
-    terminal.write(result.bufferedOutput);
-  }
-
-  // Set up resize observer with debouncing to prevent zsh artifacts during animations
-  const resizeObserver = new ResizeObserver(() => {
-    debouncedResize(session.ptyId, terminal, fitAddon);
-  });
-  resizeObserver.observe(xtermContainer);
-
-  // Trigger resize to sync terminal size and force TUI apps to redraw
-  setTimeout(() => {
-    debouncedResize(session.ptyId, terminal, fitAddon);
-  }, 50);
-
-  // Create terminal object
-  const projectTerminal: ProjectTerminal = {
-    ptyId: session.ptyId,
-    projectPath: session.projectPath,
-    command: session.command,
-    label: session.label,
-    terminal,
-    fitAddon,
-    container: card,
-    cleanupData: null,
-    cleanupExit: null,
-    resizeObserver,
-    summary: '',
-    summaryType: 'ready',
-    lastOscTitle: '',
-    sandboxed: !!session.sandboxed,
-    taskId: session.taskId ?? null,
-    worktreePath: session.worktreePath,
-    worktreeBranch,
-    gitStatus: null,
-    diffPanelOpen: false,
-    diffPanelFiles: [],
-    diffPanelSelectedFile: null,
-    diffPanelMode: (session.taskId != null) ? 'worktree' : 'uncommitted',
-    // Runner panel state
-    runnerPanelOpen: false,
-    runnerPtyId: null,
-    runnerTerminal: null,
-    runnerFitAddon: null,
-    runnerLabel: '',
-    runnerCommand: null,
-    runnerStatus: 'idle',
-    runnerCleanupData: null,
-    runnerCleanupExit: null,
-    runnerFullWidth: true,
-    runnerSplitRatio: 0.5,
-    runnerResizeObserver: null,
-    runnerResizeCleanup: null,
-  };
-
-  // Set up close button handler
-  const closeBtn = card.querySelector('.project-card-close') as HTMLButtonElement;
+  // Wire project-mode-specific handlers
+  const closeBtn = projectTerminal.container.querySelector('.project-card-close') as HTMLButtonElement;
   if (closeBtn) {
     closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const idx = terminals.value.indexOf(projectTerminal);
-      if (idx !== -1) {
-        closeProjectTerminal(idx);
-      }
+      if (idx !== -1) closeProjectTerminal(idx);
     });
   }
 
-  // Card click handler (to bring to front)
-  card.addEventListener('click', () => {
+  projectTerminal.container.addEventListener('click', () => {
     const idx = terminals.value.indexOf(projectTerminal);
     if (idx !== -1 && idx !== activeIndex.value) {
       switchToProjectTerminal(idx);
     }
   });
 
-  // Set up data handler
-  const cleanupData = window.api.pty.onData(session.ptyId, (data) => {
-    terminal.write(data);
-    resetIdleTimer(session.ptyId);
-  });
-  projectTerminal.cleanupData = cleanupData;
-
-  // Set up exit handler
-  const cleanupExit = window.api.pty.onExit(session.ptyId, () => {
+  projectTerminal.cleanupExit = window.api.pty.onExit(session.ptyId, () => {
     projectLog.info('terminal exited', { ptyId: session.ptyId });
     const idx = terminals.value.indexOf(projectTerminal);
-    if (idx !== -1) {
-      closeProjectTerminal(idx);
-    }
-  });
-  projectTerminal.cleanupExit = cleanupExit;
-
-  // Forward input to PTY
-  terminal.onData((data) => {
-    window.api.pty.write(session.ptyId, data);
+    if (idx !== -1) closeProjectTerminal(idx);
   });
 
   // Add to terminals array
@@ -917,18 +719,15 @@ async function reconnectProjectTerminal(session: ActiveSession, worktreeBranch?:
   // Set up card action buttons (runner pill for all, close-task for worktrees)
   setupCardActions(projectTerminal);
 
-  // Mark sandboxed terminals with a ring on the status dot
+  // Mark sandboxed terminals
   if (projectTerminal.sandboxed) {
-    const dot = card.querySelector('.project-card-status-dot');
+    const dot = projectTerminal.container.querySelector('.project-card-status-dot');
     if (dot) dot.classList.add('project-card-status-dot--sandboxed');
   }
 
-  // Update card label
-  updateTerminalCardLabel(projectTerminal);
-
   // Focus if this is the first terminal
   if (terminals.value.length === 1) {
-    terminal.focus();
+    projectTerminal.terminal.focus();
   }
 }
 

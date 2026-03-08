@@ -32,6 +32,8 @@ export interface ProjectTerminal {
   taskPrompt?: string;
   worktreePath?: string;
   worktreeBranch?: string;
+  // Tags
+  tags: string[];
   // Per-terminal git status and diff panel state
   gitStatus: CompactGitStatus | null;
   diffPanelOpen: boolean;
@@ -61,6 +63,8 @@ export interface StoredProjectSession {
   activeIndex: number;
   projectData: Project;
   stackElement: HTMLElement;
+  // View state
+  kanbanWasVisible: boolean;
   // Diff panel state
   diffPanelWasOpen: boolean;
   diffSelectedFile: string | null;
@@ -70,8 +74,8 @@ export interface StoredProjectSession {
 // Constants
 export const STACK_PAGE_SIZE = 5;
 export const HIDDEN_SESSIONS_CONTAINER_ID = 'hidden-project-sessions';
-export const GIT_STATUS_IDLE_DELAY = 2000;
-export const GIT_STATUS_PERIODIC_INTERVAL = 15000;
+export const GIT_STATUS_IDLE_DELAY = 3000;
+export const GIT_STATUS_PERIODIC_INTERVAL = 30000;
 
 /**
  * Non-reactive project mode state
@@ -79,9 +83,6 @@ export const GIT_STATUS_PERIODIC_INTERVAL = 15000;
  * Reactive state is now in signals.ts
  */
 export const projectState = {
-  // Header content for restoration on exit
-  originalHeaderContent: null as string | null,
-
   // Keyboard handler reference
   escapeKeyHandler: null as ((e: KeyboardEvent) => void) | null,
 

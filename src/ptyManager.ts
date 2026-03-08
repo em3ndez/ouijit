@@ -3,7 +3,7 @@ import * as pty from 'node-pty';
 import { BrowserWindow } from 'electron';
 import type { PtyId, PtySpawnOptions, PtySpawnResult } from './types';
 import { generateId } from './utils/ids';
-import { getApiPort, getWrapperBinDir, getShellIntegrationDir } from './hookServer';
+import { getApiPort, getWrapperBinDir, getShellIntegrationDir, clearHookStatus, clearAllHookStatuses } from './hookServer';
 import log from './log';
 
 const ptyLog = log.scope('pty');
@@ -23,6 +23,9 @@ interface ManagedPty {
   outputChunks: string[];
   outputSize: number;
   maxBufferSize: number;
+  // Terminal state tracking for accurate reconnection replay
+  isAltScreen: boolean;
+  lastCols: number;
 }
 
 export interface ActiveSession {
@@ -72,6 +75,14 @@ function canSendToRenderer(): boolean {
 function handlePtyOutput(ptyId: PtyId, channel: string, data: string): void {
   const managed = activePtys.get(ptyId);
   if (!managed) return;
+
+  // Track alternate screen mode (smcup/rmcup) for reconnection replay
+  if (data.includes('\x1b[?1049h') || data.includes('\x1b[?47h')) {
+    managed.isAltScreen = true;
+  }
+  if (data.includes('\x1b[?1049l') || data.includes('\x1b[?47l')) {
+    managed.isAltScreen = false;
+  }
 
   // Array-based buffering to avoid string concatenation churn
   managed.outputChunks.push(data);
@@ -207,6 +218,8 @@ export async function spawnPty(
       outputChunks: [],
       outputSize: 0,
       maxBufferSize: MAX_BUFFER_SIZE,
+      isAltScreen: false,
+      lastCols: options.cols || 80,
     };
 
     activePtys.set(ptyId, managed);
@@ -222,6 +235,7 @@ export async function spawnPty(
         currentWindow!.webContents.send(`pty:exit:${ptyId}`, exitCode);
       }
       activePtys.delete(ptyId);
+      clearHookStatus(ptyId);
     });
 
     return { success: true, ptyId };
@@ -240,7 +254,7 @@ export async function spawnPty(
 export function reconnectPty(
   ptyId: PtyId,
   window: BrowserWindow
-): { success: boolean; bufferedOutput?: string; error?: string } {
+): { success: boolean; bufferedOutput?: string; isAltScreen?: boolean; lastCols?: number; error?: string } {
   const managed = activePtys.get(ptyId);
   if (!managed) {
     return { success: false, error: `PTY ${ptyId} not found` };
@@ -252,7 +266,12 @@ export function reconnectPty(
   // Join chunks for replay (only done on reconnection, not per data event)
   const bufferedOutput = managed.outputChunks.join('');
 
-  return { success: true, bufferedOutput };
+  return {
+    success: true,
+    bufferedOutput,
+    isAltScreen: managed.isAltScreen,
+    lastCols: managed.lastCols,
+  };
 }
 
 /**
@@ -272,6 +291,11 @@ export function getActiveSessions(): ActiveSession[] {
   }));
 }
 
+/** Check if a PTY is currently active */
+export function isPtyActive(ptyId: PtyId): boolean {
+  return activePtys.has(ptyId);
+}
+
 export function writeToPty(ptyId: PtyId, data: string): void {
   const managed = activePtys.get(ptyId);
   if (managed) {
@@ -283,6 +307,7 @@ export function resizePty(ptyId: PtyId, cols: number, rows: number): void {
   const managed = activePtys.get(ptyId);
   if (managed) {
     managed.process.resize(cols, rows);
+    managed.lastCols = cols;
   }
 }
 
@@ -317,6 +342,7 @@ export function killPty(ptyId: PtyId): void {
   }, SIGKILL_GRACE);
 
   activePtys.delete(ptyId);
+  clearHookStatus(ptyId);
 }
 
 export function cleanupAllPtys(): void {
@@ -332,4 +358,5 @@ export function cleanupAllPtys(): void {
     }
   }
   activePtys.clear();
+  clearAllHookStatuses();
 }

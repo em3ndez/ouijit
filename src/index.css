@@ -92,6 +92,7 @@
 
   /* Layout */
   --header-height: 72px;
+  --sidebar-width: 72px;
   --content-max-width: 1200px;
   --content-padding: 24px;
 
@@ -164,11 +165,6 @@ textarea,
   to { transform: rotate(360deg); }
 }
 
-@keyframes rowFadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
 @keyframes terminal-status-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
@@ -188,6 +184,227 @@ textarea,
 }
 
 /* ===================================
+   App Layout (sidebar + main)
+   =================================== */
+
+.app-layout {
+  @apply flex h-screen overflow-hidden;
+}
+
+.app-main {
+  @apply flex-1 flex flex-col min-w-0 overflow-hidden;
+}
+
+/* ===================================
+   Sidebar
+   =================================== */
+
+.sidebar {
+  @apply flex flex-col shrink-0 overflow-hidden;
+  width: 0;
+  transition: width 200ms ease-out;
+}
+
+.sidebar--visible {
+  width: var(--sidebar-width);
+}
+
+/* Invisible trigger zone on left edge to reveal sidebar */
+.sidebar-trigger {
+  @apply fixed top-0 bottom-0 left-0 z-[10000];
+  width: 16px;
+}
+
+.sidebar--visible ~ .sidebar-trigger {
+  display: none;
+}
+
+/* Small back arrow hint when sidebar is collapsed — straddles header/content boundary */
+.sidebar-reveal-btn {
+  @apply absolute z-[101] flex items-center justify-center border-none bg-transparent text-white/20 transition-opacity duration-150 ease-out;
+  bottom: -12px;
+  left: 16px;
+  width: 24px;
+  height: 24px;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-reveal-btn:hover {
+  @apply text-white/50;
+}
+
+.sidebar-reveal-btn svg {
+  @apply w-4 h-4;
+}
+
+/* Hide when sidebar is visible */
+.sidebar--visible ~ .app-main .sidebar-reveal-btn {
+  @apply opacity-0 pointer-events-none;
+}
+
+.sidebar-drag-region {
+  -webkit-app-region: drag;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+body.platform-darwin:not(.is-fullscreen) .sidebar-drag-region {
+  height: 52px;
+}
+
+.sidebar-projects {
+  @apply flex-1 flex flex-col items-center gap-2 py-2 overflow-y-auto overflow-x-hidden;
+  scrollbar-width: none;
+}
+
+.sidebar-projects::-webkit-scrollbar {
+  @apply w-0 h-0;
+}
+
+.sidebar-item {
+  @apply relative flex items-center justify-center shrink-0;
+  width: var(--sidebar-width);
+  height: 48px;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-pill {
+  @apply absolute left-0 w-1 rounded-r-sm bg-white transition-all duration-200 ease-out;
+  height: 0;
+  opacity: 0;
+}
+
+.sidebar-item:hover .sidebar-pill {
+  height: 20px;
+  opacity: 0.5;
+}
+
+.sidebar-item--active .sidebar-pill {
+  height: 36px;
+  opacity: 1;
+}
+
+.sidebar-icon {
+  @apply w-10 h-10 overflow-hidden rounded-md;
+}
+
+.sidebar-icon-image {
+  @apply w-full h-full object-cover;
+}
+
+.sidebar-icon-placeholder {
+  @apply w-full h-full flex items-center justify-center text-sm font-bold text-white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* Session count badge */
+.sidebar-session-badge {
+  @apply absolute text-white font-bold leading-none;
+  bottom: 0px;
+  right: 8px;
+  min-width: 16px;
+  height: 16px;
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--color-accent);
+  border: 2px solid var(--color-background);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-action-btn {
+  @apply w-10 h-10 flex items-center justify-center rounded-md bg-background-secondary border border-border/50 text-text-secondary transition-colors duration-200 ease-out mt-2;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-action-btn:hover {
+  @apply bg-background-tertiary text-text-primary;
+}
+
+.sidebar-action-btn svg {
+  @apply w-5 h-5;
+}
+
+/* Sidebar add menu */
+.sidebar-add-menu {
+  @apply fixed z-[2000] py-1 bg-surface border border-border rounded-md shadow-lg overflow-hidden opacity-0;
+  min-width: 180px;
+  transition: opacity 100ms ease;
+}
+
+.sidebar-add-menu--visible {
+  @apply opacity-100;
+}
+
+.sidebar-add-menu-item {
+  @apply w-full px-3 py-1.5 text-xs text-text-primary bg-transparent border-none text-left transition-colors duration-100 ease-out;
+}
+
+.sidebar-add-menu-item:hover {
+  @apply bg-background-tertiary;
+}
+
+/* Sidebar home icon */
+.sidebar-home {
+  @apply relative flex items-center justify-center shrink-0;
+  width: var(--sidebar-width);
+  height: 48px;
+  -webkit-app-region: no-drag;
+  align-self: center;
+}
+
+.sidebar-home .sidebar-icon {
+  background-color: transparent;
+}
+
+
+.sidebar-home-logo {
+  width: 100%;
+  height: 100%;
+  -webkit-mask-image: url('./assets/ouijit-logomark.svg');
+  mask-image: url('./assets/ouijit-logomark.svg');
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  background-color: var(--color-text-secondary);
+  transition: background-color 150ms ease-out;
+}
+
+.sidebar-home--active .sidebar-home-logo {
+  background-color: var(--color-accent);
+}
+
+.sidebar-home .sidebar-pill {
+  @apply absolute left-0 w-1 rounded-r-sm bg-white transition-all duration-200 ease-out;
+  height: 0;
+  opacity: 0;
+}
+
+.sidebar-home:hover .sidebar-pill {
+  height: 20px;
+  opacity: 0.5;
+}
+
+.sidebar-home--active .sidebar-pill {
+  height: 36px;
+  opacity: 1;
+}
+
+.sidebar-divider {
+  @apply mx-auto mb-1 mt-2;
+  width: 32px;
+  height: 1px;
+  background: var(--color-border);
+  flex-shrink: 0;
+}
+
+
+/* ===================================
    Header - App Region Drag
    =================================== */
 
@@ -202,9 +419,14 @@ textarea,
   @apply max-w-[var(--content-max-width)] mx-auto px-6 py-4 flex items-center justify-center gap-2;
 }
 
-/* Add extra left padding for macOS traffic lights (except fullscreen) */
+/* Traffic light padding: when sidebar is hidden, header needs left padding */
 body.platform-darwin:not(.is-fullscreen) .header-content {
   @apply pl-20;
+  transition: padding-left 200ms ease-out;
+}
+
+body.platform-darwin:not(.is-fullscreen) .sidebar--visible ~ .app-main .header-content {
+  @apply pl-4;
 }
 
 .app-title {
@@ -277,98 +499,8 @@ body.platform-darwin:not(.is-fullscreen) .header-content {
 
 /* Main Content */
 .main-content {
-  @apply max-w-[var(--content-max-width)] mx-auto min-h-[calc(100vh-var(--header-height))];
-  padding: var(--spacing-xl) var(--content-padding) var(--spacing-2xl);
-}
-
-/* Project List Header */
-.project-list-header {
-  @apply grid gap-4 py-2 px-6 text-xs font-medium text-text-tertiary uppercase tracking-wide;
-  grid-template-columns: 40px 200px 1fr 150px 120px;
-}
-
-/* Project List */
-.project-grid {
-  @apply flex flex-col bg-surface rounded-md border border-border;
-}
-
-/* Minimal variant - no background, borders, or container styling */
-.project-grid--minimal {
-  @apply flex flex-col bg-transparent rounded-none border-none;
-}
-
-.project-grid--minimal > .project-row {
-  @apply rounded-none border-b-0;
-}
-
-.project-grid--minimal > .project-row:hover {
-  @apply bg-accent-light rounded-md;
-}
-
-.project-grid > .project-row:first-child {
-  @apply rounded-t-2xl rounded-b-none;
-}
-
-.project-grid > .project-row:last-child {
-  @apply rounded-b-2xl rounded-t-none;
-}
-
-.project-grid > .project-row:only-child {
-  @apply rounded-md;
-}
-
-/* Project Row */
-.project-row {
-  @apply grid items-center gap-4 px-6 py-4 border-b border-border relative transition-colors duration-150 ease-out;
-  grid-template-columns: 40px 200px 1fr 150px 120px;
-  animation: rowFadeIn 0.2s ease-out backwards;
-}
-
-.project-row:last-child {
-  @apply border-b-0;
-}
-
-.project-row:hover {
-  @apply bg-background;
-}
-
-.project-row:hover .last-modified {
-  @apply opacity-0;
-}
-
-.project-info {
-  @apply flex flex-col gap-0.5 min-w-0;
-}
-
-/* Project Icon */
-.project-icon {
-  @apply shrink-0 w-10 h-10 rounded-md overflow-hidden;
-}
-
-.project-icon-image {
-  @apply w-full h-full object-cover;
-}
-
-.project-icon-placeholder {
-  @apply w-full h-full flex items-center justify-center text-lg font-bold text-white;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-}
-
-.project-name {
-  @apply text-base font-semibold text-text-primary tracking-tight leading-tight truncate;
-}
-
-.project-path {
-  @apply text-xs text-text-tertiary truncate max-w-full;
-}
-
-/* Project Description */
-.project-description {
-  @apply text-sm text-text-secondary leading-relaxed min-w-0 truncate;
-}
-
-.last-modified {
-  @apply text-xs text-text-tertiary text-right transition-opacity duration-150 ease-out;
+  @apply flex-1 min-h-0;
+  padding: var(--spacing-md) var(--content-padding);
 }
 
 .btn {
@@ -423,62 +555,7 @@ body.platform-darwin:not(.is-fullscreen) .header-content {
   transform: translateY(0);
 }
 
-/* Empty State */
-.empty-state {
-  @apply flex flex-col items-center justify-center text-center p-12 min-h-[400px];
-}
-
-/* Loading State */
-.loading-state {
-  @apply flex flex-col items-center justify-center p-12 min-h-[400px];
-}
-
-.loading-spinner {
-  @apply w-10 h-10 border-3 border-border border-t-accent rounded-full;
-  animation: spin 0.8s linear infinite;
-}
-
-/* Error State */
-.error-state {
-  @apply flex flex-col items-center justify-center text-center p-12 min-h-[400px];
-}
-
-.error-message {
-  @apply text-xl font-semibold text-red-600 mb-2;
-}
-
-.error-details {
-  @apply text-sm text-text-secondary max-w-[320px];
-}
-
-/* Empty State Alt Classes */
-.empty-state-message {
-  @apply text-xl font-semibold text-text-primary mb-2;
-}
-
-.empty-state-hint {
-  @apply text-base text-text-secondary max-w-[320px];
-}
-
 /* Responsive Adjustments */
-@media (max-width: 900px) {
-  .project-list-header {
-    grid-template-columns: 40px 1fr 150px 120px;
-  }
-
-  .project-list-header span:nth-child(3) {
-    display: none;
-  }
-
-  .project-row {
-    grid-template-columns: 40px 1fr 150px 120px;
-  }
-
-  .project-description {
-    display: none;
-  }
-}
-
 @media (max-width: 768px) {
   :root {
     --content-padding: 16px;
@@ -487,41 +564,6 @@ body.platform-darwin:not(.is-fullscreen) .header-content {
 
   .header-content {
     padding: var(--spacing-md) var(--content-padding);
-  }
-
-  .app-title {
-    font-size: var(--font-size-xl);
-  }
-
-  .search-container {
-    max-width: 100%;
-  }
-
-  .project-list-header {
-    grid-template-columns: 40px 1fr 120px;
-  }
-
-  .project-list-header span:nth-child(4) {
-    display: none;
-  }
-
-  .project-row {
-    grid-template-columns: 40px 1fr 120px;
-  }
-}
-
-@media (max-width: 480px) {
-  .project-list-header {
-    display: none;
-  }
-
-  .project-row {
-    grid-template-columns: 40px 1fr;
-    padding: var(--spacing-sm) var(--spacing-md);
-  }
-
-  .last-modified {
-    display: none;
   }
 }
 
@@ -664,16 +706,7 @@ body.platform-darwin:not(.is-fullscreen) .header-content {
    Project Mode Styles
    =================================== */
 
-/* Hide project rows in project mode - NOT main-content */
-body.project-mode .project-row {
-  display: none !important;
-}
-
-body.project-mode .main-content {
-  min-height: 0;
-}
-
-/* Remove max-width constraint from header in project mode */
+/* Project mode: active project shown in main area */
 body.project-mode .header {
   z-index: 10000;
   border-bottom: none;
@@ -686,19 +719,121 @@ body.project-mode .header-content {
   padding-bottom: 8px;
 }
 
-/* Hide search/refresh area in header */
-body.project-mode .search-container {
-  display: none !important;
+body.project-mode .main-content {
+  padding: 0;
 }
 
-body.project-mode #refresh-btn,
-body.project-mode #new-project-btn {
-  display: none !important;
+
+/* ===================================
+   Home view: cross-project terminals
+   =================================== */
+
+
+body.home-mode .main-content {
+  padding: 0;
 }
 
-/* Hide project list header */
-body.project-mode .project-list-header {
-  display: none !important;
+body.home-mode .header {
+  z-index: 10000;
+  border-bottom: none;
+}
+
+body.home-mode .header-content {
+  max-width: none;
+  padding-left: 0;
+  padding-right: 0;
+  padding-bottom: 8px;
+  justify-content: flex-start;
+}
+
+.home-header-label {
+  @apply text-sm font-semibold text-text-secondary tracking-tight;
+}
+
+/* Home empty state */
+
+/* Home view folder dividers — card-like elements where only the tab label is visible */
+body.home-mode .home-folder-divider.project-card {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  contain: unset;
+  pointer-events: none;
+  overflow: visible;
+  margin-top: -1px;
+}
+
+.home-folder-tab {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 234px;
+  height: 28px;
+  pointer-events: auto;
+}
+
+.home-folder-tab > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.home-folder-tab-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 0 8px;
+}
+
+.home-folder-icon {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  object-fit: cover;
+  aspect-ratio: 1;
+}
+
+.home-folder-icon-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 7px;
+  font-weight: 700;
+  color: white;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+}
+
+.home-folder-shell-icon {
+  @apply text-white/50;
+}
+
+.home-folder-shell-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.home-folder-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-tag-icon {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  color: rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
 }
 
 /* Project header content */
@@ -1037,14 +1172,15 @@ body.project-mode .project-list-header {
    ========================================== */
 
 .project-stack {
-  @apply fixed top-[82px] left-4 right-4 bottom-4 z-[100] overflow-visible;
-  transition: left 0.25s ease, right 0.25s ease, top 0.2s ease;
+  @apply fixed top-[82px] right-4 bottom-4 z-[100] overflow-visible;
+  left: calc(var(--sidebar-offset, 0px) + 16px);
+  transition: left 0.2s ease-out, right 0.25s ease, top 0.2s ease;
 }
 
 .project-card {
   @apply absolute inset-0 rounded-[14px] border border-white/10 overflow-hidden flex flex-col;
   background: var(--color-terminal-bg, #171717);
-  transition: translate 0.2s ease, scale 0.2s ease;
+  transition: translate 0.2s ease, left 0.2s ease, right 0.2s ease;
 }
 
 .project-card--active {
@@ -1054,26 +1190,59 @@ body.project-mode .project-list-header {
 }
 
 .project-card--back-1 {
-  @apply z-[9] -translate-y-6 scale-x-[0.98];
+  @apply z-[9] -translate-y-6;
+  left: 1%; right: 1%;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 2px 8px rgba(0, 0, 0, 0.12);
   contain: layout style paint;
 }
 
 .project-card--back-2 {
-  @apply z-[8] -translate-y-12 scale-x-[0.96];
+  @apply z-[8] -translate-y-12;
+  left: 2%; right: 2%;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1), 0 1px 4px rgba(0, 0, 0, 0.08);
   contain: layout style paint;
 }
 
 .project-card--back-3 {
-  @apply z-[7] -translate-y-[72px] scale-x-[0.94];
+  @apply z-[7] -translate-y-[72px];
+  left: 3%; right: 3%;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
   contain: layout style paint;
 }
 
 .project-card--back-4 {
-  @apply z-[6] -translate-y-24 scale-x-[0.92];
+  @apply z-[6] -translate-y-24;
+  left: 4%; right: 4%;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06);
+  contain: layout style paint;
+}
+
+/* Extended depth levels for home mode (back-5 through back-8) */
+body.home-mode .project-card--back-5 {
+  @apply z-[5] -translate-y-[120px];
+  left: 5%; right: 5%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05);
+  contain: layout style paint;
+}
+
+body.home-mode .project-card--back-6 {
+  @apply z-[4] -translate-y-[144px];
+  left: 6%; right: 6%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04);
+  contain: layout style paint;
+}
+
+body.home-mode .project-card--back-7 {
+  @apply z-[3] -translate-y-[168px];
+  left: 7%; right: 7%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.03);
+  contain: layout style paint;
+}
+
+body.home-mode .project-card--back-8 {
+  @apply z-[2] -translate-y-[192px];
+  left: 8%; right: 8%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.02);
   contain: layout style paint;
 }
 
@@ -1081,7 +1250,11 @@ body.project-mode .project-list-header {
 .project-card--back-1 .project-card-label,
 .project-card--back-2 .project-card-label,
 .project-card--back-3 .project-card-label,
-.project-card--back-4 .project-card-label {
+.project-card--back-4 .project-card-label,
+.project-card--back-5 .project-card-label,
+.project-card--back-6 .project-card-label,
+.project-card--back-7 .project-card-label,
+.project-card--back-8 .project-card-label {
   @apply pt-0.5;
 }
 
@@ -1092,6 +1265,16 @@ body.project-mode .project-list-header {
   @apply hidden;
 }
 
+/* Hide tag button + tags on back cards unless card has tags */
+.project-card:not(.project-card--active) .project-card-tag-btn,
+.project-card:not(.project-card--active) .project-card-tags-row {
+  display: none;
+}
+.project-card--has-tags:not(.project-card--active) .project-card-tag-btn,
+.project-card--has-tags:not(.project-card--active) .project-card-tags-row {
+  display: inline-flex;
+}
+
 
 /* Hover effect on back cards */
 .project-card:not(.project-card--active):hover {
@@ -1099,19 +1282,35 @@ body.project-mode .project-list-header {
 }
 
 .project-card--back-1:hover {
-  @apply -translate-y-7 scale-x-[0.98];
+  @apply -translate-y-7;
 }
 
 .project-card--back-2:hover {
-  @apply -translate-y-[52px] scale-x-[0.96];
+  @apply -translate-y-[52px];
 }
 
 .project-card--back-3:hover {
-  @apply -translate-y-[76px] scale-x-[0.94];
+  @apply -translate-y-[76px];
 }
 
 .project-card--back-4:hover {
-  @apply -translate-y-[100px] scale-x-[0.92];
+  @apply -translate-y-[100px];
+}
+
+body.home-mode .project-card--back-5:hover {
+  @apply -translate-y-[124px];
+}
+
+body.home-mode .project-card--back-6:hover {
+  @apply -translate-y-[148px];
+}
+
+body.home-mode .project-card--back-7:hover {
+  @apply -translate-y-[172px];
+}
+
+body.home-mode .project-card--back-8:hover {
+  @apply -translate-y-[196px];
 }
 
 /* Card label */
@@ -1124,11 +1323,74 @@ body.project-mode .project-list-header {
 }
 
 .project-card-label-top {
-  @apply flex items-center gap-2 min-w-0;
+  @apply flex items-center gap-2 min-w-0 flex-wrap;
 }
 
 .project-card-git-branch-row {
   @apply min-w-0 overflow-hidden;
+}
+
+/* Tag pills & tag input */
+.project-card-tags-row {
+  @apply inline-flex items-center gap-1 min-w-0;
+}
+
+.project-card-tag-pill {
+  @apply font-mono text-[11px] text-white/50 bg-white/[0.06] rounded-full px-2 py-px shrink-0;
+}
+
+.project-card-tag-btn {
+  @apply flex items-center justify-center w-5 h-5 rounded text-white/30 bg-transparent border-none shrink-0;
+  -webkit-app-region: no-drag;
+}
+
+.project-card-tag-btn:hover {
+  @apply text-white/60;
+}
+
+.project-card-tag-btn svg {
+  @apply w-3.5 h-3.5;
+}
+
+.tag-input-container {
+  @apply inline-flex flex-wrap items-center gap-1 relative;
+  -webkit-app-region: no-drag;
+}
+
+.tag-chip {
+  @apply inline-flex items-center gap-0.5 font-mono text-[11px] text-white/50 bg-white/[0.06] rounded-full px-2 py-px shrink-0;
+}
+
+.tag-chip-remove {
+  @apply inline-flex items-center justify-center w-3 h-3 text-white/30 bg-transparent border-none text-xs leading-none;
+}
+
+.tag-chip-remove:hover {
+  @apply text-white/60;
+}
+
+.tag-input-field {
+  @apply bg-transparent border-none outline-none font-mono text-[11px] text-white/70 min-w-[60px] py-px;
+  width: 60px;
+}
+
+.tag-input-field::placeholder {
+  @apply text-white/25;
+}
+
+.tag-autocomplete-dropdown {
+  @apply absolute left-0 bg-surface border border-white/10 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto;
+  top: 100%;
+  margin-top: 4px;
+  min-width: 120px;
+}
+
+.tag-autocomplete-item {
+  @apply block w-full text-left font-mono text-[11px] text-white/60 px-3 py-1.5 bg-transparent border-none;
+}
+
+.tag-autocomplete-item:hover {
+  @apply bg-white/[0.08] text-white/80;
 }
 
 .project-card-label-right {
@@ -1146,7 +1408,11 @@ body.project-mode .project-list-header {
 .project-card--back-1 .project-card-osc-title,
 .project-card--back-2 .project-card-osc-title,
 .project-card--back-3 .project-card-osc-title,
-.project-card--back-4 .project-card-osc-title {
+.project-card--back-4 .project-card-osc-title,
+.project-card--back-5 .project-card-osc-title,
+.project-card--back-6 .project-card-osc-title,
+.project-card--back-7 .project-card-osc-title,
+.project-card--back-8 .project-card-osc-title {
   @apply hidden;
 }
 
@@ -1656,6 +1922,26 @@ body.project-mode .project-list-header {
   @apply text-sm text-white/30;
 }
 
+.home-empty-hint {
+  @apply text-xs text-white/25 mt-4;
+}
+
+.home-empty-actions {
+  @apply flex gap-3 mt-3;
+}
+
+.home-empty-action {
+  @apply flex items-center gap-2 px-4 py-2 text-sm text-white/50 bg-white/5 border border-white/10 rounded-lg transition-colors duration-150;
+}
+
+.home-empty-action:hover {
+  @apply text-white/80 bg-white/10 border-white/20;
+}
+
+.home-empty-action svg {
+  @apply w-4 h-4;
+}
+
 .project-stack-empty-hints {
   @apply flex justify-center gap-6 mt-6;
 }
@@ -1702,7 +1988,7 @@ body.platform-other .shortcut-number {
 .project-stack-pagination {
   @apply fixed z-[150] flex items-center gap-1.5;
   top: 58px;
-  left: 50%;
+  left: calc(var(--sidebar-offset, 0px) + (100% - var(--sidebar-offset, 0px)) / 2);
   transform: translateX(-50%);
 }
 
@@ -1763,7 +2049,8 @@ body.kanban-open .project-stack {
 }
 
 .kanban-board {
-  @apply fixed top-[82px] left-4 right-4 bottom-4 z-[140] flex flex-col opacity-0 transition-all duration-200 ease-out rounded-[14px] overflow-hidden border border-white/10;
+  @apply fixed top-[82px] right-4 bottom-4 z-[140] flex flex-col opacity-0 transition-all duration-200 ease-out rounded-[14px] overflow-hidden border border-white/10;
+  left: calc(var(--sidebar-offset, 0px) + 16px);
   transform: translateY(6px);
   background: var(--color-terminal-bg, #171717);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 4px 12px rgba(0, 0, 0, 0.15), 0 20px 40px rgba(0, 0, 0, 0.2);
