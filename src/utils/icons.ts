@@ -35,6 +35,7 @@ import kanban from '@phosphor-icons/core/assets/regular/kanban.svg?raw';
 import listChecks from '@phosphor-icons/core/assets/regular/list-checks.svg?raw';
 import magnifyingGlass from '@phosphor-icons/core/assets/regular/magnifying-glass.svg?raw';
 import minus from '@phosphor-icons/core/assets/regular/minus.svg?raw';
+import pencilSimple from '@phosphor-icons/core/assets/regular/pencil-simple.svg?raw';
 import play from '@phosphor-icons/core/assets/regular/play.svg?raw';
 import plus from '@phosphor-icons/core/assets/regular/plus.svg?raw';
 import prohibit from '@phosphor-icons/core/assets/regular/prohibit.svg?raw';
@@ -52,7 +53,7 @@ import log from 'electron-log/renderer';
 const iconsLog = log.scope('icons');
 
 // Map of icon names (kebab-case) to SVG strings
-const iconMap: Record<string, string> = {
+export const iconMap: Record<string, string> = {
   archive: archive,
   'arrow-counter-clockwise': arrowCounterClockwise,
   'arrow-left': arrowLeft,
@@ -83,6 +84,7 @@ const iconMap: Record<string, string> = {
   'list-checks': listChecks,
   'magnifying-glass': magnifyingGlass,
   minus: minus,
+  'pencil-simple': pencilSimple,
   play: play,
   plus: plus,
   prohibit: prohibit,
