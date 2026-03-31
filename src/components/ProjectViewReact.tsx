@@ -4,6 +4,7 @@ import { useProjectStore } from '../stores/projectStore';
 import { useTerminalStore, getTerminalIndexByStackPosition, STACK_PAGE_SIZE } from '../stores/terminalStore';
 import { TerminalCardStack } from './terminal/TerminalCardStack';
 import { KanbanBoard } from './kanban/KanbanBoard';
+import { ProjectSettingsPanel } from './scripts/ProjectSettingsPanel';
 import { focusKanbanAddInput } from './kanban/KanbanAddInput';
 import {
   addProjectTerminal,
@@ -21,6 +22,7 @@ export function ProjectView() {
   const projectPath = useAppStore((s) => s.activeProjectPath);
   const projectData = useAppStore((s) => s.activeProjectData);
   const kanbanVisible = useProjectStore((s) => s.kanbanVisible);
+  const activePanel = useProjectStore((s) => s.activePanel);
 
   const activeIndex = useTerminalStore((s) => (projectPath ? (s.activeIndices[projectPath] ?? 0) : 0));
   const terminalList = useTerminalStore((s) => (projectPath ? s.terminalsByProject[projectPath] : undefined));
@@ -42,7 +44,9 @@ export function ProjectView() {
         e.preventDefault();
         e.stopPropagation();
         addProjectTerminal(projectPath);
-        useProjectStore.getState().setKanbanVisible(false);
+        const store = useProjectStore.getState();
+        store.setActivePanel('terminals');
+        store.setKanbanVisible(false);
         return;
       }
 
@@ -62,7 +66,9 @@ export function ProjectView() {
       if (key === 'n') {
         e.preventDefault();
         e.stopPropagation();
-        useProjectStore.getState().setKanbanVisible(true);
+        const store = useProjectStore.getState();
+        store.setActivePanel('terminals');
+        store.setKanbanVisible(true);
         requestAnimationFrame(() => focusKanbanAddInput());
         return;
       }
@@ -229,9 +235,15 @@ export function ProjectView() {
   }
 
   return (
-    <div className="project-view">
-      {kanbanVisible && <KanbanBoard projectPath={projectPath} onHide={handleHideKanban} />}
-      {!kanbanVisible && <TerminalCardStack projectPath={projectPath} />}
+    <div className="project-view h-full">
+      {activePanel === 'settings' ? (
+        <ProjectSettingsPanel projectPath={projectPath} />
+      ) : (
+        <>
+          {kanbanVisible && <KanbanBoard projectPath={projectPath} onHide={handleHideKanban} />}
+          {!kanbanVisible && <TerminalCardStack projectPath={projectPath} />}
+        </>
+      )}
     </div>
   );
 }

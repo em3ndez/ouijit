@@ -1,15 +1,17 @@
 import { memo, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { useUIStore } from '../../stores/uiStore';
 import { terminalInstances } from './terminalReact';
 import { addProjectTerminal } from './terminalActions';
 
 const EMPTY_TAGS: string[] = [];
-import type { GitFileStatus } from '../../types';
+import type { GitFileStatus, RunnerScript } from '../../types';
 import { Icon } from './Icon';
 import { TagInput } from './TagInput';
 import { ContextMenu, type ContextMenuEntry } from '../ui/ContextMenu';
 import { HookConfigDialog } from '../dialogs/HookConfigDialog';
+import { RunScriptDropdown } from '../scripts/RunScriptDropdown';
 
 const isMac = navigator.platform.toLowerCase().includes('mac');
 
@@ -21,7 +23,7 @@ interface TerminalHeaderProps {
   stackPosition?: number;
   onClose: () => void;
   onToggleDiffPanel?: () => void;
-  onToggleRunner?: () => void;
+  onToggleRunner?: (script?: RunnerScript) => void;
 }
 
 export const TerminalHeader = memo(function TerminalHeader({
@@ -42,6 +44,7 @@ export const TerminalHeader = memo(function TerminalHeader({
   const tags = useTerminalStore((s) => s.displayStates[ptyId]?.tags) ?? EMPTY_TAGS;
   const sandboxed = useTerminalStore((s) => s.displayStates[ptyId]?.sandboxed ?? false);
   const runnerStatus = useTerminalStore((s) => s.displayStates[ptyId]?.runnerStatus ?? 'idle');
+  const runnerScriptName = useTerminalStore((s) => s.displayStates[ptyId]?.runnerScriptName ?? null);
   const runnerPanelOpen = useTerminalStore((s) => s.displayStates[ptyId]?.runnerPanelOpen ?? false);
   const diffPanelOpen = useTerminalStore((s) => s.displayStates[ptyId]?.diffPanelOpen ?? false);
   const taskId = useTerminalStore((s) => s.displayStates[ptyId]?.taskId ?? null);
@@ -53,19 +56,34 @@ export const TerminalHeader = memo(function TerminalHeader({
   const [runHookDialog, setRunHookDialog] = useState<{ killExistingOnRun?: boolean } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const chevronRef = useRef<HTMLButtonElement>(null);
 
   const instance = terminalInstances.get(ptyId);
   const projectPath = instance?.projectPath ?? '';
   const isTaskTerminal = taskId != null;
 
+  const scriptDropdownVisible = useUIStore((s) => s.scriptDropdownVisible && s.scriptDropdownPtyId === ptyId);
+
   const [sandboxAvailable, setSandboxAvailable] = useState(false);
   const [hasEditorHook, setHasEditorHook] = useState(false);
+  const [hasRunHook, setHasRunHook] = useState(false);
+  // Subscribe to scripts from projectStore for live updates
+  const storeScripts = useProjectStore((s) => s.scripts);
+  const hasScripts = storeScripts.length > 0;
+
   useEffect(() => {
     if (projectPath) {
       window.api.lima.status(projectPath).then((s) => setSandboxAvailable(s.available));
-      window.api.hooks.get(projectPath).then((h) => setHasEditorHook(!!h.editor));
+      window.api.hooks.get(projectPath).then((h) => {
+        setHasEditorHook(!!h.editor);
+        setHasRunHook(!!h.run);
+      });
+      // Also load scripts into store if not already loaded
+      if (storeScripts.length === 0) {
+        useProjectStore.getState().loadScripts(projectPath);
+      }
     }
-  }, [projectPath]);
+  }, [projectPath, storeScripts.length]);
 
   const contextMenuItems = useMemo((): ContextMenuEntry[] => {
     if (!instance) return [];
@@ -178,7 +196,7 @@ export const TerminalHeader = memo(function TerminalHeader({
     setTagInputOpen((prev) => !prev);
   }, []);
 
-  const handleRunnerClick = useCallback(
+  const handleRunnerPrimaryClick = useCallback(
     async (e: React.MouseEvent) => {
       e.stopPropagation();
       if (!onToggleRunner) return;
@@ -188,20 +206,43 @@ export const TerminalHeader = memo(function TerminalHeader({
         onToggleRunner();
         return;
       }
+      // If no run hook but scripts exist, open the dropdown instead
+      if (!hasRunHook && hasScripts) {
+        useUIStore.getState().setScriptDropdownVisible(true, ptyId);
+        return;
+      }
       // Check if run hook is configured
       if (!projectPath) return;
-      const [hooks, settings] = await Promise.all([
-        window.api.hooks.get(projectPath),
-        window.api.getProjectSettings(projectPath),
-      ]);
-      if (hooks.run) {
+      if (hasRunHook) {
         onToggleRunner();
       } else {
+        const settings = await window.api.getProjectSettings(projectPath);
         setRunHookDialog({ killExistingOnRun: settings.killExistingOnRun });
       }
     },
-    [onToggleRunner, ptyId, projectPath],
+    [onToggleRunner, ptyId, projectPath, hasRunHook, hasScripts],
   );
+
+  const handleChevronClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      useUIStore.getState().setScriptDropdownVisible(!scriptDropdownVisible, ptyId);
+    },
+    [scriptDropdownVisible, ptyId],
+  );
+
+  const handleScriptSelect = useCallback(
+    (script: RunnerScript) => {
+      useUIStore.getState().setScriptDropdownVisible(false);
+      onToggleRunner?.(script);
+    },
+    [onToggleRunner],
+  );
+
+  const handleRunHookSelect = useCallback(() => {
+    useUIStore.getState().setScriptDropdownVisible(false);
+    onToggleRunner?.();
+  }, [onToggleRunner]);
 
   const handleDiffClick = useCallback(
     (e: React.MouseEvent) => {
@@ -213,6 +254,7 @@ export const TerminalHeader = memo(function TerminalHeader({
 
   const displayText = summary ? `${label} \u2014 ${summary}` : label;
   const isWorktree = taskId != null && !!worktreeBranch;
+  const showChevron = runnerStatus === 'idle' && (hasRunHook || hasScripts);
 
   return (
     <div
@@ -245,6 +287,7 @@ export const TerminalHeader = memo(function TerminalHeader({
           onClose={(result) => {
             setRunHookDialog(null);
             if (result?.saved && result.hook) {
+              setHasRunHook(true);
               onToggleRunner?.();
             }
           }}
@@ -325,7 +368,25 @@ export const TerminalHeader = memo(function TerminalHeader({
           </div>
         )}
         {isActive && (
-          <RunnerPill runnerStatus={runnerStatus} runnerPanelOpen={runnerPanelOpen} onClick={handleRunnerClick} />
+          <RunnerPill
+            runnerStatus={runnerStatus}
+            runnerScriptName={runnerScriptName}
+            runnerPanelOpen={runnerPanelOpen}
+            showChevron={showChevron}
+            onPrimaryClick={handleRunnerPrimaryClick}
+            onChevronClick={handleChevronClick}
+            chevronRef={chevronRef}
+          />
+        )}
+        {scriptDropdownVisible && (
+          <RunScriptDropdown
+            anchorRef={chevronRef}
+            projectPath={projectPath}
+            hasRunHook={hasRunHook}
+            onSelectScript={handleScriptSelect}
+            onSelectRunHook={handleRunHookSelect}
+            onClose={() => useUIStore.getState().setScriptDropdownVisible(false)}
+          />
         )}
         <button
           className="w-7 h-7 flex items-center justify-center bg-transparent border-none text-white/40 hover:text-white/90 transition-colors duration-150 ml-1 [&_svg]:w-4 [&_svg]:h-4"
@@ -404,18 +465,26 @@ function GitStats({
 
 function RunnerPill({
   runnerStatus,
+  runnerScriptName,
   runnerPanelOpen,
-  onClick,
+  showChevron,
+  onPrimaryClick,
+  onChevronClick,
+  chevronRef,
 }: {
   runnerStatus: string;
+  runnerScriptName: string | null;
   runnerPanelOpen: boolean;
-  onClick: (e: React.MouseEvent) => void;
+  showChevron: boolean;
+  onPrimaryClick: (e: React.MouseEvent) => void;
+  onChevronClick: (e: React.MouseEvent) => void;
+  chevronRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   let text = 'Run';
 
   switch (runnerStatus) {
     case 'running':
-      text = 'Running';
+      text = runnerScriptName ?? 'Running';
       break;
     case 'success':
       text = 'Done';
@@ -425,21 +494,51 @@ function RunnerPill({
       break;
   }
 
+  const baseColors =
+    runnerStatus === 'running' || runnerStatus === 'success'
+      ? 'text-[#69db7c]'
+      : runnerStatus === 'error'
+        ? 'text-[#ff6b6b]'
+        : 'text-white/60';
+
+  const activeHighlight = runnerPanelOpen ? '!bg-accent !text-white' : '';
+
+  if (!showChevron) {
+    return (
+      <button
+        className={`px-2.5 py-1 bg-white/[0.06] border-none font-sans text-[13px] font-medium rounded-full transition-all duration-150 ease-out hover:bg-white/[0.12] hover:text-white/90 active:bg-white/[0.10] active:text-white/80 ${activeHighlight} ${baseColors}`}
+        data-action="run"
+        onClick={onPrimaryClick}
+      >
+        {text}
+      </button>
+    );
+  }
+
+  // Split button: primary action + chevron dropdown
   return (
-    <button
-      className={`px-2.5 py-1 bg-white/[0.06] border-none font-sans text-[13px] font-medium rounded-full transition-all duration-150 ease-out hover:bg-white/[0.12] hover:text-white/90 active:bg-white/[0.10] active:text-white/80 ${
-        runnerPanelOpen ? '!bg-accent !text-white' : ''
-      } ${
-        runnerStatus === 'running' || runnerStatus === 'success'
-          ? 'text-[#69db7c]'
-          : runnerStatus === 'error'
-            ? 'text-[#ff6b6b]'
-            : 'text-white/60'
-      }`}
-      data-action="run"
-      onClick={onClick}
+    <div
+      role="group"
+      aria-label="Run options"
+      className={`inline-flex items-stretch rounded-full overflow-hidden bg-white/[0.06] ${activeHighlight}`}
     >
-      {text}
-    </button>
+      <button
+        className={`px-2.5 py-1 border-none font-sans text-[13px] font-medium transition-all duration-150 ease-out hover:bg-white/[0.06] hover:text-white/90 active:bg-white/[0.04] active:text-white/80 ${baseColors}`}
+        data-action="run"
+        onClick={onPrimaryClick}
+      >
+        {text}
+      </button>
+      <div className="w-px self-stretch bg-white/[0.04]" />
+      <button
+        ref={chevronRef}
+        className={`flex items-center justify-center px-2 border-none transition-all duration-150 ease-out hover:bg-white/[0.06] active:bg-white/[0.04] ${baseColors}`}
+        aria-haspopup="menu"
+        aria-label="More run options"
+        onClick={onChevronClick}
+      >
+        <Icon name="caret-down" className="w-2.5 h-2.5" />
+      </button>
+    </div>
   );
 }
