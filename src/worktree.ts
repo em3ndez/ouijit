@@ -22,6 +22,8 @@ import {
   type TaskMetadata,
 } from './db';
 import { mergeWorktreeBranch } from './git';
+import { runInVm } from './lima/manager';
+import { buildOverlayCleanup } from './lima/overlay';
 
 const worktreeLog = getLogger().scope('worktree');
 
@@ -286,6 +288,7 @@ export async function startTask(
   taskNumber: number,
   branchName?: string,
   baseBranch?: string,
+  sandboxed: boolean = false,
 ): Promise<TaskWorktreeResult> {
   try {
     const task = await getTaskByNumber(projectPath, taskNumber);
@@ -347,7 +350,7 @@ export async function startTask(
 
     const [, ignoredFiles] = await Promise.all([
       execFileAsync('git', wtAddArgs, { cwd: projectPath }),
-      fetchIgnoredFiles(projectPath),
+      sandboxed ? Promise.resolve<string[]>([]) : fetchIgnoredFiles(projectPath),
     ]);
 
     await Promise.all([
@@ -359,7 +362,9 @@ export async function startTask(
       await setTaskMergeTarget(projectPath, taskNumber, mergeTarget);
     }
 
-    await copyGitIgnoredFiles(projectPath, worktreePath, ignoredFiles);
+    if (!sandboxed) {
+      await copyGitIgnoredFiles(projectPath, worktreePath, ignoredFiles);
+    }
 
     worktreeLog.info('started task', { taskNumber, worktreePath, branch });
     const updated = await getTaskByNumber(projectPath, taskNumber);
@@ -378,6 +383,7 @@ export async function createTaskWorktree(
   name?: string,
   prompt?: string,
   branchName?: string,
+  sandboxed: boolean = false,
 ): Promise<TaskWorktreeResult> {
   try {
     const [hasHead, branchResult, taskNumber] = await Promise.all([
@@ -436,7 +442,7 @@ export async function createTaskWorktree(
     // ls-files reads from source dir, doesn't need the worktree to exist
     const [, ignoredFiles] = await Promise.all([
       execFileAsync('git', wtAddArgs, { cwd: projectPath }),
-      fetchIgnoredFiles(projectPath),
+      sandboxed ? Promise.resolve<string[]>([]) : fetchIgnoredFiles(projectPath),
     ]);
 
     const task = await createTask(projectPath, currentTaskNumber, displayName, {
@@ -444,9 +450,12 @@ export async function createTaskWorktree(
       mergeTarget,
       prompt,
       worktreePath,
+      sandboxed,
     });
 
-    await copyGitIgnoredFiles(projectPath, worktreePath, ignoredFiles);
+    if (!sandboxed) {
+      await copyGitIgnoredFiles(projectPath, worktreePath, ignoredFiles);
+    }
 
     return {
       success: true,
@@ -474,6 +483,20 @@ export async function removeTaskWorktree(
     const task = await getTaskByNumber(projectPath, taskNumber);
     const branchName = task?.branch;
 
+    // Best-effort: umount and reclaim the per-task overlay BEFORE removing
+    // the host worktree, while the bind mount targets still resolve.
+    // Swallow errors — the VM may not be running.
+    if (task?.sandboxed && !Number.isNaN(taskNumber)) {
+      try {
+        await runInVm(projectPath, buildOverlayCleanup(taskNumber));
+      } catch (error) {
+        worktreeLog.warn('overlay cleanup failed', {
+          taskNumber,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     // Remove the worktree
     await execFileAsync('git', ['worktree', 'remove', worktreePath, '--force'], {
       cwd: projectPath,
@@ -493,7 +516,7 @@ export async function removeTaskWorktree(
     }
 
     // Delete task metadata
-    if (!isNaN(taskNumber)) {
+    if (!Number.isNaN(taskNumber)) {
       await deleteTaskByNumber(projectPath, taskNumber);
     }
 
@@ -650,13 +673,15 @@ export async function recoverTaskWorktree(projectPath: string, taskNumber: numbe
     // Re-create worktree from the existing branch (no -b flag)
     const [, ignoredFiles] = await Promise.all([
       execAsync(`git worktree add ${shellEscape(worktreePath)} ${shellEscape(task.branch)}`, { cwd: projectPath }),
-      fetchIgnoredFiles(projectPath),
+      task.sandboxed ? Promise.resolve<string[]>([]) : fetchIgnoredFiles(projectPath),
     ]);
 
     // Update metadata with new path
     await setTaskWorktreePath(projectPath, taskNumber, worktreePath);
 
-    await copyGitIgnoredFiles(projectPath, worktreePath, ignoredFiles);
+    if (!task.sandboxed) {
+      await copyGitIgnoredFiles(projectPath, worktreePath, ignoredFiles);
+    }
 
     worktreeLog.info('recovered', { taskNumber, worktreePath });
     const updated = await getTaskByNumber(projectPath, taskNumber);

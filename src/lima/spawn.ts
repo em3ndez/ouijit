@@ -4,7 +4,11 @@ import type { PtySpawnOptions, PtySpawnResult, PtyId } from '../types';
 import type { ActiveSession } from '../ptyManager';
 import { generateId } from '../utils/ids';
 import { ensureRunning, getLimactlPath, getLimaEnv } from './manager';
-import { getApiPort, HELPER_SCRIPT, CLI_REFERENCE, buildVmHookSettings } from '../hookServer';
+import { getApiPort, HELPER_SCRIPT, buildVmHookSettings } from '../hookServer';
+import { listMaskedPaths, buildOverlayBindMountSetup, buildSandboxNoMatchesBanner } from './overlay';
+import { getLogger } from '../logger';
+
+const spawnLog = getLogger().scope('limaSpawn');
 
 interface ManagedSandboxPty {
   process: pty.IPty;
@@ -46,6 +50,11 @@ function handleOutput(ptyId: PtyId, channel: string, data: string): void {
  * Build bash commands that inject the ouijit-hook script and Claude settings
  * into the VM's ephemeral home directory. Runs once per shell spawn so hooks
  * are always fresh (never stale).
+ *
+ * The ouijit CLI reference file is deliberately not written into the
+ * sandbox VM. The CLI would give an agent inside the VM task-management
+ * powers (create non-sandboxed tasks, install hooks, change merge
+ * targets) that amount to a lateral-movement path from VM to host.
  */
 function buildVmHookSetup(): string {
   const hookScript = HELPER_SCRIPT;
@@ -61,11 +70,6 @@ function buildVmHookSetup(): string {
     `cat > ~/.claude/settings.json <<'OUIJIT_SETTINGS_EOF'`,
     hookSettings,
     'OUIJIT_SETTINGS_EOF',
-    // Write CLI reference file for --append-system-prompt-file
-    'mkdir -p ~/.config/Ouijit',
-    `cat > ~/.config/Ouijit/ouijit-cli-reference.md <<'OUIJIT_REF_EOF'`,
-    CLI_REFERENCE.trimEnd(),
-    'OUIJIT_REF_EOF',
     '',
   ].join('\n');
 }
@@ -116,14 +120,81 @@ export async function spawnSandboxedPty(options: PtySpawnOptions, window: Browse
     // Inject hook script + Claude settings into VM's ephemeral home dir
     const hookSetup = buildVmHookSetup();
 
+    // Per-task bind-mount overlay for every gitignored path (files + dirs)
+    // on the guest's local ext4. Runs before hookSetup so mounts are live
+    // for hooks. Enumerate from the worktree — not the project — so that
+    // gitignored files created inside the worktree (e.g. a .env.secrets the
+    // user just dropped in) and any worktree-local .gitignore edits are
+    // honored.
+    //
+    // Fail-closed: if we can't enumerate the mask list at all (git errored,
+    // path isn't a repo, etc.), refuse to spawn the PTY. A sandboxed task
+    // without working isolation is a broken sandbox; we'd rather the user
+    // see a spawn error and fix their setup than run an agent against an
+    // unmasked worktree. Failures that happen guest-side (no passwordless
+    // sudo, mount errors) are handled by buildOverlayBindMountSetup, which
+    // prints a red banner and exits the shell before `exec bash`.
+    //
+    // The one non-fatal path is "no gitignored files in this worktree" —
+    // that's a legitimate empty state, so we proceed with a yellow warning
+    // banner instead of failing.
+    let overlaySetup = '';
+    if (options.taskId != null && options.worktreePath) {
+      try {
+        const masks = await listMaskedPaths(options.worktreePath);
+        if (masks.length === 0) {
+          spawnLog.warn('sandboxed task has no gitignored paths to mask', {
+            taskId: options.taskId,
+            worktreePath: options.worktreePath,
+          });
+          sendStep({
+            id: 'mask',
+            label: 'No gitignored paths to isolate',
+            status: 'done',
+          });
+          overlaySetup = buildSandboxNoMatchesBanner();
+        } else {
+          const fileCount = masks.filter((m) => m.type === 'file').length;
+          const dirCount = masks.length - fileCount;
+          spawnLog.info('sandbox masking paths', {
+            taskId: options.taskId,
+            total: masks.length,
+            files: fileCount,
+            dirs: dirCount,
+          });
+          sendStep({
+            id: 'mask',
+            label: `Isolating ${masks.length} path${masks.length === 1 ? '' : 's'} (${dirCount} dir, ${fileCount} file)…`,
+            status: 'done',
+          });
+          overlaySetup = buildOverlayBindMountSetup({
+            worktreePath: options.worktreePath,
+            taskId: options.taskId,
+            masks,
+          });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        spawnLog.error('listMaskedPaths failed — refusing to spawn sandboxed terminal', {
+          taskId: options.taskId,
+          worktreePath: options.worktreePath,
+          error: message,
+        });
+        return {
+          success: false,
+          error: `Sandbox isolation could not be computed (${message}). Refusing to start a sandboxed terminal without gitignore-based masking.`,
+        };
+      }
+    }
+
     // Build the command to run inside the VM
     let innerCmd: string;
     if (options.command) {
       // Run command then drop to interactive bash
       const escapedCmd = options.command.replace(/'/g, "'\\''");
-      innerCmd = `${envExports}${hookSetup}${escapedCmd}; exec bash`;
+      innerCmd = `${envExports}${overlaySetup}${hookSetup}${escapedCmd}; exec bash`;
     } else {
-      innerCmd = `${envExports}${hookSetup}exec bash`;
+      innerCmd = `${envExports}${overlaySetup}${hookSetup}exec bash`;
     }
 
     // Build limactl shell args
