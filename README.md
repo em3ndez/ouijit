@@ -1,20 +1,21 @@
+<img width="200" height="63" alt="ouijit" src="https://github.com/user-attachments/assets/4f19561c-e1d7-451f-9c83-d2e62221716c" />
 
-<div align=center><img width="200" height="63" alt="ouijit" src="https://github.com/user-attachments/assets/4f19561c-e1d7-451f-9c83-d2e62221716c" />
-</div>
+<br>
 
-  <p align="center">
-    Kanban terminal manager for CLI agent workflows with automatic git worktree isolation and VM sandbox support included.
-    <br />
-    <span align=center>
-    <a href="https://github.com/ouijit/ouijit/releases/latest/download/ouijit-darwin-arm64.zip">macOS (Apple Silicon)</a>
-    ·
-    <a href="https://github.com/ouijit/ouijit/releases/latest/download/ouijit-darwin-x64.zip">macOS (Intel)</a>
-    ·
-    <a href="https://github.com/ouijit/ouijit/releases/latest/download/ouijit-linux-x64.zip">Linux</a>
-    </span>
-  </p>
+Kanban terminal manager for CLI agent workflows with automatic git worktree isolation and VM sandbox support included.
 
-![Ouijit Project Mode](board.gif)
+[macOS (Apple Silicon)](https://github.com/ouijit/ouijit/releases/latest/download/ouijit-darwin-arm64.zip) · [macOS (Intel)](https://github.com/ouijit/ouijit/releases/latest/download/ouijit-darwin-x64.zip) · [Linux](https://github.com/ouijit/ouijit/releases/latest/download/ouijit-linux-x64.zip)
+
+<table>
+  <tr>
+    <td><img src="website/assets/screenshots/kanban.png" alt="Kanban board"></td>
+    <td><img src="website/assets/screenshots/terminal-stack.png" alt="Terminal stack"></td>
+  </tr>
+  <tr>
+    <td><img src="website/assets/screenshots/canvas.png" alt="Terminal canvas"></td>
+    <td><img src="website/assets/screenshots/settings.png" alt="Settings"></td>
+  </tr>
+</table>
 
 ## Setup
 

@@ -3,8 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ouijit — Kanban Terminal Manager for CLI Agents</title>
+  <title>Ouijit · Kanban Terminal Manager for CLI Agents</title>
   <meta name="description" content="Project management with integrated terminals, git worktree isolation, and CLI agent support. macOS and Linux.">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/favicon.png">
   <link rel="stylesheet" href="css/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,23 +24,18 @@
     <a href="https://github.com/ouijit/ouijit/releases/latest/download/ouijit-darwin-x64.zip" class="btn btn-secondary">macOS (Intel)</a>
     <a href="https://github.com/ouijit/ouijit/releases/latest/download/ouijit-linux-x64.zip" class="btn btn-secondary">Linux</a>
   </div>
+  <p class="hero-fine-print">Free and open source. No account, no sign-in.</p>
   <div class="mobile-cta">
     <p>You're on a phone. This is a desktop app.</p>
     <a href="https://github.com/ouijit/ouijit" class="btn btn-primary">Here's the source code though</a>
   </div>
 </section>
 
-<section class="demo-section">
-  <div id="app-demo">
-    <div class="demo-traffic-lights">
-      <span style="background: #ff5f57;"></span>
-      <span style="background: #febc2e;"></span>
-      <span style="background: #28c840;"></span>
-    </div>
-    <video autoplay loop muted playsinline poster="assets/demo-poster.jpg">
-      <source src="assets/demo.mp4" type="video/mp4">
-      <source src="assets/demo.webm" type="video/webm">
-    </video>
+<section class="compare-section">
+  <div class="compare-slider" id="compare-slider" style="--split: 50%;">
+    <img class="compare-left" src="assets/screenshots/kanban.png" alt="Kanban board" draggable="false">
+    <img class="compare-right" src="assets/screenshots/terminal-stack.png" alt="Terminal stack" draggable="false">
+    <button class="compare-handle" aria-label="Drag to compare views" type="button"></button>
   </div>
 </section>
 

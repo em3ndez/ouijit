@@ -10,24 +10,17 @@
   const navEl = document.getElementById('site-nav');
   if (navEl) {
     const docsHref = prefix + 'docs/';
-    const pricingHref = prefix + 'pricing.html';
-    const isHome = window.location.pathname.endsWith('/') || window.location.pathname.endsWith('/index.html');
-    const featuresHref = isHome ? '#features' : prefix + 'index.html#features';
     navEl.innerHTML = `
       <nav class="site-nav">
         <div class="nav-inner">
           <a class="nav-logo" href="${prefix}index.html"><img src="${prefix}assets/ouijit-logo.svg" alt="ouijit" height="28"></a>
           <ul class="nav-links">
-            <li><a href="${featuresHref}">Features</a></li>
-            <li><a href="${pricingHref}">Pricing</a></li>
             <li><a href="${docsHref}">Docs</a></li>
             <li><a href="https://github.com/ouijit/ouijit" target="_blank" rel="noopener">GitHub</a></li>
           </ul>
           <button class="nav-hamburger" aria-label="Menu">&#9776;</button>
         </div>
         <div class="nav-mobile" id="nav-mobile">
-          <a href="${featuresHref}">Features</a>
-          <a href="${pricingHref}">Pricing</a>
           <a href="${docsHref}">Docs</a>
           <a href="https://github.com/ouijit/ouijit" target="_blank" rel="noopener">GitHub</a>
         </div>
@@ -70,6 +63,80 @@
         </div>
       </footer>
     `;
+  }
+
+  // --- Compare Slider ---
+  const slider = document.getElementById('compare-slider');
+  if (slider) {
+    const setSplit = (clientX) => {
+      const rect = slider.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+      slider.style.setProperty('--split', pct + '%');
+    };
+
+    let pointerId = null;
+    slider.addEventListener('pointerdown', (e) => {
+      pointerId = e.pointerId;
+      slider.setPointerCapture(pointerId);
+      slider.classList.add('is-dragging');
+      setSplit(e.clientX);
+      e.preventDefault();
+    });
+    slider.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== pointerId) return;
+      setSplit(e.clientX);
+    });
+    const end = (e) => {
+      if (e.pointerId !== pointerId) return;
+      try {
+        slider.releasePointerCapture(pointerId);
+      } catch {
+        /* ignore */
+      }
+      pointerId = null;
+      slider.classList.remove('is-dragging');
+    };
+    slider.addEventListener('pointerup', end);
+    slider.addEventListener('pointercancel', end);
+
+    // One-time nudge so it's obvious the handle is draggable.
+    // Skipped if the user prefers reduced motion, and cancelled if they
+    // start dragging before it finishes.
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reducedMotion) {
+      const keyframes = [
+        { split: 50, at: 0 },
+        { split: 45, at: 400 },
+        { split: 55, at: 900 },
+        { split: 50, at: 1400 },
+      ];
+      const start = performance.now() + 700; // small pre-delay
+      let raf = 0;
+      const tick = (now) => {
+        if (pointerId !== null) return; // user interrupted
+        const t = now - start;
+        if (t < 0) {
+          raf = requestAnimationFrame(tick);
+          return;
+        }
+        let current = 50;
+        for (let i = 0; i < keyframes.length - 1; i++) {
+          const a = keyframes[i];
+          const b = keyframes[i + 1];
+          if (t >= a.at && t <= b.at) {
+            const p = (t - a.at) / (b.at - a.at);
+            const eased = 0.5 - 0.5 * Math.cos(Math.PI * p); // ease-in-out
+            current = a.split + (b.split - a.split) * eased;
+            break;
+          }
+        }
+        slider.style.setProperty('--split', current + '%');
+        if (t < keyframes[keyframes.length - 1].at) {
+          raf = requestAnimationFrame(tick);
+        }
+      };
+      raf = requestAnimationFrame(tick);
+    }
   }
 
   // --- Docs Sidebar ---
