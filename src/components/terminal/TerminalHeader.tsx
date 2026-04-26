@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { Fragment, memo, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -320,7 +320,6 @@ export const TerminalHeader = memo(function TerminalHeader({
     [onToggleWebPreviewPanel],
   );
 
-  const displayText = summary ? `${label} \u2014 ${summary}` : label;
   const isWorktree = taskId != null && !!worktreeBranch;
   const showChevron = runnerStatus === 'idle' && (hasRunHook || hasScripts);
 
@@ -361,18 +360,10 @@ export const TerminalHeader = memo(function TerminalHeader({
           }}
         />
       )}
-      <div className="flex flex-col min-w-0 shrink">
-        <div className="flex items-center gap-2 min-w-0 flex-wrap">
-          <span
-            className={`w-1.5 h-1.5 rounded-full shrink-0 transition-all duration-200 ease-out ${summaryType === 'thinking' ? 'bg-[#da77f2]' : 'bg-[#69db7c]'}`}
-            data-status={summaryType}
-            style={{
-              boxShadow:
-                summaryType === 'thinking' ? '0 0 4px rgba(218, 119, 242, 0.5)' : '0 0 4px rgba(105, 219, 124, 0.5)',
-              ...(summaryType === 'thinking' ? { animation: 'terminal-status-pulse 1s ease-in-out infinite' } : {}),
-              ...(sandboxed ? { outline: '1.5px solid rgba(116, 192, 252, 0.6)', outlineOffset: '2px' } : {}),
-            }}
-          />
+      <div className="flex flex-col min-w-0 shrink gap-0.5">
+        {/* Row 1 \u2014 identity: status + label/summary + tags */}
+        <div className="group/meta flex items-center gap-2 min-w-0">
+          <StatusDot summaryType={summaryType} sandboxed={sandboxed} />
           {!isActive && stackPosition != null && stackPosition <= 9 && (
             <kbd className="inline-flex items-center font-mono text-base text-white/40 shrink-0">
               {isMac ? '\u2318' : 'Ctrl+'}
@@ -382,7 +373,7 @@ export const TerminalHeader = memo(function TerminalHeader({
           {renaming ? (
             <input
               ref={renameInputRef}
-              className="font-mono text-xs font-medium text-white/70 bg-transparent border-0 border-b border-accent p-0 outline-none min-w-0 shrink-0 [-webkit-app-region:no-drag]"
+              className="font-mono text-xs font-medium text-white/85 bg-transparent border-0 border-b border-accent p-0 outline-none min-w-0 shrink-0 [-webkit-app-region:no-drag]"
               onBlur={commitRename}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') commitRename();
@@ -390,78 +381,71 @@ export const TerminalHeader = memo(function TerminalHeader({
               }}
             />
           ) : (
-            <span className="font-mono text-xs font-medium text-white/70 shrink-0">{displayText}</span>
+            <span className="font-mono text-xs font-medium text-white/85 shrink-0">{label}</span>
           )}
-          <button
-            className="flex items-center justify-center w-5 h-5 rounded text-white/30 bg-transparent border-none shrink-0"
-            onMouseDown={handleTagButtonClick}
-          >
-            <Icon name="tag" className="w-3.5 h-3.5" />
-          </button>
-          <span className="inline-flex items-center gap-1 min-w-0">
-            {tagInputOpen ? (
+          {summary && !renaming && (
+            <span className="font-mono text-xs text-white/45 min-w-0 truncate">\u2014 {summary}</span>
+          )}
+          {lastOscTitle && !renaming && (
+            <span className="font-mono text-xs font-medium text-white/40 min-w-0 truncate">{lastOscTitle}</span>
+          )}
+          <span className="inline-flex items-center gap-1 min-w-0 shrink-0">
+            {isActive && tagInputOpen ? (
               <TagInput ptyId={ptyId} onClose={() => setTagInputOpen(false)} />
+            ) : isActive ? (
+              <>
+                {tags.map((tag) => (
+                  <button
+                    key={tag}
+                    className={`${METADATA_CHIP} border-none hover:bg-white/[0.1] hover:text-white/75 transition-colors duration-150`}
+                    onMouseDown={handleTagButtonClick}
+                  >
+                    {tag}
+                  </button>
+                ))}
+                {tags.length === 0 && (
+                  <button
+                    className="inline-flex items-center gap-1 font-mono text-[11px] text-white/35 bg-transparent border-none px-2 py-0.5 rounded-full shrink-0 opacity-0 group-hover/meta:opacity-100 hover:text-white/70 hover:bg-white/[0.05] transition-all duration-150"
+                    onMouseDown={handleTagButtonClick}
+                    aria-label="Add tag"
+                  >
+                    <Icon name="tag" className="w-3 h-3" />
+                    <span>Tag</span>
+                  </button>
+                )}
+              </>
             ) : (
               tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="font-mono text-[11px] text-white/50 bg-white/[0.06] rounded-full px-2 py-px shrink-0"
-                >
+                <span key={tag} className={METADATA_CHIP}>
                   {tag}
                 </span>
               ))
             )}
           </span>
-          {!compact && lastOscTitle && (
-            <span className="font-mono text-[11px] text-white/40 bg-white/5 rounded-full px-2 py-px truncate">
-              {lastOscTitle}
-            </span>
-          )}
         </div>
-        {!compact && isActive && (
-          <div className="min-w-0 overflow-hidden">
-            <GitBranch gitFileStatus={gitFileStatus} />
-          </div>
-        )}
+
+        {/* Row 2 \u2014 subordinate context: branch */}
+        {!compact && isActive && gitFileStatus?.branch && <BranchCopy branch={gitFileStatus.branch} />}
       </div>
       <div className="flex items-center gap-2 shrink-0 justify-end">
-        {!compact && isActive && planPath && (
-          <button
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-full font-mono text-[13px] font-medium text-white/60 bg-white/[0.06] transition-all duration-150 ease-out hover:bg-white/[0.12] hover:text-white/90 active:bg-white/[0.10] active:text-white/80 ${planPanelOpen ? '!bg-accent !text-white' : ''}`}
-            title="View plan"
-            onClick={handlePlanClick}
-          >
-            <Icon name="list-checks" className="w-3.5 h-3.5" />
-            <span>Plan</span>
-          </button>
-        )}
-        {!compact && isActive && webPreviewUrl && (
-          <button
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-full font-mono text-[13px] font-medium text-white/60 bg-white/[0.06] transition-all duration-150 ease-out hover:bg-white/[0.12] hover:text-white/90 active:bg-white/[0.10] active:text-white/80 ${webPreviewPanelOpen ? '!bg-accent !text-white' : ''}`}
-            title={`Preview ${webPreviewUrl}`}
-            onClick={handleWebPreviewClick}
-          >
-            <Icon name="globe-simple" className="w-3.5 h-3.5" />
-            <span>Preview</span>
-          </button>
-        )}
-        {!compact && isActive && (
-          <div>
-            <GitStats
-              gitFileStatus={gitFileStatus}
-              isWorktree={isWorktree}
-              diffPanelOpen={diffPanelOpen}
-              onClick={handleDiffClick}
-            />
-          </div>
-        )}
         {isActive && (
-          <RunnerPill
+          <ActionGroup
+            compact={compact}
+            planPath={planPath}
+            planPanelOpen={planPanelOpen}
+            onPlanClick={handlePlanClick}
+            webPreviewUrl={webPreviewUrl}
+            webPreviewPanelOpen={webPreviewPanelOpen}
+            onWebPreviewClick={handleWebPreviewClick}
+            gitFileStatus={gitFileStatus}
+            isWorktree={isWorktree}
+            diffPanelOpen={diffPanelOpen}
+            onDiffClick={handleDiffClick}
             runnerStatus={runnerStatus}
             runnerScriptName={runnerScriptName}
             runnerPanelOpen={runnerPanelOpen}
             showChevron={showChevron}
-            onPrimaryClick={handleRunnerPrimaryClick}
+            onRunnerPrimaryClick={handleRunnerPrimaryClick}
             onChevronClick={handleChevronClick}
             chevronRef={chevronRef}
           />
@@ -489,144 +473,234 @@ export const TerminalHeader = memo(function TerminalHeader({
 
 // ── Sub-components ───────────────────────────────────────────────────
 
-function GitBranch({ gitFileStatus }: { gitFileStatus: GitFileStatus | null }) {
-  if (!gitFileStatus) return null;
+const METADATA_CHIP =
+  'inline-flex items-center gap-1 font-mono text-[11px] font-medium text-white/55 bg-white/[0.05] rounded-full px-2 py-0.5 shrink-0';
+
+function BranchCopy({ branch }: { branch: string }) {
+  const [copied, setCopied] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
+  const handleClick = useCallback(() => {
+    void navigator.clipboard.writeText(branch).then(() => {
+      setCopied(true);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 1200);
+    });
+  }, [branch]);
+
+  const iconName = copied ? 'check' : hovered ? 'copy' : 'git-branch';
 
   return (
-    <span className="flex items-center gap-1 font-mono text-[13px] text-white/50 min-w-0 overflow-hidden">
-      <Icon name="git-branch" className="w-3.5 h-3.5 shrink-0 text-white/40" />
-      <span className="truncate min-w-0">{gitFileStatus.branch}</span>
-    </span>
+    <button
+      type="button"
+      className="inline-flex items-center gap-1 font-mono text-[11px] text-white/45 bg-transparent border-none p-0 min-w-0 self-start shrink-0 transition-colors duration-150 hover:text-white/75"
+      onClick={handleClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <Icon name={iconName} className="w-3 h-3 shrink-0 text-white/35" />
+      <span className="truncate">{copied ? 'Copied' : branch}</span>
+    </button>
   );
 }
 
-function GitStats({
+function StatusDot({ summaryType, sandboxed }: { summaryType: string; sandboxed: boolean }) {
+  const isThinking = summaryType === 'thinking';
+  return (
+    <span
+      className={`w-[9px] h-[9px] rounded-full shrink-0 transition-all duration-200 ease-out ${isThinking ? 'bg-[#da77f2]' : 'bg-[#4ee82e]'}`}
+      data-status={summaryType}
+      style={{
+        boxShadow: isThinking
+          ? '0 0 4px rgba(218, 119, 242, 0.5), inset 0 0 0 1px #000'
+          : '0 0 4px rgba(78, 232, 46, 0.5), inset 0 0 0 1px #000',
+        ...(isThinking ? { animation: 'terminal-status-pulse 1s ease-in-out infinite' } : {}),
+        ...(sandboxed ? { outline: '1.5px solid rgba(116, 192, 252, 0.6)', outlineOffset: '2px' } : {}),
+      }}
+    />
+  );
+}
+
+// Shared button class for items inside the joined ActionGroup.
+const groupButtonBase =
+  'h-full px-2.5 flex items-center gap-1 border-none font-sans text-[13px] font-medium transition-colors duration-150 ease-out';
+const groupButtonInactive = 'bg-transparent text-text-secondary hover:text-text-primary hover:bg-background-tertiary';
+const groupButtonActive = 'bg-accent text-white hover:bg-accent';
+
+function ActionGroup({
+  compact,
+  planPath,
+  planPanelOpen,
+  onPlanClick,
+  webPreviewUrl,
+  webPreviewPanelOpen,
+  onWebPreviewClick,
   gitFileStatus,
   isWorktree,
   diffPanelOpen,
-  onClick,
-}: {
-  gitFileStatus: GitFileStatus | null;
-  isWorktree: boolean;
-  diffPanelOpen: boolean;
-  onClick: (e: React.MouseEvent) => void;
-}) {
-  if (!gitFileStatus) return null;
-
-  const { uncommittedFiles, branchDiffFiles } = gitFileStatus;
-  const dirtyFileCount = uncommittedFiles.length;
-  const insertions = uncommittedFiles.reduce((s, f) => s + f.additions, 0);
-  const deletions = uncommittedFiles.reduce((s, f) => s + f.deletions, 0);
-  const hasChanges = dirtyFileCount > 0;
-
-  if (hasChanges) {
-    const fileLabel = dirtyFileCount === 1 ? 'file' : 'files';
-    return (
-      <button
-        className={`flex items-center gap-1 px-2.5 py-1 rounded-full font-mono text-[13px] font-medium text-white/60 bg-white/[0.06] transition-all duration-150 ease-out hover:bg-white/[0.12] hover:text-white/90 active:bg-white/[0.10] active:text-white/80 ${diffPanelOpen ? '!bg-accent !text-white' : ''}`}
-        title="View uncommitted changes"
-        onClick={onClick}
-      >
-        <span className="font-medium">
-          {dirtyFileCount} {fileLabel}
-        </span>
-        {insertions > 0 && <span className="text-[#69db7c]">+{insertions}</span>}
-        {deletions > 0 && <span className="text-[#ff6b6b]">-{deletions}</span>}
-      </button>
-    );
-  }
-
-  if (isWorktree && branchDiffFiles.length > 0) {
-    return (
-      <button
-        className={`px-2.5 py-1 bg-white/[0.06] border-none font-sans text-[13px] font-medium text-white/60 rounded-full transition-all duration-150 ease-out hover:bg-white/[0.12] hover:text-white/90 active:bg-white/[0.10] active:text-white/80 ${diffPanelOpen ? '!bg-accent !text-white' : ''}`}
-        title="Compare branch changes"
-        onClick={onClick}
-      >
-        Compare
-      </button>
-    );
-  }
-
-  return null;
-}
-
-function RunnerPill({
+  onDiffClick,
   runnerStatus,
   runnerScriptName,
   runnerPanelOpen,
   showChevron,
-  onPrimaryClick,
+  onRunnerPrimaryClick,
   onChevronClick,
   chevronRef,
 }: {
+  compact?: boolean;
+  planPath: string | null;
+  planPanelOpen: boolean;
+  onPlanClick: (e: React.MouseEvent) => void;
+  webPreviewUrl: string | null;
+  webPreviewPanelOpen: boolean;
+  onWebPreviewClick: (e: React.MouseEvent) => void;
+  gitFileStatus: GitFileStatus | null;
+  isWorktree: boolean;
+  diffPanelOpen: boolean;
+  onDiffClick: (e: React.MouseEvent) => void;
   runnerStatus: string;
   runnerScriptName: string | null;
   runnerPanelOpen: boolean;
   showChevron: boolean;
-  onPrimaryClick: (e: React.MouseEvent) => void;
+  onRunnerPrimaryClick: (e: React.MouseEvent) => void;
   onChevronClick: (e: React.MouseEvent) => void;
   chevronRef: React.RefObject<HTMLButtonElement | null>;
 }) {
-  let text = 'Run';
+  const showPlan = !compact && !!planPath;
+  const showPreview = !compact && !!webPreviewUrl;
 
+  const dirtyFileCount = gitFileStatus?.uncommittedFiles.length ?? 0;
+  const insertions = gitFileStatus?.uncommittedFiles.reduce((s, f) => s + f.additions, 0) ?? 0;
+  const deletions = gitFileStatus?.uncommittedFiles.reduce((s, f) => s + f.deletions, 0) ?? 0;
+  const branchDiffCount = gitFileStatus?.branchDiffFiles.length ?? 0;
+  const hasUncommitted = !!gitFileStatus && dirtyFileCount > 0;
+  const showCompare = !!gitFileStatus && !hasUncommitted && isWorktree && branchDiffCount > 0;
+  const showGit = !compact && (hasUncommitted || showCompare);
+
+  let runText = 'Run';
   switch (runnerStatus) {
     case 'running':
-      text = runnerScriptName ?? 'Running';
+      runText = runnerScriptName ?? 'Running';
       break;
     case 'success':
-      text = 'Done';
+      runText = 'Done';
       break;
     case 'error':
-      text = 'Failed';
+      runText = 'Failed';
       break;
   }
-
-  const baseColors =
+  const runColor =
     runnerStatus === 'running' || runnerStatus === 'success'
-      ? 'text-[#69db7c]'
+      ? 'text-[#4ee82e] hover:text-[#76ee5c] hover:bg-background-tertiary'
       : runnerStatus === 'error'
-        ? 'text-[#ff6b6b]'
-        : 'text-white/60';
+        ? 'text-[#ff6b6b] hover:text-[#ff8e8e] hover:bg-background-tertiary'
+        : groupButtonInactive;
+  const runActive = runnerPanelOpen ? groupButtonActive : runColor;
 
-  const activeHighlight = runnerPanelOpen ? '!bg-accent !text-white' : '';
+  const slots: { key: string; content: React.ReactNode }[] = [];
 
-  if (!showChevron) {
-    return (
-      <button
-        className={`px-2.5 py-1 bg-white/[0.06] border-none font-sans text-[13px] font-medium rounded-full transition-all duration-150 ease-out hover:bg-white/[0.12] hover:text-white/90 active:bg-white/[0.10] active:text-white/80 ${activeHighlight} ${baseColors}`}
-        data-action="run"
-        onClick={onPrimaryClick}
-      >
-        {text}
-      </button>
-    );
+  if (showPlan) {
+    slots.push({
+      key: 'plan',
+      content: (
+        <button
+          className={`${groupButtonBase} ${planPanelOpen ? groupButtonActive : groupButtonInactive}`}
+          onClick={onPlanClick}
+        >
+          <Icon name="list-checks" className="w-3.5 h-3.5" />
+          <span>Plan</span>
+        </button>
+      ),
+    });
   }
 
-  // Split button: primary action + chevron dropdown
+  if (showPreview) {
+    slots.push({
+      key: 'preview',
+      content: (
+        <button
+          className={`${groupButtonBase} ${webPreviewPanelOpen ? groupButtonActive : groupButtonInactive}`}
+          onClick={onWebPreviewClick}
+        >
+          <Icon name="globe-simple" className="w-3.5 h-3.5" />
+          <span>Preview</span>
+        </button>
+      ),
+    });
+  }
+
+  if (showGit && hasUncommitted) {
+    slots.push({
+      key: 'diff',
+      content: (
+        <button
+          className={`${groupButtonBase} ${diffPanelOpen ? groupButtonActive : groupButtonInactive}`}
+          onClick={onDiffClick}
+        >
+          <span>
+            {dirtyFileCount} {dirtyFileCount === 1 ? 'file' : 'files'}
+          </span>
+          {insertions > 0 && <span className="text-[#4ee82e]">+{insertions}</span>}
+          {deletions > 0 && <span className="text-[#ff6b6b]">-{deletions}</span>}
+        </button>
+      ),
+    });
+  } else if (showGit && showCompare) {
+    slots.push({
+      key: 'compare',
+      content: (
+        <button
+          className={`${groupButtonBase} ${diffPanelOpen ? groupButtonActive : groupButtonInactive}`}
+          onClick={onDiffClick}
+        >
+          Compare
+        </button>
+      ),
+    });
+  }
+
+  const runIcon =
+    runnerStatus === 'running' || runnerStatus === 'success' || runnerStatus === 'error' ? 'terminal' : null;
+
+  slots.push({
+    key: 'run',
+    content: (
+      <>
+        <button className={`${groupButtonBase} ${runActive}`} data-action="run" onClick={onRunnerPrimaryClick}>
+          {runIcon && <Icon name={runIcon} className="w-3.5 h-3.5" />}
+          <span>{runText}</span>
+        </button>
+        {showChevron && (
+          <button
+            ref={chevronRef}
+            className={`${groupButtonBase} !px-2 ${runnerPanelOpen ? groupButtonActive : runColor}`}
+            aria-haspopup="menu"
+            aria-label="More run options"
+            onClick={onChevronClick}
+          >
+            <Icon name="caret-down" className="w-2.5 h-2.5" />
+          </button>
+        )}
+      </>
+    ),
+  });
+
   return (
-    <div
-      role="group"
-      aria-label="Run options"
-      className={`inline-flex items-stretch rounded-full overflow-hidden bg-white/[0.06] ${activeHighlight}`}
-    >
-      <button
-        className={`px-2.5 py-1 border-none font-sans text-[13px] font-medium transition-all duration-150 ease-out hover:bg-white/[0.06] hover:text-white/90 active:bg-white/[0.04] active:text-white/80 ${baseColors}`}
-        data-action="run"
-        onClick={onPrimaryClick}
-      >
-        {text}
-      </button>
-      <div className="w-px self-stretch bg-white/[0.04]" />
-      <button
-        ref={chevronRef}
-        className={`flex items-center justify-center px-2 border-none transition-all duration-150 ease-out hover:bg-white/[0.06] active:bg-white/[0.04] ${baseColors}`}
-        aria-haspopup="menu"
-        aria-label="More run options"
-        onClick={onChevronClick}
-      >
-        <Icon name="caret-down" className="w-2.5 h-2.5" />
-      </button>
+    <div className="inline-flex items-center h-7 bg-background-secondary glass-bevel relative border border-black/60 rounded-[12px] overflow-hidden">
+      {slots.map((slot, i) => (
+        <Fragment key={slot.key}>
+          {i > 0 && <div aria-hidden className="w-px h-3 bg-white/10 self-center" />}
+          {slot.content}
+        </Fragment>
+      ))}
     </div>
   );
 }
