@@ -3,7 +3,8 @@ import { useTerminalStore } from '../../stores/terminalStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
 import { terminalInstances } from './terminalReact';
-import { addProjectTerminal } from './terminalActions';
+import { addProjectTerminal, closeProjectTerminal } from './terminalActions';
+import { findOtherTaskTerminals } from './findOtherTaskTerminals';
 
 const EMPTY_TAGS: string[] = [];
 import type { GitFileStatus, RunnerScript } from '../../types';
@@ -12,6 +13,7 @@ import { StatusDot } from './StatusDot';
 import { TagInput } from './TagInput';
 import { ContextMenu, type ContextMenuEntry } from '../ui/ContextMenu';
 import { HookConfigDialog } from '../dialogs/HookConfigDialog';
+import { CloseTaskDialog } from '../dialogs/CloseTaskDialog';
 import { RunScriptDropdown } from '../scripts/RunScriptDropdown';
 
 const isMac = navigator.platform.toLowerCase().includes('mac');
@@ -63,6 +65,7 @@ export const TerminalHeader = memo(function TerminalHeader({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [editorHookDialog, setEditorHookDialog] = useState(false);
   const [runHookDialog, setRunHookDialog] = useState<{ killExistingOnRun?: boolean } | null>(null);
+  const [closeTaskDialog, setCloseTaskDialog] = useState<{ otherPtyIds: string[]; taskName: string } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const chevronRef = useRef<HTMLButtonElement>(null);
@@ -191,6 +194,22 @@ export const TerminalHeader = memo(function TerminalHeader({
         label: 'Close Task',
         icon: 'archive',
         onClick: async () => {
+          const store = useTerminalStore.getState();
+          const otherPtyIds = findOtherTaskTerminals(
+            store.terminalsByProject,
+            store.displayStates,
+            projectPath,
+            taskId!,
+            ptyId,
+          );
+
+          if (otherPtyIds.length > 0) {
+            const taskName =
+              useProjectStore.getState().tasks.find((t) => t.taskNumber === taskId)?.name ?? `Task #${taskId}`;
+            setCloseTaskDialog({ otherPtyIds, taskName });
+            return;
+          }
+
           await window.api.task.setStatus(projectPath, taskId!, 'done');
           onClose();
           useProjectStore.getState().invalidateTaskList();
@@ -205,6 +224,7 @@ export const TerminalHeader = memo(function TerminalHeader({
     instance,
     projectPath,
     taskId,
+    ptyId,
     sandboxAvailable,
     hasEditorHook,
     onClose,
@@ -358,6 +378,24 @@ export const TerminalHeader = memo(function TerminalHeader({
               setHasRunHook(true);
               onToggleRunner?.();
             }
+          }}
+        />
+      )}
+      {closeTaskDialog && (
+        <CloseTaskDialog
+          taskName={closeTaskDialog.taskName}
+          otherTerminalCount={closeTaskDialog.otherPtyIds.length}
+          onClose={async (action) => {
+            const otherPtyIds = closeTaskDialog.otherPtyIds;
+            setCloseTaskDialog(null);
+            if (action == null) return;
+            await window.api.task.setStatus(projectPath, taskId!, 'done');
+            if (action === 'close-all') {
+              for (const id of otherPtyIds) closeProjectTerminal(id);
+            }
+            onClose();
+            useProjectStore.getState().invalidateTaskList();
+            useProjectStore.getState().addToast('Task closed', 'success');
           }}
         />
       )}
