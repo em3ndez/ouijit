@@ -4,7 +4,13 @@ import type { PtySpawnOptions, PtySpawnResult, PtyId } from '../types';
 import { registerSandboxPty, unregisterSandboxPty, type ActiveSession } from '../ptyManager';
 import { generateId } from '../utils/ids';
 import { buildLimactlHostEnv, ensureRunning, getLimactlPath } from './manager';
-import { getApiPort, HELPER_SCRIPT, buildVmHookSettings } from '../hookServer';
+import {
+  getApiPort,
+  HELPER_SCRIPT,
+  buildVmHookSettings,
+  buildVmCodexConfig,
+  buildVmCodexTrustState,
+} from '../hookServer';
 import { issueToken, revokeToken } from '../apiAuth';
 import { getTaskByNumber } from '../db';
 import { startSandboxView, watchSandboxRef, ffMergeSandboxToUser } from './sandboxSync';
@@ -51,9 +57,9 @@ function handleOutput(ptyId: PtyId, channel: string, data: string): void {
 }
 
 /**
- * Build bash commands that inject the ouijit-hook script and Claude settings
- * into the VM's ephemeral home directory. Runs once per shell spawn so hooks
- * are always fresh (never stale).
+ * Build bash commands that inject the ouijit-hook script, Claude settings, and
+ * Codex config into the VM's ephemeral home directory. Runs once per shell spawn
+ * so hooks are always fresh (never stale).
  *
  * The ouijit CLI reference file is deliberately not written into the
  * sandbox VM. The CLI would give an agent inside the VM task-management
@@ -63,6 +69,7 @@ function handleOutput(ptyId: PtyId, channel: string, data: string): void {
 function buildVmHookSetup(): string {
   const hookScript = HELPER_SCRIPT;
   const hookSettings = buildVmHookSettings();
+  const codexConfig = buildVmCodexConfig();
   return [
     // Write hook script using quoted heredoc (prevents $VAR expansion at write time)
     `cat > ~/ouijit-hook <<'OUIJIT_HOOK_EOF'`,
@@ -74,6 +81,17 @@ function buildVmHookSetup(): string {
     `cat > ~/.claude/settings.json <<'OUIJIT_SETTINGS_EOF'`,
     hookSettings,
     'OUIJIT_SETTINGS_EOF',
+    // Write Codex config (lifecycle hooks + notify; CLI reference omitted).
+    // Quoted heredoc → $HOME in hook commands stays literal for the agent's shell.
+    'mkdir -p ~/.codex',
+    `cat > ~/.codex/config.toml <<'OUIJIT_CODEX_EOF'`,
+    codexConfig,
+    'OUIJIT_CODEX_EOF',
+    // Append pre-trust state — unquoted heredoc so the VM's bash expands $HOME
+    // in the persisted hook key (Codex uses the resolved absolute path).
+    `cat >> ~/.codex/config.toml <<OUIJIT_CODEX_TRUST_EOF`,
+    buildVmCodexTrustState(),
+    'OUIJIT_CODEX_TRUST_EOF',
     '',
   ].join('\n');
 }

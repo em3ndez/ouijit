@@ -37,7 +37,10 @@ import {
   installWrapper,
   migrateFromSettingsHooks,
   buildVmHookSettings,
+  buildVmCodexConfig,
+  buildVmCodexTrustState,
   CLAUDE_WRAPPER,
+  CODEX_WRAPPER,
 } from '../hookServer';
 import { issueToken, revokeAllTokens } from '../apiAuth';
 
@@ -330,6 +333,30 @@ describe('installWrapper', () => {
     expect(settings.hooks!.Notification![0].matcher).toBe('permission_prompt|idle_prompt');
   });
 
+  test('creates codex wrapper on first install', () => {
+    installWrapper();
+
+    const wrapperPath = path.join(tmpHome, '.config', 'Ouijit', 'bin', 'codex');
+    const wrapper = fs.readFileSync(wrapperPath, 'utf-8');
+    expect(wrapper).toContain('#!/bin/bash');
+    expect(wrapper).toContain('REAL_CODEX=');
+    expect(wrapper).toContain('export PATH="$WRAPPER_DIR:$CLEAN_PATH"');
+    // Injects the CLI reference + lifecycle hooks + per-hook pre-trust + notify via -c overrides
+    expect(wrapper).toContain('-c "developer_instructions=$(cat "$REFERENCE_FILE" 2>/dev/null)"');
+    expect(wrapper).toContain("-c 'hooks.UserPromptSubmit=");
+    expect(wrapper).toContain("-c 'hooks.PostToolUse=");
+    expect(wrapper).toContain("-c 'hooks.Stop=");
+    expect(wrapper).toContain("-c 'hooks.PermissionRequest=");
+    expect(wrapper).toContain('-c \'hooks.state."/<session-flags>/config.toml:user_prompt_submit:0:0".trusted_hash=');
+    expect(wrapper).toContain('-c \'hooks.state."/<session-flags>/config.toml:permission_request:0:0".trusted_hash=');
+    expect(wrapper).toContain("-c 'notify=");
+    // No-API fallthrough still passes developer_instructions
+    expect(wrapper).toContain('if [ -z "$OUIJIT_API_URL" ]; then');
+    expect(wrapper).toContain(
+      'exec "$REAL_CODEX" -c "developer_instructions=$(cat "$REFERENCE_FILE" 2>/dev/null)" "$@"',
+    );
+  });
+
   test('creates CLI reference file with command documentation', () => {
     installWrapper();
 
@@ -433,6 +460,78 @@ describe('CLAUDE_WRAPPER', () => {
     ]);
 
     expect(result.stdout.trim()).toBe('/usr/bin:/usr/local/bin');
+  });
+});
+
+// ── CODEX_WRAPPER constant ───────────────────────────────────────────
+
+describe('CODEX_WRAPPER', () => {
+  test('resolves real codex and re-exports wrapper dir on PATH', () => {
+    expect(CODEX_WRAPPER).toContain('WRAPPER_DIR=');
+    expect(CODEX_WRAPPER).toContain('REAL_CODEX=');
+    expect(CODEX_WRAPPER).toContain('export PATH="$WRAPPER_DIR:$CLEAN_PATH"');
+  });
+
+  test('the notify override is a valid TOML/JSON array pointing at ouijit-hook', () => {
+    const notifyMatch = CODEX_WRAPPER.match(/-c 'notify=(.+?)' \\/);
+    expect(notifyMatch).not.toBeNull();
+    const notify = JSON.parse(notifyMatch![1]) as string[];
+    expect(notify[0]).toBe('bash');
+    expect(notify).toContain('-c');
+    expect(notify[2]).toBe('$HOME/.config/Ouijit/bin/ouijit-hook status status=ready');
+  });
+
+  test('injects the four status hooks as TOML arrays of inline tables (must NOT be JSON)', () => {
+    // Each hooks.<Event> override is a TOML array. Codex parses -c values as
+    // TOML; a JSON object would fail parse and degrade to a string, failing
+    // typed deserialization. Asserting TOML inline-table syntax (`{k=v}`).
+    const expected: Array<[string, 'thinking' | 'ready']> = [
+      ['UserPromptSubmit', 'thinking'],
+      ['PostToolUse', 'thinking'],
+      ['Stop', 'ready'],
+      ['PermissionRequest', 'ready'],
+    ];
+    for (const [event, status] of expected) {
+      const re = new RegExp(
+        `-c 'hooks\\.${event}=(\\[\\{hooks=\\[\\{type="command",command="[^"]+"\\}\\]\\}\\])' \\\\`,
+      );
+      const match = CODEX_WRAPPER.match(re);
+      expect(match, `hooks.${event} override should be a TOML array of inline tables`).not.toBeNull();
+      // Pull the command out and check the status mapping
+      const cmdMatch = match![1].match(/command="([^"]+)"/);
+      expect(cmdMatch![1]).toBe(`$HOME/.config/Ouijit/bin/ouijit-hook status status=${status}`);
+      // Must be TOML, not JSON: no `"key":value` syntax
+      expect(match![1]).not.toMatch(/"[A-Za-z_]+":/);
+      // Codex skips async hooks today ("async hooks are not supported yet")
+      expect(match![1]).not.toContain('async');
+    }
+  });
+
+  test('falls through with just developer_instructions when OUIJIT_API_URL is unset', () => {
+    expect(CODEX_WRAPPER).toContain('if [ -z "$OUIJIT_API_URL" ]; then');
+    expect(CODEX_WRAPPER).toContain(
+      'exec "$REAL_CODEX" -c "developer_instructions=$(cat "$REFERENCE_FILE" 2>/dev/null)" "$@"',
+    );
+  });
+
+  test('pre-trusts each hook with the sha256 codex expects (locks the hash recipe)', () => {
+    // These hashes mirror codex-rs/hooks/src/engine/discovery.rs:command_hook_hash —
+    // sha256(canonical_json({event_name, hooks:[{type:"command",command,timeout:600,async:false}]})).
+    // If any of them ever fail, either Codex's normalization changed or our recipe drifted;
+    // a mismatch is graceful (Codex falls back to the /hooks review prompt) but we still
+    // want a tripwire so we know to recompute.
+    const expected: Record<string, string> = {
+      'user_prompt_submit:0:0': 'sha256:f5cd19bf6ce12a88c683852526d77e2553778f51f15d92b0d7f18c1773161245',
+      'post_tool_use:0:0': 'sha256:bba7cb97708e558b3d7746468ec196312d9c1a6cb685467177da4e99cca85115',
+      'stop:0:0': 'sha256:bd8907212bcda4a71b2e580355c07c837a9f34ac96d01a037526921bdf435ffd',
+      'permission_request:0:0': 'sha256:cb24d6656dd4fef6523820ae479cec67acfeae414590e837a926a7aa0daae1e5',
+    };
+    for (const [keySuffix, hash] of Object.entries(expected)) {
+      const re = new RegExp(
+        `-c 'hooks\\.state\\."/<session-flags>/config\\.toml:${keySuffix.replace(/:/g, '\\:')}"\\.trusted_hash="${hash}"'`,
+      );
+      expect(CODEX_WRAPPER, `pre-trust hash for ${keySuffix}`).toMatch(re);
+    }
   });
 });
 
@@ -847,6 +946,48 @@ describe('buildVmHookSettings', () => {
       // Should NOT reference project dir or global config path
       expect(cmd).not.toContain('CLAUDE_PROJECT_DIR');
       expect(cmd).not.toContain('.config/Ouijit');
+    }
+  });
+});
+
+// ── buildVmCodexConfig ───────────────────────────────────────────────
+
+describe('buildVmCodexConfig', () => {
+  test('wires notify + the four status hooks via $HOME/ouijit-hook and omits the CLI reference', () => {
+    const toml = buildVmCodexConfig();
+    expect(toml).toContain('notify = ["bash", "-c", "$HOME/ouijit-hook status status=ready"]');
+    expect(toml).toMatch(
+      /hooks\.UserPromptSubmit = \[\{hooks=\[\{type="command",command="\$HOME\/ouijit-hook status status=thinking"\}\]\}\]/,
+    );
+    expect(toml).toMatch(/hooks\.PostToolUse = .+status=thinking/);
+    expect(toml).toMatch(/hooks\.Stop = .+status=ready/);
+    expect(toml).toMatch(/hooks\.PermissionRequest = .+status=ready/);
+    // Codex skips async hooks today ("async hooks are not supported yet")
+    expect(toml).not.toContain('async');
+    // Sandbox must not get the ouijit CLI reference (lateral-movement concern)
+    expect(toml).not.toContain('developer_instructions');
+    expect(toml).not.toContain('.config/Ouijit');
+  });
+
+  test('the embedded notify array is valid JSON', () => {
+    const match = buildVmCodexConfig().match(/notify = (\[.+\])/);
+    expect(match).not.toBeNull();
+    const notify = JSON.parse(match![1]) as string[];
+    expect(notify).toEqual(['bash', '-c', '$HOME/ouijit-hook status status=ready']);
+  });
+});
+
+// ── buildVmCodexTrustState ───────────────────────────────────────────
+
+describe('buildVmCodexTrustState', () => {
+  test('emits a trusted_hash line per event keyed off the VM config path with $HOME literal', () => {
+    const toml = buildVmCodexTrustState();
+    // $HOME stays literal — the unquoted heredoc in lima/spawn expands it at write time.
+    for (const event of ['user_prompt_submit', 'post_tool_use', 'stop', 'permission_request']) {
+      const re = new RegExp(
+        `hooks\\.state\\."\\$HOME/\\.codex/config\\.toml:${event}:0:0"\\.trusted_hash = "sha256:[0-9a-f]{64}"`,
+      );
+      expect(toml).toMatch(re);
     }
   });
 });
