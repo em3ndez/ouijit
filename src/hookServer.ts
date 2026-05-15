@@ -621,6 +621,74 @@ export const CODEX_WRAPPER = [
   '',
 ].join('\n');
 
+// ── Pi wrapper ───────────────────────────────────────────────────────
+// Pi exposes lifecycle events only to TypeScript extensions, not as
+// shell-command hooks. We ship a tiny extension and load it via
+// `pi --extension <path>`; the same source auto-discovers in the sandbox
+// VM. OUIJIT_HOOK_BIN (set by the wrapper / VM init) carries the path to
+// ouijit-hook so the extension source is identical in both contexts.
+
+export function getPiExtensionPath(): string {
+  return path.join(os.homedir(), '.config', 'Ouijit', 'pi', 'ouijit-extension.ts');
+}
+
+export const PI_EXTENSION = `// Ouijit Pi extension — bridges Pi turn events to the per-terminal
+// status indicator. Auto-installed; safe to delete (Ouijit recreates it).
+// No-ops when OUIJIT_HOOK_BIN is unset, so it's harmless outside Ouijit.
+
+type OuijitStatus = 'thinking' | 'ready';
+
+interface OuijitPiApi {
+  on(event: string, handler: () => void): void;
+  exec(command: string, args: string[], options?: { timeout?: number }): Promise<unknown>;
+}
+
+export default async (pi: OuijitPiApi) => {
+  const hookBin = process.env.OUIJIT_HOOK_BIN;
+  if (!hookBin) return;
+
+  const ping = (status: OuijitStatus) => {
+    pi.exec(hookBin, ['status', \`status=\${status}\`], { timeout: 2000 }).catch(() => {});
+  };
+
+  pi.on('turn_start', () => ping('thinking'));
+  pi.on('turn_end', () => ping('ready'));
+};
+`;
+
+export const PI_WRAPPER = [
+  '#!/bin/bash',
+  '# Ouijit pi wrapper — mirrors the claude/codex wrappers.',
+  'WRAPPER_DIR="$(cd "$(dirname "$0")" && pwd)"',
+  'CLEAN_PATH=":$PATH:"',
+  'CLEAN_PATH="${CLEAN_PATH//:$WRAPPER_DIR:/:}"',
+  'CLEAN_PATH="${CLEAN_PATH#:}"',
+  'CLEAN_PATH="${CLEAN_PATH%:}"',
+  '',
+  'REAL_PI="$(PATH="$CLEAN_PATH" command -v pi)"',
+  'if [ -z "$REAL_PI" ]; then',
+  '  echo "ouijit: pi not found on PATH" >&2',
+  '  exit 1',
+  'fi',
+  '',
+  'export PATH="$WRAPPER_DIR:$CLEAN_PATH"',
+  '',
+  'REFERENCE_FILE="$HOME/.config/Ouijit/ouijit-cli-reference.md"',
+  'EXTENSION_FILE="$HOME/.config/Ouijit/pi/ouijit-extension.ts"',
+  'HOOK_BIN="$HOME/.config/Ouijit/bin/ouijit-hook"',
+  '',
+  'if [ -z "$OUIJIT_API_URL" ]; then',
+  '  exec "$REAL_PI" --append-system-prompt "$(cat "$REFERENCE_FILE" 2>/dev/null)" "$@"',
+  'fi',
+  '',
+  '# OUIJIT_HOOK_BIN is read by the extension to shell out to ouijit-hook.',
+  'OUIJIT_HOOK_BIN="$HOOK_BIN" exec "$REAL_PI" \\',
+  '  --append-system-prompt "$(cat "$REFERENCE_FILE" 2>/dev/null)" \\',
+  '  --extension "$EXTENSION_FILE" \\',
+  '  "$@"',
+  '',
+].join('\n');
+
 // ── Shell integration scripts ────────────────────────────────────────
 // These scripts ensure the wrapper dir stays first in PATH even after
 // shell init files (.zshrc, .bashrc) prepend other directories.
@@ -704,6 +772,14 @@ export function installWrapper(): void {
 
     // Write codex wrapper script (shadows `codex` to inject -c config overrides)
     fs.writeFileSync(path.join(binDir, 'codex'), CODEX_WRAPPER, { mode: 0o755 });
+
+    // Write pi wrapper and the extension it loads via --extension. The
+    // extension lives outside bin/ (not on PATH) and outside Pi's
+    // auto-discovery roots (no effect on un-wrapped `pi` invocations).
+    fs.writeFileSync(path.join(binDir, 'pi'), PI_WRAPPER, { mode: 0o755 });
+    const piExtPath = getPiExtensionPath();
+    fs.mkdirSync(path.dirname(piExtPath), { recursive: true });
+    fs.writeFileSync(piExtPath, PI_EXTENSION, { mode: 0o644 });
 
     // Write ouijit CLI wrapper (delegates to the bundled CLI JS via env vars set by PTY manager)
     fs.writeFileSync(
@@ -845,4 +921,9 @@ export function buildVmCodexTrustState(): string {
   });
   lines.push('');
   return lines.join('\n');
+}
+
+/** Pi extension for the sandbox VM. Identical to the host-side source. */
+export function buildVmPiExtension(): string {
+  return PI_EXTENSION;
 }

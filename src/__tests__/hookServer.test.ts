@@ -39,8 +39,11 @@ import {
   buildVmHookSettings,
   buildVmCodexConfig,
   buildVmCodexTrustState,
+  buildVmPiExtension,
   CLAUDE_WRAPPER,
   CODEX_WRAPPER,
+  PI_WRAPPER,
+  PI_EXTENSION,
 } from '../hookServer';
 import { issueToken, revokeAllTokens } from '../apiAuth';
 
@@ -355,6 +358,29 @@ describe('installWrapper', () => {
     expect(wrapper).toContain(
       'exec "$REAL_CODEX" -c "developer_instructions=$(cat "$REFERENCE_FILE" 2>/dev/null)" "$@"',
     );
+  });
+
+  test('creates pi wrapper and extension on first install', () => {
+    installWrapper();
+
+    const wrapperPath = path.join(tmpHome, '.config', 'Ouijit', 'bin', 'pi');
+    const wrapper = fs.readFileSync(wrapperPath, 'utf-8');
+    expect(wrapper).toContain('#!/bin/bash');
+    expect(wrapper).toContain('REAL_PI=');
+    expect(wrapper).toContain('export PATH="$WRAPPER_DIR:$CLEAN_PATH"');
+    expect(wrapper).toContain('--append-system-prompt "$(cat "$REFERENCE_FILE" 2>/dev/null)"');
+    expect(wrapper).toContain('--extension "$EXTENSION_FILE"');
+    expect(wrapper).toContain('OUIJIT_HOOK_BIN="$HOOK_BIN" exec "$REAL_PI"');
+    expect(wrapper).toContain('if [ -z "$OUIJIT_API_URL" ]; then');
+    expect(wrapper).toContain('exec "$REAL_PI" --append-system-prompt "$(cat "$REFERENCE_FILE" 2>/dev/null)" "$@"');
+
+    const extPath = path.join(tmpHome, '.config', 'Ouijit', 'pi', 'ouijit-extension.ts');
+    expect(fs.existsSync(extPath)).toBe(true);
+    const ext = fs.readFileSync(extPath, 'utf-8');
+    expect(ext).toContain('export default');
+    expect(ext).toContain("pi.on('turn_start'");
+    expect(ext).toContain("pi.on('turn_end'");
+    expect(ext).toContain('OUIJIT_HOOK_BIN');
   });
 
   test('creates CLI reference file with command documentation', () => {
@@ -989,5 +1015,79 @@ describe('buildVmCodexTrustState', () => {
       );
       expect(toml).toMatch(re);
     }
+  });
+});
+
+// ── PI_WRAPPER constant ──────────────────────────────────────────────
+
+describe('PI_WRAPPER', () => {
+  test('resolves real pi and re-exports wrapper dir on PATH', () => {
+    expect(PI_WRAPPER).toContain('WRAPPER_DIR=');
+    expect(PI_WRAPPER).toContain('REAL_PI=');
+    expect(PI_WRAPPER).toContain('export PATH="$WRAPPER_DIR:$CLEAN_PATH"');
+  });
+
+  test('uses --append-system-prompt for the CLI reference (Pi has no `-c` overrides)', () => {
+    expect(PI_WRAPPER).toContain('--append-system-prompt "$(cat "$REFERENCE_FILE" 2>/dev/null)"');
+    expect(PI_WRAPPER).not.toMatch(/-c '[a-z_]+=/);
+  });
+
+  test('loads the extension via --extension and bridges OUIJIT_HOOK_BIN', () => {
+    expect(PI_WRAPPER).toMatch(/OUIJIT_HOOK_BIN="\$HOOK_BIN" exec "\$REAL_PI" \\/);
+    expect(PI_WRAPPER).toContain('--extension "$EXTENSION_FILE"');
+    expect(PI_WRAPPER).toContain('HOOK_BIN="$HOME/.config/Ouijit/bin/ouijit-hook"');
+    expect(PI_WRAPPER).toContain('EXTENSION_FILE="$HOME/.config/Ouijit/pi/ouijit-extension.ts"');
+  });
+
+  test('falls through with just --append-system-prompt when OUIJIT_API_URL is unset', () => {
+    expect(PI_WRAPPER).toContain('if [ -z "$OUIJIT_API_URL" ]; then');
+    expect(PI_WRAPPER).toContain('exec "$REAL_PI" --append-system-prompt "$(cat "$REFERENCE_FILE" 2>/dev/null)" "$@"');
+    // Fallthrough must not carry the extension or hook env var.
+    const fallthroughLine = PI_WRAPPER.split('\n').find(
+      (l) => l.includes('exec "$REAL_PI" --append-system-prompt') && !l.endsWith('\\'),
+    );
+    expect(fallthroughLine).toBeDefined();
+    expect(fallthroughLine).not.toContain('--extension');
+    expect(fallthroughLine).not.toContain('OUIJIT_HOOK_BIN');
+  });
+});
+
+// ── PI_EXTENSION constant ────────────────────────────────────────────
+
+describe('PI_EXTENSION', () => {
+  test('is a TypeScript module with a default-export factory', () => {
+    expect(PI_EXTENSION).toMatch(/export default async \(pi: \w+\) =>/);
+  });
+
+  test('subscribes turn_start → thinking and turn_end → ready exactly once each', () => {
+    expect(PI_EXTENSION.match(/pi\.on\('turn_start'/g)).toHaveLength(1);
+    expect(PI_EXTENSION.match(/pi\.on\('turn_end'/g)).toHaveLength(1);
+    expect(PI_EXTENSION).toContain("ping('thinking')");
+    expect(PI_EXTENSION).toContain("ping('ready')");
+  });
+
+  test('no-ops when OUIJIT_HOOK_BIN is unset (safe outside Ouijit)', () => {
+    expect(PI_EXTENSION).toMatch(/const hookBin = process\.env\.OUIJIT_HOOK_BIN/);
+    expect(PI_EXTENSION).toMatch(/if \(!hookBin\) return/);
+  });
+
+  test('shells out to ouijit-hook via pi.exec with a timeout and swallows errors', () => {
+    expect(PI_EXTENSION).toMatch(/pi\.exec\(hookBin, \['status', .* \{ timeout: 2000 \}\)/);
+    expect(PI_EXTENSION).toContain('.catch(() => {})');
+  });
+});
+
+// ── buildVmPiExtension ───────────────────────────────────────────────
+
+describe('buildVmPiExtension', () => {
+  test('matches the host-side extension exactly', () => {
+    expect(buildVmPiExtension()).toBe(PI_EXTENSION);
+  });
+
+  test('omits any reference to the host-only CLI reference file', () => {
+    // Lateral-movement: agent in sandbox must not get the CLI.
+    const ext = buildVmPiExtension();
+    expect(ext).not.toContain('ouijit-cli-reference');
+    expect(ext).not.toContain('.config/Ouijit');
   });
 });
