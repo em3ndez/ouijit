@@ -2,6 +2,7 @@ import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerDeb } from '@electron-forge/maker-deb';
+import { MakerDMG } from '@electron-forge/maker-dmg';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
@@ -10,6 +11,9 @@ import { notarize } from '@electron/notarize';
 import { execFileSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { resolveSigningIdentity, notarizeAndStapleDMGs } from './forge.dmg';
+
+const dmgSigningIdentity = resolveSigningIdentity();
 
 // Copy a directory tree. Does NOT preserve unix permissions (fs.copyFileSync doesn't),
 // so anything that needs +x must be chmod'd explicitly after copying.
@@ -169,6 +173,16 @@ const config: ForgeConfig = {
           return newPath;
         });
       }
+
+      // Notarize and staple the DMG wrapper. The app inside is already
+      // notarized via postPackage, but Apple requires the distribution
+      // artifact itself to be notarized too, otherwise Gatekeeper warns
+      // on first open.
+      for (const result of makeResults) {
+        if (result.platform !== 'darwin') continue;
+        await notarizeAndStapleDMGs(result.artifacts);
+      }
+
       return makeResults;
     },
     postPackage: async (_config, options) => {
@@ -212,8 +226,31 @@ const config: ForgeConfig = {
   },
   makers: [
     new MakerSquirrel({}),
+    // macOS ZIP is required for Squirrel.Mac auto-updates; the DMG below is the first-install download.
     new MakerZIP({}, ['darwin', 'linux']),
     new MakerDeb({}),
+    new MakerDMG(
+      {
+        name: 'Install Ouijit',
+        icon: './src/assets/icons/icon.icns',
+        background: './src/assets/dmg/background.png',
+        format: 'ULFO',
+        iconSize: 144,
+        additionalDMGOptions: {
+          window: {
+            size: { width: 720, height: 460 },
+          },
+          ...(dmgSigningIdentity
+            ? { 'code-sign': { 'signing-identity': dmgSigningIdentity } }
+            : {}),
+        },
+        contents: (opts) => [
+          { x: 180, y: 235, type: 'file', path: opts.appPath },
+          { x: 540, y: 235, type: 'link', path: '/Applications' },
+        ],
+      },
+      ['darwin'],
+    ),
   ],
   publishers: [
     new PublisherGithub({
