@@ -9,8 +9,9 @@
  */
 
 import log from 'electron-log/renderer';
-import { addProjectTerminal, closeProjectTerminal } from '../components/terminal/terminalActions';
+import { addProjectTerminal } from '../components/terminal/terminalActions';
 import type { RunHookResult } from '../components/dialogs/RunHookDialog';
+import { completeTask } from './taskCompletion';
 import { useProjectStore } from '../stores/projectStore';
 import { useTerminalStore } from '../stores/terminalStore';
 import type { CliHookMode, HookType, ScriptHook, TaskStatus, TaskWithWorkspace } from '../types';
@@ -37,7 +38,7 @@ function hookTypeForTransition(origStatus: TaskStatus, newStatus: TaskStatus): H
   if (origStatus === newStatus) return null;
   if (newStatus === 'in_progress') return origStatus === 'todo' ? 'start' : 'continue';
   if (newStatus === 'in_review') return 'review';
-  if (newStatus === 'done') return 'done';
+  // 'done' is handled by completeTask, not beginTransition.
   return null;
 }
 
@@ -118,6 +119,36 @@ export async function bulkTransitionTasks(
     .map((n) => tasksByNumber.get(n))
     .filter((t): t is TaskWithWorkspace => !!t && t.status !== newStatus)
     .map((task) => ({ task, origStatus: task.status }));
+
+  // Done has its own lifecycle (completeTask) that writes status itself, so
+  // bulk-to-done fans straight into completeTask. Other statuses pre-write via
+  // setStatus, then beginTransition handles the (start/continue/review) hook.
+  if (newStatus === 'done') {
+    const results = await Promise.allSettled(transitions.map(({ task }) => completeTask({ projectPath, task })));
+    const succeeded: typeof transitions = [];
+    const failed: Array<{ taskNumber: number; error: string }> = [];
+    results.forEach((r, i) => {
+      const tr = transitions[i];
+      if (r.status === 'rejected') {
+        failed.push({
+          taskNumber: tr.task.taskNumber,
+          error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+        });
+      } else {
+        succeeded.push(tr);
+      }
+    });
+    store.clearSelection();
+    if (succeeded.length > 0) {
+      useProjectStore.getState().addToast(`Moved ${succeeded.length} tasks to ${STATUS_LABEL[newStatus]}`, 'success');
+    }
+    if (failed.length > 0) {
+      const sample = failed[0].error;
+      const suffix = failed.length > 1 ? ` (and ${failed.length - 1} more)` : '';
+      useProjectStore.getState().addToast(`Failed to move ${failed.length} tasks: ${sample}${suffix}`, 'error');
+    }
+    return succeeded;
+  }
 
   const results = await Promise.allSettled(
     transitions.map(({ task }) => window.api.task.setStatus(projectPath, task.taskNumber, newStatus)),
@@ -373,37 +404,5 @@ async function runNonStartHookInTerminal(
       },
     );
     if (hookResult.foreground && onForegroundOpen) onForegroundOpen();
-    return;
-  }
-
-  if (newStatus === 'done') {
-    // Snapshot the task's terminals *before* spawning the done-hook terminal,
-    // so the cleanup below closes only the pre-existing ones. The hook terminal
-    // is created during the await and is excluded, leaving its output visible.
-    const storeBefore = useTerminalStore.getState();
-    const staleTerminals = (storeBefore.terminalsByProject[projectPath] ?? []).filter(
-      (ptyId) => storeBefore.displayStates[ptyId]?.taskId === task.taskNumber,
-    );
-
-    if (task.worktreePath) {
-      await addProjectTerminal(
-        projectPath,
-        { name: 'Done', command: hookResult.command, source: 'custom', priority: 0 },
-        {
-          existingWorktree: { path: task.worktreePath, branch: task.branch || '', createdAt: task.createdAt },
-          taskId: task.taskNumber,
-          skipAutoHook: true,
-          sandboxed: hookResult.sandboxed,
-          background: !hookResult.foreground,
-        },
-      );
-      if (hookResult.foreground && onForegroundOpen) onForegroundOpen();
-    }
-
-    // Close the terminals that were open before the hook ran. The done-hook
-    // terminal itself is left running so its output stays observable.
-    for (const ptyId of staleTerminals) {
-      closeProjectTerminal(ptyId);
-    }
   }
 }

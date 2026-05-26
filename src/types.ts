@@ -510,6 +510,16 @@ export interface ElectronAPI {
       hookCommand?: string;
     }) => void,
   ): () => void;
+  /** Listen for a CLI-initiated done transition that needs terminal cleanup + hook spawn */
+  onCliTaskCompleted(
+    callback: (payload: {
+      project: string;
+      taskNumber: number;
+      task: TaskWithWorkspace;
+      skipHook?: boolean;
+      hookCommand?: string;
+    }) => void,
+  ): () => void;
   /** Get project settings */
   getProjectSettings(projectPath: string): Promise<ProjectSettings>;
   /** Set whether to kill existing command instances on run */

@@ -3,6 +3,7 @@ import { useAppStore } from '../stores/appStore';
 import { useProjectStore, type PendingCliStart } from '../stores/projectStore';
 import { useTerminalStore } from '../stores/terminalStore';
 import { beginTransition } from '../services/taskStartService';
+import { completeTask } from '../services/taskCompletion';
 import log from 'electron-log/renderer';
 
 const ipcLog = log.scope('ipcListeners');
@@ -103,6 +104,35 @@ export function useIPCListeners() {
             useProjectStore.getState().addToast(payload.message, 'info');
           }
         }
+      }),
+    );
+
+    // CLI-initiated done transition — server already wrote status and included
+    // the full task in the payload, so the done-hook lifecycle (snapshot
+    // terminals, spawn done hook, close snapshot) can run regardless of which
+    // project the user is currently viewing. completeTask itself guards
+    // loadTasks against clobbering the active project's task list, so the
+    // visible kanban catches up on next navigation.
+    cleanups.push(
+      window.api.onCliTaskCompleted((payload) => {
+        ipcLog.info('CLI task-completed: running completeTask', {
+          project: payload.project,
+          taskNumber: payload.taskNumber,
+        });
+        void completeTask({
+          projectPath: payload.project,
+          task: payload.task,
+          skipHook: payload.skipHook,
+          hookCommand: payload.hookCommand,
+          // Server already PATCHed the status before pushing; only the
+          // renderer reload remains.
+          skipStatusWrite: true,
+        }).catch((err) => {
+          ipcLog.error('CLI task-completed lifecycle failed', {
+            taskNumber: payload.taskNumber,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
       }),
     );
 

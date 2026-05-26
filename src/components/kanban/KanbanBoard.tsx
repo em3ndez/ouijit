@@ -19,6 +19,7 @@ import { useTerminalStore } from '../../stores/terminalStore';
 import type { TaskWithWorkspace, TaskStatus, HookType } from '../../types';
 import { addProjectTerminal } from '../terminal/terminalActions';
 import { beginTransition, bulkTransitionTasks, surfaceStartWarnings } from '../../services/taskStartService';
+import { completeTask } from '../../services/taskCompletion';
 import { KanbanColumn } from './KanbanColumn';
 import { BulkActionBar } from './BulkActionBar';
 import { focusKanbanAddInput } from './KanbanAddInput';
@@ -196,15 +197,19 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
     return () => document.removeEventListener('keydown', handler, true);
   }, [hasOpenDialog]);
 
-  // Track Option/Alt key for showing standalone badges
+  // Track Option/Alt (for standalone badge display) and Shift (for done-hook
+  // skip on drag-to-done) keys. Both are reset on blur so an external focus
+  // change doesn't leave the modifier latched.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (useProjectStore.getState().optionKeyHeld !== e.altKey) {
-        useProjectStore.setState({ optionKeyHeld: e.altKey });
-      }
+      const state = useProjectStore.getState();
+      if (state.optionKeyHeld !== e.altKey) useProjectStore.setState({ optionKeyHeld: e.altKey });
+      if (state.shiftKeyHeld !== e.shiftKey) useProjectStore.setState({ shiftKeyHeld: e.shiftKey });
     };
     const onBlur = () => {
-      if (useProjectStore.getState().optionKeyHeld) useProjectStore.setState({ optionKeyHeld: false });
+      const state = useProjectStore.getState();
+      if (state.optionKeyHeld) useProjectStore.setState({ optionKeyHeld: false });
+      if (state.shiftKeyHeld) useProjectStore.setState({ shiftKeyHeld: false });
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKey);
@@ -213,7 +218,7 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKey);
       window.removeEventListener('blur', onBlur);
-      useProjectStore.setState({ optionKeyHeld: false });
+      useProjectStore.setState({ optionKeyHeld: false, shiftKeyHeld: false });
     };
   }, []);
 
@@ -473,6 +478,26 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
       );
 
       const newStatus = finalContainer as TaskStatus;
+
+      // Done is its own lifecycle: snapshot existing task terminals, spawn the
+      // done-hook terminal (if configured), close the snapshot, persist status.
+      // All three entry points (kanban, terminal Close Task menu, CLI) funnel
+      // through completeTask so they behave identically. Shift-drag skips the
+      // configured done hook for this one transition.
+      if (newStatus === 'done' && origStatus && origStatus !== newStatus) {
+        if (draggedTask.worktreePath) {
+          const wtPath = await ensureWorktreeExists(draggedTask);
+          if (!wtPath) {
+            setActiveTask(null);
+            return;
+          }
+          draggedTask = { ...draggedTask, worktreePath: wtPath };
+        }
+        const skipHook = useProjectStore.getState().shiftKeyHeld;
+        setActiveTask(null);
+        await completeTask({ projectPath, task: draggedTask, targetIndex, skipHook });
+        return;
+      }
 
       // Persist status + position optimistically BEFORE async work (worktree creation, etc.)
       // This updates the store so that when we clear activeTask the effect re-syncs to the new position.

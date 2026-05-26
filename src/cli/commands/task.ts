@@ -40,6 +40,32 @@ function resolveHookFlags(opts: HookFlags): { hookMode?: string; hookCommand?: s
   return {};
 }
 
+/**
+ * Resolve --skip-hook / --hook-command for the `done` transition. Mutually
+ * exclusive. Rejected on non-done statuses (would otherwise silently mask
+ * typos like `Done`) and on empty --hook-command strings.
+ */
+function resolveDoneHookFlags(
+  status: string,
+  opts: Pick<HookFlags, 'skipHook' | 'hookCommand'>,
+): { skipHook?: boolean; hookCommand?: string } | { error: string } {
+  if (status !== 'done') {
+    if (opts.skipHook || opts.hookCommand !== undefined) {
+      return { error: '--skip-hook and --hook-command only apply when setting status to "done"' };
+    }
+    return {};
+  }
+  if (opts.skipHook && opts.hookCommand !== undefined) {
+    return { error: 'Only one of --skip-hook, --hook-command may be used' };
+  }
+  if (opts.skipHook) return { skipHook: true };
+  if (opts.hookCommand !== undefined) {
+    if (!opts.hookCommand.trim()) return { error: '--hook-command requires a non-empty command' };
+    return { hookCommand: opts.hookCommand };
+  }
+  return {};
+}
+
 const STATUS_LABELS: Record<string, string> = {
   todo: 'Todo',
   in_progress: 'In Progress',
@@ -64,6 +90,11 @@ Examples:
   ouijit task start 5 --skip-hook
   ouijit task start 5 --hook-command "claude"
   ouijit task set-status 5 in_review
+  ouijit task set-status 5 done
+  ouijit task set-status 5 done --skip-hook
+  ouijit task set-status 5 done --hook-command "npm run deploy"
+  ouijit task bulk-set-status done 5 6 7
+  ouijit task bulk-set-status done 5 6 7 --skip-hook
   ouijit task set-name 5 "Better name"
   ouijit task delete 5`,
     );
@@ -169,19 +200,71 @@ Examples:
     .description('Set task status')
     .argument('<number>', 'task number')
     .argument('<status>', 'new status (todo|in_progress|in_review|done)')
-    .action(async (number: string, status: string) => {
+    .option('--skip-hook', 'when setting done, skip the configured done hook')
+    .option('--hook-command <cmd>', 'when setting done, run a one-off command instead of the configured done hook')
+    .action(async (number: string, status: string, opts: Pick<HookFlags, 'skipHook' | 'hookCommand'>) => {
       const num = parseInt(number, 10);
       if (isNaN(num)) return printError('Task number must be an integer');
       if (!VALID_STATUSES.includes(status)) {
         return printError(`Invalid status: ${status}. Must be one of: ${VALID_STATUSES.join(', ')}`);
       }
+      const hookBody = resolveDoneHookFlags(status, opts);
+      if ('error' in hookBody) return printError(hookBody.error);
       const project = requireProject();
       const result = await patch<{ success: boolean; error?: string; hookWarning?: string }>(
         `/api/tasks/${num}/status${projectQuery(project)}`,
-        { status },
+        { status, ...hookBody },
       );
       if (!result.success) return printError(result.error || 'Failed to set status');
       printJson({ success: true, status: STATUS_LABELS[status] || status, hookWarning: result.hookWarning });
+    });
+
+  task
+    .command('bulk-set-status')
+    .description('Set status on multiple tasks in parallel')
+    .argument('<status>', 'new status (todo|in_progress|in_review|done)')
+    .argument('<numbers...>', 'task numbers (space-separated)')
+    .option('--skip-hook', 'when setting done, skip the configured done hook for every task')
+    .option('--hook-command <cmd>', 'when setting done, run this command instead of the configured done hook')
+    .action(async (status: string, numberArgs: string[], opts: Pick<HookFlags, 'skipHook' | 'hookCommand'>) => {
+      if (!VALID_STATUSES.includes(status)) {
+        return printError(`Invalid status: ${status}. Must be one of: ${VALID_STATUSES.join(', ')}`);
+      }
+      const numbers: number[] = [];
+      for (const arg of numberArgs) {
+        const n = parseInt(arg, 10);
+        if (isNaN(n)) return printError(`Task number must be an integer: ${arg}`);
+        numbers.push(n);
+      }
+      const hookBody = resolveDoneHookFlags(status, opts);
+      if ('error' in hookBody) return printError(hookBody.error);
+      const project = requireProject();
+      const results = await Promise.allSettled(
+        numbers.map((n) =>
+          patch<{ success: boolean; error?: string; hookWarning?: string }>(
+            `/api/tasks/${n}/status${projectQuery(project)}`,
+            { status, ...hookBody },
+          ).then((r) => ({ taskNumber: n, ...r })),
+        ),
+      );
+      const succeeded: number[] = [];
+      const failed: Array<{ taskNumber: number; error: string }> = [];
+      results.forEach((r, i) => {
+        const taskNumber = numbers[i];
+        if (r.status === 'rejected') {
+          failed.push({ taskNumber, error: r.reason instanceof Error ? r.reason.message : String(r.reason) });
+        } else if (!r.value.success) {
+          failed.push({ taskNumber, error: r.value.error || 'Failed to set status' });
+        } else {
+          succeeded.push(taskNumber);
+        }
+      });
+      printJson({
+        success: failed.length === 0,
+        status: STATUS_LABELS[status] || status,
+        succeeded,
+        failed,
+      });
     });
 
   task

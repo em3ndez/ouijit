@@ -17,6 +17,7 @@ import { useTerminalStore, type TerminalDisplayState } from '../../stores/termin
 import { useCanvasStore, persistCanvas } from '../../stores/canvasStore';
 import { useAppStore, staleGuard } from '../../stores/appStore';
 import { OuijitTerminal, terminalInstances, resolveTerminalLabel, type SummaryType } from './terminalReact';
+import { parseOsc133ExitCodes } from './osc133';
 import { readSnapshot } from './sessionSnapshot';
 import { detectDevServerUrl } from '../webPreview/urlHelpers';
 import { descriptionToHookPrompt } from '../../utils/descriptionAttachments';
@@ -53,6 +54,11 @@ export interface AddProjectTerminalOptions {
    *  `rekeyTerminal` rather than being appended. Lets the kanban-drop loading
    *  card morph into the real terminal in the same stack position. */
   replaceLoadingId?: string;
+  /** Close this terminal automatically after a short grace period when its
+   *  underlying command exits with code 0 (signalled by OSC 133;D from the
+   *  shell-integration precmd hook). On non-zero exit it stays open so the
+   *  failure is debuggable in the interactive shell that survives the command. */
+  autoCloseOnSuccess?: boolean;
 }
 
 // ── Apply persisted UI state from a session snapshot ────────────────
@@ -253,6 +259,7 @@ export async function addProjectTerminal(
     worktreePath: worktreeInfo?.path,
     worktreeBranch: worktreeInfo?.branch,
     mergeTarget,
+    autoCloseOnSuccess: options?.autoCloseOnSuccess,
   });
 
   // Open xterm into viewport element (not yet in DOM — React will attach via XTermContainer)
@@ -448,6 +455,25 @@ export async function reconnectTerminal(
 
 // ── Run hook or ad-hoc script as runner terminal ────────────────────
 
+/**
+ * Drive the parent terminal's runnerStatus from OSC 133;D sequences emitted by
+ * the runner's shell-integration precmd hook. The PTY's onExit fires only when
+ * the *shell* exits (i.e. when the user types `exit`), which is essentially
+ * never for a long-running runner — OSC 133 is the per-command signal that
+ * actually reflects whether the script succeeded or failed.
+ */
+export function updateRunnerStatusFromOsc133(data: string, parent: OuijitTerminal): void {
+  // Only the most recent exit code in this batch matters — earlier codes are
+  // already visually obsolete by the time the renderer sees them.
+  const codes = parseOsc133ExitCodes(data);
+  if (codes.length === 0) return;
+  const next = codes[codes.length - 1] === 0 ? 'success' : 'error';
+  if (parent.runnerStatus !== next) {
+    parent.runnerStatus = next;
+    parent.pushDisplayState({ runnerStatus: next });
+  }
+}
+
 export async function spawnRunner(ptyId: string, script?: RunnerScript): Promise<void> {
   const instance = terminalInstances.get(ptyId);
   if (!instance) return;
@@ -564,6 +590,7 @@ async function _spawnRunnerInner(instance: OuijitTerminal, script?: RunnerScript
             instance.pushDisplayState({ runnerStatus: instance.runnerStatus });
           }
         }
+        updateRunnerStatusFromOsc133(data, instance);
         const detected = detectDevServerUrl(data);
         if (detected) applyDetectedWebPreviewUrl(instance, detected);
       },
@@ -719,6 +746,7 @@ export async function reconnectOrphanedSessions(projectPath: string): Promise<vo
             parentTerminal.pushDisplayState({ runnerStatus: parentTerminal.runnerStatus });
           }
         }
+        updateRunnerStatusFromOsc133(data, parentTerminal);
         const detected = detectDevServerUrl(data);
         if (detected) applyDetectedWebPreviewUrl(parentTerminal, detected);
       },

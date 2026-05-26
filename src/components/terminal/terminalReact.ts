@@ -13,13 +13,15 @@ import type { PtyId, PtySpawnOptions, GitFileStatus } from '../../types';
 import { notifyReady, readyBody } from '../../utils/notifications';
 import { generateId } from '../../utils/ids';
 import { useTerminalStore } from '../../stores/terminalStore';
+import { closeProjectTerminal } from './terminalActions';
+import { parseOsc133ExitCodes } from './osc133';
 
 // ── Idle fallback timer constants ────────────────────────────────────
 const IDLE_FALLBACK_MS = 3000;
 const READY_DEFERRAL_MS = 5_000;
 const SIDE_EFFECT_THROTTLE_MS = 250;
 
-export type SummaryType = 'thinking' | 'ready';
+export type SummaryType = 'thinking' | 'ready' | 'success' | 'error';
 
 export interface TerminalOptions {
   ptyId?: PtyId;
@@ -35,6 +37,29 @@ export interface TerminalOptions {
   tags?: string[];
   isRunner?: boolean;
   initialSummaryType?: SummaryType;
+  /**
+   * When true, this terminal closes itself after a short grace period when its
+   * underlying command exits with code 0. The exit signal comes from OSC 133;D
+   * (emitted by the shell-integration precmd hook) or from PTY exit. On
+   * non-zero exit it stays open with an error status, so the failure is
+   * debuggable in the interactive shell that survives the command.
+   */
+  autoCloseOnSuccess?: boolean;
+}
+
+/** How long to leave an auto-close terminal visible on success before closing. */
+export const AUTO_CLOSE_GRACE_MS = 3000;
+
+/**
+ * Schedule a self-tidy close for a terminal that opted into autoCloseOnSuccess.
+ * Extracted so the timing behavior is unit-testable without standing up an
+ * OuijitTerminal instance (which couples to xterm + DOM).
+ */
+export function scheduleAutoCloseOnSuccess(ptyId: PtyId, isDisposed: () => boolean): ReturnType<typeof setTimeout> {
+  return setTimeout(() => {
+    if (isDisposed()) return;
+    closeProjectTerminal(ptyId);
+  }, AUTO_CLOSE_GRACE_MS);
 }
 
 function getTerminalTheme(): Record<string, string> {
@@ -369,6 +394,11 @@ export class OuijitTerminal {
   worktreePath?: string;
   worktreeBranch?: string;
   mergeTarget?: string;
+  /** See TerminalOptions.autoCloseOnSuccess. */
+  readonly autoCloseOnSuccess: boolean;
+  /** Guards against scheduling the auto-close timer twice when both the OSC
+   *  133;D path and the PTY-exit path fire for the same successful command. */
+  private autoCloseScheduled = false;
 
   // ── Per-terminal diff panel state ───────────────────────────────────
   diffPanelOpen = false;
@@ -430,6 +460,7 @@ export class OuijitTerminal {
     this.worktreePath = opts.worktreePath;
     this.worktreeBranch = opts.worktreeBranch;
     this.mergeTarget = opts.mergeTarget;
+    this.autoCloseOnSuccess = opts.autoCloseOnSuccess ?? false;
 
     if (opts.taskId != null) {
       this.diffPanelMode = 'worktree';
@@ -883,17 +914,34 @@ export class OuijitTerminal {
       this.xterm.writeln('');
       const exitColor = exitCode === 0 ? '32' : '31';
       this.xterm.writeln(`\x1b[${exitColor}m● Process exited with code ${exitCode}\x1b[0m`);
-
-      this.summary = exitCode === 0 ? 'Exited' : `Exit ${exitCode}`;
-      this.summaryType = 'ready';
-      this.pushDisplayState({
-        summary: this.summary,
-        summaryType: 'ready',
-        exited: true,
-      });
-
+      this.applyExitState(exitCode, { isPtyExit: true });
       onExit?.(exitCode);
     });
+  }
+
+  /**
+   * Apply an exit-code-driven status flip. Used by both the PTY-exit path
+   * (`wireExitHandler`) and the OSC 133;D in-shell path (`handleCommandExit`).
+   * The PTY-exit path additionally writes the `exited: true` flag and uses a
+   * different summary string ("Exited" vs "Done") so the two callers stay
+   * distinguishable in the UI.
+   */
+  private applyExitState(exitCode: number, opts: { isPtyExit: boolean }): void {
+    const nextType: SummaryType = exitCode === 0 ? 'success' : 'error';
+    const successSummary = opts.isPtyExit ? 'Exited' : 'Done';
+    const nextSummary = exitCode === 0 ? successSummary : `Exit ${exitCode}`;
+    if (this.summaryType !== nextType || this.summary !== nextSummary) {
+      this.summaryType = nextType;
+      this.summary = nextSummary;
+      this.pushDisplayState(
+        opts.isPtyExit
+          ? { summaryType: nextType, summary: nextSummary, exited: true }
+          : { summaryType: nextType, summary: nextSummary },
+      );
+    } else if (opts.isPtyExit) {
+      this.pushDisplayState({ exited: true });
+    }
+    this.maybeScheduleAutoClose(exitCode);
   }
 
   private wireInputForwarding(): void {
@@ -970,7 +1018,25 @@ export class OuijitTerminal {
       }
     }
 
+    // OSC 133;D from our shell-integration precmd hook lets us reflect the
+    // real exit code without requiring the PTY to die. Drives the success/
+    // error status dot and autoCloseOnSuccess. A throttled batch may carry
+    // multiple codes (e.g. `false; true`) — only the last one is meaningful
+    // since the prior commands have already been visually superseded.
+    const codes = parseOsc133ExitCodes(batch);
+    if (codes.length > 0) this.handleCommandExit(codes[codes.length - 1]);
+
     scheduleTerminalGitStatusRefresh(this);
+  }
+
+  private handleCommandExit(exitCode: number): void {
+    this.applyExitState(exitCode, { isPtyExit: false });
+  }
+
+  private maybeScheduleAutoClose(exitCode: number): void {
+    if (!this.autoCloseOnSuccess || exitCode !== 0 || this.autoCloseScheduled) return;
+    this.autoCloseScheduled = true;
+    scheduleAutoCloseOnSuccess(this.ptyId, () => this.disposed);
   }
 
   clearDataThrottle(): void {

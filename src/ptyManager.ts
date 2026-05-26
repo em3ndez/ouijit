@@ -55,15 +55,29 @@ export function buildCommandShellArgs(command: string, shell: string, shellInteg
   const isBash = shell.endsWith('/bash') || shell === 'bash';
   const prefix = 'export PATH="$OUIJIT_WRAPPER_DIR:$PATH"';
 
+  // Wrap the user command in a subshell so a stray `exit` (a shell builtin,
+  // not a child process) only terminates the subshell, not our outer zsh/bash.
+  // Without this, a hook like `echo hi; exit 1` would nuke the outer shell
+  // before we could `exec` into the interactive one. Subshell exit code is
+  // captured into $? exactly like an inline command would be.
+  const wrapped = `(${command})`;
+
+  // Capture the subshell's exit code into an env var so it survives the
+  // `exec` into the interactive shell — exec replaces the process and resets
+  // $?, so without this the renderer would never learn the initial command's
+  // exit code. The integration script reads OUIJIT_INITIAL_EXIT on first load
+  // and emits OSC 133;D itself.
+  const captureExit = 'export OUIJIT_INITIAL_EXIT=$?';
+
   if (isZsh) {
-    return ['-ic', `${prefix}; ${command}; ZDOTDIR="$OUIJIT_SHELL_INTEGRATION_DIR/zsh" exec ${shell}`];
+    return ['-ic', `${prefix}; ${wrapped}; ${captureExit}; ZDOTDIR="$OUIJIT_SHELL_INTEGRATION_DIR/zsh" exec ${shell}`];
   }
   if (isBash) {
     const rcfile = path.join(shellIntegrationDir, 'ouijit-bash-integration.bash');
-    return ['-ic', `${prefix}; ${command}; exec bash --rcfile ${rcfile}`];
+    return ['-ic', `${prefix}; ${wrapped}; ${captureExit}; exec bash --rcfile ${rcfile}`];
   }
   // Fallback for other shells
-  return ['-ic', `${prefix}; ${command}; exec ${shell}`];
+  return ['-ic', `${prefix}; ${wrapped}; ${captureExit}; exec ${shell}`];
 }
 
 interface ManagedPty {
