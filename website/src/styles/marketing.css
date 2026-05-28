@@ -327,6 +327,105 @@ body.marketing .home-pitch-link:hover span {
   }
 }
 
+/* --- Supported agents --- */
+.home-agents {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 var(--content-padding) 120px;
+  text-align: center;
+}
+
+.home-agents h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #f5f5f7;
+  margin: 0 0 32px;
+}
+
+@media (max-width: 600px) {
+  .home-agents h2 {
+    font-size: 1.25rem;
+    margin-bottom: 24px;
+  }
+}
+
+.home-agents-grid {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 32px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+body.marketing .home-agents-grid a {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 32px 20px;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  border-radius: 14px;
+  background: var(--color-terminal-bg, #171717);
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  transition:
+    background-color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+body.marketing .home-agents-grid a:hover {
+  background: #1f1f1f;
+  transform: translateY(-1px);
+}
+
+.home-agents-grid img {
+  width: 40px;
+  height: 40px;
+  display: block;
+}
+
+.home-agents-name {
+  font-size: 1rem;
+  font-weight: 500;
+  color: #f5f5f7;
+  letter-spacing: -0.005em;
+}
+
+.home-agents-domain {
+  font-size: 0.8125rem;
+  color: var(--color-text-tertiary);
+}
+
+.home-agents-footnote {
+  font-size: 0.9375rem;
+  color: var(--color-text-tertiary);
+  margin: 0;
+}
+
+body.marketing .home-agents-footnote a {
+  color: var(--color-text-secondary);
+  transition: color var(--transition-fast);
+}
+
+body.marketing .home-agents-footnote a:hover {
+  color: #f5f5f7;
+}
+
+@media (max-width: 600px) {
+  .home-agents {
+    padding: 0 var(--content-padding) 80px;
+  }
+  .home-agents-grid {
+    grid-template-columns: 1fr;
+  }
+  body.marketing .home-agents-grid a {
+    padding: 24px 20px;
+  }
+}
+
 /* Three-layer wrapper for the responsive workspace scene.
    .workspace-scene-frame: holds the scaled canvas + the CLI prompt below.
    .workspace-scene-clip: full viewport-width container that clips the
