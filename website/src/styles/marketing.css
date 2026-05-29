@@ -532,7 +532,7 @@ body.marketing .home-agents-footnote a:hover {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif;
 }
 
-.macos-notif-close {
+.macos-notif-replay {
   position: absolute;
   top: -8px;
   left: -8px;
@@ -556,13 +556,13 @@ body.marketing .home-agents-footnote a:hover {
     background 120ms ease;
 }
 
-.macos-notif:hover .macos-notif-close,
-.macos-notif-close:focus-visible {
+.macos-notif:hover .macos-notif-replay,
+.macos-notif-replay:focus-visible {
   opacity: 1;
   transform: scale(1);
 }
 
-.macos-notif-close:hover {
+.macos-notif-replay:hover {
   background: rgba(80, 80, 82, 0.98);
 }
 
@@ -605,6 +605,10 @@ body.marketing .home-agents-footnote a:hover {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  /* Room for descenders (j/g tails) so they aren't clipped by the
+     __cmd overflow, and a stable box height so the $, command, and
+     caret all share one baseline. */
+  line-height: 1.4;
 }
 
 .cli-prompt-bubble__cmd {
@@ -680,10 +684,13 @@ body.marketing .home-agents-footnote a:hover {
 .cli-prompt-bubble__cursor {
   display: inline-block;
   width: 8px;
-  height: 15px;
+  height: 14px;
   background: rgba(245, 245, 247, 0.85);
   border-radius: 1px;
   flex-shrink: 0;
+  /* Center the caret on the text rather than baseline-aligning it,
+     which otherwise leaves it sitting a touch high. */
+  vertical-align: middle;
   animation: cli-cursor-blink 1.05s steps(2, end) infinite;
 }
 
@@ -1232,11 +1239,10 @@ body.marketing::after {
     repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.4) 0 1px, transparent 1px 3px),
     /* vertical R/G/B phosphor grille — adds color shimmer even on dark areas */
     repeating-linear-gradient(
-      to right,
-      rgba(255, 0, 0, 0.08) 0 1px,
-      rgba(0, 255, 0, 0.08) 1px 2px,
-      rgba(0, 0, 255, 0.08) 2px 3px
-    ),
-    /* tube vignette */
-    radial-gradient(120% 120% at 50% 50%, transparent 45%, rgba(0, 0, 0, 0.55) 100%);
+        to right,
+        rgba(255, 0, 0, 0.08) 0 1px,
+        rgba(0, 255, 0, 0.08) 1px 2px,
+        rgba(0, 0, 255, 0.08) 2px 3px
+      ),
+    /* tube vignette */ radial-gradient(120% 120% at 50% 50%, transparent 45%, rgba(0, 0, 0, 0.55) 100%);
 }
