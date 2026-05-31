@@ -17,7 +17,9 @@ import { createPortal } from 'react-dom';
 import type { Project } from '../types';
 import { useAppStore } from '../stores/appStore';
 import { useTerminalStore } from '../stores/terminalStore';
+import { useUIStore } from '../stores/uiStore';
 import { stringToColor, getInitials } from '../utils/projectIcon';
+import { Icon } from './terminal/Icon';
 const isMac = navigator.platform.toLowerCase().includes('mac');
 
 interface SidebarProps {
@@ -32,12 +34,16 @@ export function Sidebar({ onProjectSelect, onHomeSelect, onAddExisting, onCreate
   const activeView = useAppStore((s) => s.activeView);
   const activeProjectPath = useAppStore((s) => s.activeProjectPath);
   const fullscreen = useAppStore((s) => s.fullscreen);
+  const sidebarPinned = useUIStore((s) => s.sidebarPinned);
 
   const sidebarRef = useRef<HTMLElement>(null);
-  const triggerRef = useRef<HTMLDivElement>(null);
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [visible, setVisible] = useState(false);
+  const noProjects = projects.length === 0;
+  // Start visible on every app open so the sidebar is always discoverable;
+  // the existing hideSidebar path (mouse-leave) collapses it from there.
+  const [visible, setVisible] = useState(true);
+  const effectiveVisible = visible || sidebarPinned;
 
   const addBtnRef = useRef<HTMLButtonElement>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -80,6 +86,10 @@ export function Sidebar({ onProjectSelect, onHomeSelect, onAddExisting, onCreate
 
   const hideSidebar = useCallback(() => {
     if (addMenuOpen) return;
+    if (sidebarPinned) return;
+    // Keep the sidebar pinned open until the user has at least one project —
+    // otherwise the only entry point for "add project" disappears on hover-out.
+    if (noProjects) return;
     if (showTimeoutRef.current) {
       clearTimeout(showTimeoutRef.current);
       showTimeoutRef.current = null;
@@ -89,7 +99,7 @@ export function Sidebar({ onProjectSelect, onHomeSelect, onAddExisting, onCreate
 
       document.documentElement.style.setProperty('--sidebar-offset', '0px');
     }, 300);
-  }, [addMenuOpen]);
+  }, [addMenuOpen, noProjects, sidebarPinned]);
 
   // Listen for show-sidebar events from the header toggle button
   useEffect(() => {
@@ -97,6 +107,64 @@ export function Sidebar({ onProjectSelect, onHomeSelect, onAddExisting, onCreate
     document.addEventListener('show-sidebar', handler);
     return () => document.removeEventListener('show-sidebar', handler);
   }, [showSidebar]);
+
+  // Listen for toggle-sidebar events from the titlebar project icon. Toggling
+  // drives the pinned state so the choice persists; when unpinning we collapse
+  // immediately since the cursor isn't over the sidebar to trigger mouse-leave.
+  useEffect(() => {
+    const handler = () => {
+      const ui = useUIStore.getState();
+      if (ui.sidebarPinned) {
+        ui.setSidebarPinned(false);
+        if (showTimeoutRef.current) clearTimeout(showTimeoutRef.current);
+        if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+        showTimeoutRef.current = null;
+        hideTimeoutRef.current = null;
+        setVisible(false);
+        document.documentElement.style.setProperty('--sidebar-offset', '0px');
+      } else {
+        ui.setSidebarPinned(true);
+      }
+    };
+    document.addEventListener('toggle-sidebar', handler);
+    return () => document.removeEventListener('toggle-sidebar', handler);
+  }, []);
+
+  // Sidebar starts visible (see initial useState above) — match the layout
+  // offset to that on mount so content doesn't render under the sidebar
+  // before the first show/hide tick.
+  useEffect(() => {
+    document.documentElement.style.setProperty('--sidebar-offset', 'var(--sidebar-width)');
+  }, []);
+
+  // Listen for open-add-menu events from the home empty state CTA
+  useEffect(() => {
+    const handler = () => {
+      showSidebar();
+      setAddMenuOpen(true);
+    };
+    document.addEventListener('open-add-menu', handler);
+    return () => document.removeEventListener('open-add-menu', handler);
+  }, [showSidebar]);
+
+  // Pin the sidebar open whenever there are no projects so the add-project
+  // button stays visible (otherwise it auto-hides on mouse-out).
+  useEffect(() => {
+    if (noProjects) showSidebar();
+  }, [noProjects, showSidebar]);
+
+  // When the user-toggled pin flips on, lock the sidebar visible and reserve
+  // its width in the layout. No inverse on flip-off: hideSidebar is the only
+  // path that retracts the sidebar, and its `if (sidebarPinned) return` guard
+  // (re-evaluated when sidebarPinned drops) lets the next mouse-leave hide it
+  // and reset --sidebar-offset to 0px. Driving an inverse from this effect
+  // would race with hover state.
+  useEffect(() => {
+    if (sidebarPinned) {
+      setVisible(true);
+      document.documentElement.style.setProperty('--sidebar-offset', 'var(--sidebar-width)');
+    }
+  }, [sidebarPinned]);
 
   // Context menu dismiss
   useEffect(() => {
@@ -140,9 +208,8 @@ export function Sidebar({ onProjectSelect, onHomeSelect, onAddExisting, onCreate
   return (
     <>
       {/* Trigger zone — hidden when sidebar is visible */}
-      {!visible && (
+      {!effectiveVisible && (
         <div
-          ref={triggerRef}
           className="fixed top-0 bottom-0 left-0 z-[10000]"
           style={{ width: 24 }}
           onMouseEnter={(e) => {
@@ -164,17 +231,19 @@ export function Sidebar({ onProjectSelect, onHomeSelect, onAddExisting, onCreate
         className="fixed bottom-0 left-0 z-[10001] flex flex-col overflow-hidden"
         style={{
           top: isMac && !fullscreen ? 0 : 60,
-          width: visible ? 'var(--sidebar-width)' : 0,
+          width: effectiveVisible ? 'var(--sidebar-width)' : 0,
           transition: 'width 200ms ease-out',
           background: 'var(--color-background)',
         }}
         onMouseEnter={showSidebar}
         onMouseLeave={hideSidebar}
       >
-        <div className="shrink-0 [-webkit-app-region:drag]" style={{ height: isMac && !fullscreen ? 52 : 16 }} />
+        {/* Top spacer — sized so the home button's logomark aligns with the
+            content area top (top:82px) on the right of the window. */}
+        <div className="shrink-0 [-webkit-app-region:drag]" style={{ height: isMac && !fullscreen ? 78 : 18 }} />
 
         {/* Home button */}
-        <SidebarTooltipWrapper label="Sessions">
+        <SidebarTooltipWrapper label="Home">
           {(tipRef, tipProps) => (
             <div
               ref={tipRef}
@@ -253,6 +322,36 @@ export function Sidebar({ onProjectSelect, onHomeSelect, onAddExisting, onCreate
               </div>
             )}
           </SidebarTooltipWrapper>
+
+          {/* Pin toggle — same active-state treatment as the home/project
+              items (white left-bar indicator on hover/active). */}
+          <SidebarTooltipWrapper label={sidebarPinned ? 'Unpin sidebar' : 'Pin sidebar open'}>
+            {(tipRef, tipProps) => (
+              <div
+                ref={tipRef}
+                {...tipProps}
+                className="group relative flex items-center justify-center shrink-0 [-webkit-app-region:no-drag]"
+                style={{ width: 'var(--sidebar-width)', height: 40 }}
+                onClick={() => useUIStore.getState().toggleSidebarPinned()}
+                role="button"
+                tabIndex={0}
+                aria-pressed={sidebarPinned}
+                aria-label={sidebarPinned ? 'Unpin sidebar' : 'Pin sidebar open'}
+              >
+                <div
+                  className={`absolute left-0 w-1 rounded-r-sm bg-white transition-all duration-200 ease-out ${
+                    sidebarPinned ? 'h-7 opacity-100' : 'h-0 opacity-0 group-hover:h-4 group-hover:opacity-50'
+                  }`}
+                />
+                <Icon
+                  name="sidebar-simple"
+                  className={`w-5 h-5 transition-colors duration-150 ${
+                    sidebarPinned ? 'text-text-primary' : 'text-text-tertiary group-hover:text-text-secondary'
+                  }`}
+                />
+              </div>
+            )}
+          </SidebarTooltipWrapper>
         </div>
       </aside>
 
@@ -297,7 +396,9 @@ interface SortableProjectIconProps {
 }
 
 function SortableProjectIcon({ project, isActive, onClick, onContextMenu }: SortableProjectIconProps) {
-  const terminalCount = useTerminalStore((s) => (s.terminalsByProject[project.path] ?? []).length);
+  const terminalCount = useTerminalStore(
+    (s) => (s.terminalsByProject[project.path] ?? []).filter((id) => !s.displayStates[id]?.isLoading).length,
+  );
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: project.path,
   });
@@ -352,7 +453,7 @@ function SortableProjectIcon({ project, isActive, onClick, onContextMenu }: Sort
             isActive ? 'h-9 opacity-100' : 'h-0 opacity-0 group-hover:h-5 group-hover:opacity-50'
           }`}
         />
-        <div className="w-10 h-10 overflow-hidden rounded-md">
+        <div className={`w-10 h-10 ${project.iconDataUrl ? '' : 'overflow-hidden rounded-md'}`}>
           {project.iconDataUrl ? (
             <img
               src={project.iconDataUrl}

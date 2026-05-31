@@ -3,12 +3,14 @@ import type { ScriptHook, HookType } from '../../types';
 import { useProjectStore } from '../../stores/projectStore';
 import { useAutoResize } from '../../hooks/useAutoResize';
 import { DialogOverlay } from './DialogOverlay';
+import { HookCliHint } from './HookCliHint';
+import { HookEnvVars } from './HookEnvVars';
 
 const HOOK_LABELS: Record<HookType, { title: string; description: string; placeholder: string; envVars?: boolean }> = {
   start: {
     title: 'Start Hook',
     description: 'Runs when a task moves from To Do to In Progress',
-    placeholder: 'npm install && claude "$OUIJIT_TASK_PROMPT"',
+    placeholder: 'claude "complete the current task and move it into in review"',
     envVars: true,
   },
   continue: {
@@ -26,11 +28,11 @@ const HOOK_LABELS: Record<HookType, { title: string; description: string; placeh
   review: {
     title: 'Review Hook',
     description: 'Runs when a task moves to In Review',
-    placeholder: 'gh pr create --fill',
+    placeholder: 'claude "open a pull request for the current task"',
     envVars: true,
   },
-  cleanup: {
-    title: 'Cleanup Hook',
+  done: {
+    title: 'Done Hook',
     description: 'Runs when a task moves to Done',
     placeholder: 'git push origin HEAD',
     envVars: true,
@@ -41,14 +43,6 @@ const HOOK_LABELS: Record<HookType, { title: string; description: string; placeh
     placeholder: 'code',
   },
 };
-
-const ENV_VARS = [
-  '$OUIJIT_PROJECT_PATH',
-  '$OUIJIT_WORKTREE_PATH',
-  '$OUIJIT_TASK_BRANCH',
-  '$OUIJIT_TASK_NAME',
-  '$OUIJIT_TASK_PROMPT',
-];
 
 interface HookConfigDialogProps {
   projectPath: string;
@@ -71,7 +65,6 @@ export function HookConfigDialog({
   const [command, setCommand] = useState(existingHook?.command ?? '');
   const [killExisting, setKillExisting] = useState(killExistingOnRun !== false);
   const [visible, setVisible] = useState(false);
-  const [copiedVar, setCopiedVar] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autoResize = useAutoResize();
 
@@ -119,12 +112,6 @@ export function HookConfigDialog({
     dismiss({ saved: true, hook, killExistingOnRun: killExisting });
   }, [command, projectPath, hookType, existingHook, labels, isRunHook, killExisting, dismiss]);
 
-  const copyVar = useCallback((varName: string) => {
-    navigator.clipboard.writeText(varName);
-    setCopiedVar(varName);
-    setTimeout(() => setCopiedVar(null), 1500);
-  }, []);
-
   return (
     <DialogOverlay visible={visible} onDismiss={() => dismiss(null)}>
       <h2 className="text-lg font-semibold text-text-primary mb-4 text-center">{labels.title}</h2>
@@ -164,39 +151,19 @@ export function HookConfigDialog({
           </div>
         )}
 
-        {labels.envVars && (
-          <details className="mt-3 text-xs text-text-secondary [&>summary]:cursor-default [&>summary]:select-none [&_ul]:mt-2 [&_ul]:mb-0 [&_ul]:pl-5 [&_li]:my-1">
-            <summary>Environment variables</summary>
-            <ul>
-              {ENV_VARS.map((v) => (
-                <li key={v}>
-                  <code
-                    className={`font-mono text-[13px] px-1.5 py-0.5 rounded inline-block bg-background-secondary hover:text-text-primary hover:bg-border-hover ${copiedVar === v ? 'text-accent !bg-[color-mix(in_srgb,var(--color-accent)_15%,transparent)]' : ''}`}
-                    style={{ transition: 'background 100ms ease, color 100ms ease' }}
-                    onClick={() => copyVar(v)}
-                  >
-                    {copiedVar === v ? 'Copied!' : v}
-                  </code>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
+        {labels.envVars && <HookEnvVars />}
       </div>
 
-      <div className="flex gap-2 justify-end mt-4 items-center">
-        <button
-          className="inline-flex items-center justify-center gap-2 px-4 py-1.5 font-sans text-sm font-medium no-underline border-none rounded-full outline-none transition-all duration-150 ease-out [-webkit-app-region:no-drag] focus-visible:ring-3 focus-visible:ring-accent-light text-accent bg-accent-light hover:bg-[rgba(0,122,255,0.15)]"
-          onClick={() => dismiss(null)}
-        >
-          Cancel
-        </button>
-        <button
-          className="inline-flex items-center justify-center gap-2 px-4 py-1.5 font-sans text-sm font-medium no-underline border-none rounded-full outline-none transition-all duration-150 ease-out [-webkit-app-region:no-drag] focus-visible:ring-3 focus-visible:ring-accent-light text-white bg-accent hover:bg-accent-hover active:scale-[0.98]"
-          onClick={handleSave}
-        >
-          Save
-        </button>
+      <div className="flex gap-2 justify-between mt-4 items-center">
+        {labels.envVars ? <HookCliHint /> : <div />}
+        <div className="flex gap-2">
+          <button className="btn-secondary" onClick={() => dismiss(null)}>
+            Cancel
+          </button>
+          <button className="btn-primary" onClick={handleSave}>
+            Save
+          </button>
+        </div>
       </div>
     </DialogOverlay>
   );

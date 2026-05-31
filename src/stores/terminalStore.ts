@@ -1,62 +1,7 @@
 import { create } from 'zustand';
-import type { GitFileStatus } from '../types';
+import { DEFAULT_DISPLAY_STATE, type TerminalDisplayState } from './terminalDisplay';
 
-/** Renderable state pushed from OuijitTerminal class to React */
-export interface TerminalDisplayState {
-  ptyId: string;
-  label: string;
-  summary: string;
-  summaryType: 'thinking' | 'ready';
-  gitFileStatus: GitFileStatus | null;
-  lastOscTitle: string;
-  tags: string[];
-  hookStatus: 'thinking' | 'ready' | null;
-  runnerStatus: 'running' | 'success' | 'error' | 'idle';
-  runnerScriptName: string | null;
-  runnerPanelOpen: boolean;
-  runnerFullWidth: boolean;
-  diffPanelOpen: boolean;
-  diffPanelSelectedFile: string | null;
-  diffPanelMode: 'uncommitted' | 'worktree';
-  planPath: string | null;
-  planPanelOpen: boolean;
-  planFullWidth: boolean;
-  webPreviewUrl: string | null;
-  webPreviewPanelOpen: boolean;
-  webPreviewFullWidth: boolean;
-  sandboxed: boolean;
-  taskId: number | null;
-  worktreeBranch: string | null;
-  projectPath: string;
-  exited: boolean;
-}
-
-export const DEFAULT_DISPLAY_STATE: Omit<TerminalDisplayState, 'ptyId' | 'projectPath'> = {
-  label: '',
-  summary: '',
-  summaryType: 'ready',
-  gitFileStatus: null,
-  lastOscTitle: '',
-  tags: [],
-  hookStatus: null,
-  runnerStatus: 'idle',
-  runnerScriptName: null,
-  runnerPanelOpen: false,
-  runnerFullWidth: true,
-  diffPanelOpen: false,
-  diffPanelSelectedFile: null,
-  diffPanelMode: 'uncommitted',
-  planPath: null,
-  planPanelOpen: false,
-  planFullWidth: true,
-  webPreviewUrl: null,
-  webPreviewPanelOpen: false,
-  webPreviewFullWidth: true,
-  sandboxed: false,
-  taskId: null,
-  worktreeBranch: null,
-  exited: false,
-};
+export { DEFAULT_DISPLAY_STATE, type TerminalDisplayState } from './terminalDisplay';
 
 export const STACK_PAGE_SIZE = 5;
 
@@ -67,8 +12,6 @@ interface TerminalStoreState {
   terminalsByProject: Record<string, string[]>;
   /** Active terminal index per project path */
   activeIndices: Record<string, number>;
-  /** Loading card label (shown during worktree creation) */
-  loadingLabel: string | null;
 }
 
 interface TerminalStoreActions {
@@ -85,7 +28,6 @@ interface TerminalStoreActions {
   setActiveIndex: (projectPath: string, index: number) => void;
   activateLast: (projectPath: string) => void;
   clearProject: (projectPath: string) => void;
-  setLoadingLabel: (label: string | null) => void;
 }
 
 type TerminalStore = TerminalStoreState & TerminalStoreActions;
@@ -94,7 +36,6 @@ export const useTerminalStore = create<TerminalStore>()((set, get) => ({
   displayStates: {},
   terminalsByProject: {},
   activeIndices: {},
-  loadingLabel: null,
 
   addTerminal: (projectPath, ptyId, initial) => {
     const state = get();
@@ -223,8 +164,6 @@ export const useTerminalStore = create<TerminalStore>()((set, get) => ({
       activeIndices: remainingIndices,
     });
   },
-
-  setLoadingLabel: (label) => set({ loadingLabel: label }),
 }));
 
 // ── Derived selectors ────────────────────────────────────────────────

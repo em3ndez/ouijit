@@ -46,9 +46,12 @@ export function SandboxSection({ projectPath }: SandboxSectionProps) {
     })();
   }, [projectPath]);
 
-  // Poll VM status
+  // Poll VM status. Each tick spawns a `limactl list --json` subprocess; pausing
+  // while the window is hidden stops the steady drumbeat of subprocess spawns
+  // when the user isn't looking.
   useEffect(() => {
-    const poll = setInterval(async () => {
+    let poll: ReturnType<typeof setInterval> | null = null;
+    const tick = async () => {
       try {
         const s = await window.api.lima.status(projectPath);
         setVmStatus(s.vmStatus);
@@ -56,8 +59,32 @@ export function SandboxSection({ projectPath }: SandboxSectionProps) {
       } catch {
         /* ignore */
       }
-    }, 3000);
-    return () => clearInterval(poll);
+    };
+    const start = () => {
+      if (poll != null || document.hidden) return;
+      poll = setInterval(tick, 3000);
+    };
+    const stop = () => {
+      if (poll != null) {
+        clearInterval(poll);
+        poll = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        // Catch up immediately on re-show in case the VM transitioned while hidden.
+        tick();
+        start();
+      }
+    };
+    start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      stop();
+    };
   }, [projectPath]);
 
   const handleEditorChange = useCallback(
@@ -222,7 +249,7 @@ export function SandboxSection({ projectPath }: SandboxSectionProps) {
 
   const [showMerged, setShowMerged] = useState(false);
   const statusLabel = sandboxStarting ? 'Starting\u2026' : VM_STATUS_LABELS[vmStatus] || vmStatus;
-  const statusColor = vmStatus === 'Running' && !sandboxStarting ? 'text-[#0a84ff]' : 'text-text-primary';
+  const statusColor = vmStatus === 'Running' && !sandboxStarting ? 'text-success' : 'text-text-primary';
 
   return (
     <div className="space-y-4">
@@ -258,7 +285,7 @@ export function SandboxSection({ projectPath }: SandboxSectionProps) {
             </button>
             {isDirty && (
               <button
-                className="text-[10px] px-2 py-0.5 rounded bg-[#0a84ff]/20 text-[#0a84ff] hover:bg-[#0a84ff]/30 transition-colors"
+                className="text-[10px] px-2 py-0.5 rounded bg-accent/20 text-accent hover:bg-accent/30 transition-colors"
                 onClick={handleSave}
               >
                 Save
@@ -297,7 +324,7 @@ export function SandboxSection({ projectPath }: SandboxSectionProps) {
         <div className="flex items-center gap-2 px-1">
           <span className="text-xs text-text-secondary">Config changed. Recreate VM now?</span>
           <button
-            className="text-[10px] px-2 py-0.5 rounded bg-[#0a84ff]/20 text-[#0a84ff] hover:bg-[#0a84ff]/30"
+            className="text-[10px] px-2 py-0.5 rounded bg-accent/20 text-accent hover:bg-accent/30"
             onClick={handleRecreate}
           >
             Yes

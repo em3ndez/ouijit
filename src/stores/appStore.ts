@@ -1,5 +1,13 @@
 import { create } from 'zustand';
-import type { Project } from '../types';
+import type { Project, TaskWithWorkspace } from '../types';
+import type { HealthStatus } from '../healthCheck';
+import { withViewTransition, type ViewTransitionDirection } from '../utils/viewTransition';
+
+export interface HomeRecentTask extends TaskWithWorkspace {
+  project: Project;
+}
+
+const MAX_HOME_RECENTS = 8;
 
 interface AppStoreState {
   activeView: 'home' | 'project';
@@ -13,6 +21,22 @@ interface AppStoreState {
   sandboxVmStatus: string;
   sandboxStarting: boolean;
   whatsNew: { version: string; notes: string } | null;
+  helpDialogOpen: boolean;
+  /**
+   * Session-only onboarding panel state. Lives in the app store (not in the
+   * OnboardingPanel component) so it survives kanban-toggle remounts — without
+   * this, hitting "Hide for now" or being in the stuck state would reset every
+   * time the user toggled the kanban view off and back on.
+   */
+  onboardingSoftDismissed: boolean;
+  onboardingStuckLatched: boolean;
+  health: HealthStatus | null;
+  homeActivePanel: 'home' | 'settings';
+  homeRecents: HomeRecentTask[] | null;
+  /** Per-project task cache. Source of truth for `homeRecents`; updated whenever
+   *  any project's tasks are (re)loaded. Lets the home view paint instantly
+   *  from cache while a background refresh reconciles. */
+  taskCacheByProject: Record<string, TaskWithWorkspace[]>;
   _version: number;
 }
 
@@ -23,9 +47,31 @@ interface AppStoreActions {
   setSandboxStatus: (available: boolean, vmStatus: string) => void;
   setSandboxStarting: (starting: boolean) => void;
   setWhatsNew: (info: { version: string; notes: string } | null) => void;
-  navigateToProject: (path: string, project: Project) => void;
-  navigateHome: () => void;
+  setHelpDialogOpen: (open: boolean) => void;
+  setOnboardingSoftDismissed: (value: boolean) => void;
+  setOnboardingStuckLatched: (value: boolean) => void;
+  setHealth: (status: HealthStatus | null) => void;
+  setHomeActivePanel: (panel: 'home' | 'settings') => void;
+  navigateToProject: (path: string, project: Project, options?: { direction?: ViewTransitionDirection }) => void;
+  navigateHome: (options?: { direction?: ViewTransitionDirection; panel?: 'home' | 'settings' }) => void;
+  loadHomeRecents: () => Promise<void>;
+  /** Update one project's slice of the task cache; re-derives `homeRecents`. */
+  updateProjectTaskCache: (projectPath: string, tasks: TaskWithWorkspace[]) => void;
   resetProjectState: () => void;
+}
+
+function deriveHomeRecents(projects: Project[], cache: Record<string, TaskWithWorkspace[]>): HomeRecentTask[] {
+  const projectByPath = new Map(projects.map((p) => [p.path, p]));
+  const all: HomeRecentTask[] = [];
+  for (const [path, tasks] of Object.entries(cache)) {
+    const project = projectByPath.get(path);
+    if (!project) continue;
+    for (const t of tasks) all.push({ ...t, project });
+  }
+  return all
+    .filter((t) => t.status !== 'done')
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, MAX_HOME_RECENTS);
 }
 
 type AppStore = AppStoreState & AppStoreActions;
@@ -42,6 +88,13 @@ export const useAppStore = create<AppStore>()((set, get) => ({
   sandboxVmStatus: '',
   sandboxStarting: false,
   whatsNew: null,
+  helpDialogOpen: false,
+  onboardingSoftDismissed: false,
+  onboardingStuckLatched: false,
+  health: null,
+  homeActivePanel: 'home',
+  homeRecents: null,
+  taskCacheByProject: {},
   _version: 0,
 
   setProjects: (projects) => set({ projects }),
@@ -56,24 +109,66 @@ export const useAppStore = create<AppStore>()((set, get) => ({
 
   setWhatsNew: (info) => set({ whatsNew: info }),
 
-  navigateToProject: (path, project) => {
-    const version = get()._version + 1;
-    set({
-      activeView: 'project',
-      activeProjectPath: path,
-      activeProjectData: project,
-      _version: version,
-    });
+  setHelpDialogOpen: (open) => set({ helpDialogOpen: open }),
+
+  setOnboardingSoftDismissed: (value) => set({ onboardingSoftDismissed: value }),
+
+  setOnboardingStuckLatched: (value) => set({ onboardingStuckLatched: value }),
+
+  setHealth: (status) => set({ health: status }),
+
+  setHomeActivePanel: (panel) =>
+    withViewTransition(() => {
+      set({ homeActivePanel: panel });
+    }),
+
+  navigateToProject: (path, project, options) =>
+    withViewTransition(
+      () => {
+        const version = get()._version + 1;
+        set({
+          activeView: 'project',
+          activeProjectPath: path,
+          activeProjectData: project,
+          _version: version,
+        });
+      },
+      { direction: options?.direction },
+    ),
+
+  navigateHome: (options) =>
+    withViewTransition(
+      () => {
+        const version = get()._version + 1;
+        set({
+          activeView: 'home',
+          activeProjectPath: null,
+          activeProjectData: null,
+          homeActivePanel: options?.panel ?? 'home',
+          _version: version,
+        });
+      },
+      { direction: options?.direction },
+    ),
+
+  loadHomeRecents: async () => {
+    const projects = get().projects;
+    const results = await Promise.all(
+      projects.map((project) =>
+        window.api.task
+          .getAll(project.path)
+          .then((tasks) => ({ path: project.path, tasks }))
+          .catch(() => ({ path: project.path, tasks: [] as TaskWithWorkspace[] })),
+      ),
+    );
+    const cache: Record<string, TaskWithWorkspace[]> = { ...get().taskCacheByProject };
+    for (const { path, tasks } of results) cache[path] = tasks;
+    set({ taskCacheByProject: cache, homeRecents: deriveHomeRecents(get().projects, cache) });
   },
 
-  navigateHome: () => {
-    const version = get()._version + 1;
-    set({
-      activeView: 'home',
-      activeProjectPath: null,
-      activeProjectData: null,
-      _version: version,
-    });
+  updateProjectTaskCache: (projectPath, tasks) => {
+    const cache = { ...get().taskCacheByProject, [projectPath]: tasks };
+    set({ taskCacheByProject: cache, homeRecents: deriveHomeRecents(get().projects, cache) });
   },
 
   resetProjectState: () => {

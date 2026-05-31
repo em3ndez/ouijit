@@ -3,7 +3,18 @@
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { IpcInvokeContract, IpcSendContract, IpcPushContract } from './ipc/contract';
-import type { PtyId, PtySpawnOptions, CreateProjectOptions, TaskStatus, ScriptHook, HookType, Script } from './types';
+import type {
+  PtyId,
+  PtySpawnOptions,
+  CreateProjectOptions,
+  TaskStatus,
+  ScriptHook,
+  HookType,
+  Script,
+  CliHookMode,
+  TaskWithWorkspace,
+} from './types';
+import type { CaptureNavigatePayload } from './capture/types';
 
 // ── Typed IPC helpers ───────────────────────────────────────────────────────
 // These ensure channel names, argument types, and return types are all
@@ -45,6 +56,7 @@ contextBridge.exposeInMainWorld('api', {
   createProject: (options: CreateProjectOptions) => typedInvoke('create-project', options),
   showFolderPicker: () => typedInvoke('show-folder-picker'),
   addProject: (folderPath: string) => typedInvoke('add-project', folderPath),
+  initGitRepo: (folderPath: string, initialCommit?: boolean) => typedInvoke('init-git-repo', folderPath, initialCommit),
   removeProject: (folderPath: string) => typedInvoke('remove-project', folderPath),
   reorderProjects: (paths: string[]) => typedInvoke('reorder-projects', paths),
   getProjectSettings: (projectPath: string) => typedInvoke('get-project-settings', projectPath),
@@ -67,6 +79,7 @@ contextBridge.exposeInMainWorld('api', {
     write: (ptyId: PtyId, data: string) => typedSend('pty:write', ptyId, data),
     resize: (ptyId: PtyId, cols: number, rows: number) => typedSend('pty:resize', ptyId, cols, rows),
     kill: (ptyId: PtyId) => typedSend('pty:kill', ptyId),
+    setLabel: (ptyId: PtyId, label: string) => typedSend('pty:set-label', ptyId, label),
     getActiveSessions: () => typedInvoke('pty:get-active-sessions'),
     reconnect: (ptyId: PtyId) => typedInvoke('pty:reconnect', ptyId),
     setWindow: () => typedSend('pty:set-window'),
@@ -140,6 +153,7 @@ contextBridge.exposeInMainWorld('api', {
       typedInvoke('task:create-from-task', projectPath, parentTaskNumber, name),
     setParent: (projectPath: string, taskNumber: number, parentTaskNumber: number | null, mergeTarget?: string) =>
       typedInvoke('task:set-parent', projectPath, taskNumber, parentTaskNumber, mergeTarget),
+    saveAttachment: (data: Uint8Array, ext: string) => typedInvoke('task:save-attachment', data, ext),
   },
 
   hooks: {
@@ -168,8 +182,8 @@ contextBridge.exposeInMainWorld('api', {
 
   onFullscreenChange: (callback: (isFullscreen: boolean) => void) => typedListen('fullscreen-change', callback),
 
-  claudeHooks: {
-    onStatus: (callback: (ptyId: string, status: string) => void) => typedListen('claude-hook-status', callback),
+  agentHooks: {
+    onStatus: (callback: (ptyId: string, status: string) => void) => typedListen('agent-hook-status', callback),
     getStatus: (ptyId: string) => typedInvoke('hooks:get-status', ptyId),
   },
 
@@ -192,6 +206,15 @@ contextBridge.exposeInMainWorld('api', {
     set: (key: string, value: string) => typedInvoke('settings:set-global', key, value),
   },
 
+  onboarding: {
+    seedTask: (projectPath: string) => typedInvoke('onboarding:seed-task', projectPath),
+  },
+
+  health: {
+    check: () => typedInvoke('health:check'),
+    onUpdate: (callback: (status: import('./healthCheck').HealthStatus) => void) => typedListen('health', callback),
+  },
+
   onUpdateAvailable: (callback: (info: { version: string; url: string }) => void) =>
     typedListen('update-available', callback),
 
@@ -200,9 +223,43 @@ contextBridge.exposeInMainWorld('api', {
   onCliChange: (callback: (payload: { project: string; action: string; message?: string; ts: number }) => void) =>
     typedListen('cli-change', callback),
 
+  onCliTaskStarted: (
+    callback: (payload: {
+      project: string;
+      taskNumber: number;
+      worktreePath: string;
+      branch: string;
+      createdAt: string;
+      sandboxed: boolean;
+      hookMode?: CliHookMode;
+      hookCommand?: string;
+    }) => void,
+  ) => typedListen('cli:task-started', callback),
+
+  onCliTaskCompleted: (
+    callback: (payload: {
+      project: string;
+      taskNumber: number;
+      task: TaskWithWorkspace;
+      hookMode?: CliHookMode;
+      hookCommand?: string;
+    }) => void,
+  ) => typedListen('cli:task-completed', callback),
+
+  onCliTaskTransitioned: (
+    callback: (payload: {
+      project: string;
+      taskNumber: number;
+      origStatus: TaskStatus;
+      newStatus: TaskStatus;
+      task: TaskWithWorkspace;
+      hookMode?: CliHookMode;
+      hookCommand?: string;
+    }) => void,
+  ) => typedListen('cli:task-transitioned', callback),
+
   capture: {
-    onNavigate: (callback: (payload: import('./capture/types').CaptureNavigatePayload) => void) =>
-      typedListen('capture:navigate', callback),
+    onNavigate: (callback: (payload: CaptureNavigatePayload) => void) => typedListen('capture:navigate', callback),
   },
 
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),

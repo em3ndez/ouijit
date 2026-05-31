@@ -3,7 +3,19 @@ import { getGlobalSetting, setGlobalSetting } from '../../db';
 
 /** Check if a settings key is allowed through the IPC boundary */
 function isAllowedKey(key: string): boolean {
-  return key === 'lastActiveView' || key.startsWith('canvas:') || key.startsWith('experimental:');
+  return (
+    key === 'lastActiveView' ||
+    key === 'disableUpdates' ||
+    key === 'disableReadyAudio' ||
+    key === 'hasSeenWelcome' ||
+    key.startsWith('canvas:') ||
+    key.startsWith('experimental:') ||
+    key.startsWith('terminal:') ||
+    key.startsWith('lastSession:') ||
+    key.startsWith('ui:') ||
+    key.startsWith('worktree:') ||
+    key.startsWith('onboarding:')
+  );
 }
 
 /** Maximum value length (bytes) to prevent abuse */

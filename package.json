@@ -1,7 +1,7 @@
 {
   "name": "ouijit",
   "productName": "ouijit",
-  "version": "1.0.36",
+  "version": "1.0.51",
   "description": "Discover and manage your local development projects",
   "main": ".vite/build/main.js",
   "bin": {
@@ -30,8 +30,12 @@
     "build:cli": "node scripts/build-cli.mjs",
     "test:full": "vitest run && node e2e/build.mjs && npx playwright test --config e2e/playwright.config.ts",
     "postinstall": "./scripts/download-lima.sh && chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
-    "db:reset": "./scripts/db-reset.sh",
-    "capture": "node scripts/capture/run.mjs"
+    "db:reset": "node scripts/dev-db.mjs reset",
+    "db:seed": "node scripts/dev-db.mjs seed",
+    "db:clone-prod": "node scripts/dev-db.mjs clone-prod",
+    "capture": "node scripts/capture/run.mjs",
+    "website": "npm --prefix website run dev",
+    "website:build": "npm --prefix website run build"
   },
   "keywords": [],
   "author": "pbjer",
@@ -41,10 +45,11 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@electron-forge/cli": "^7.10.2",
     "@electron-forge/maker-deb": "^7.10.2",
+    "@electron-forge/maker-dmg": "^7.11.2",
     "@electron-forge/maker-squirrel": "^7.10.2",
     "@electron-forge/maker-zip": "^7.10.2",
-    "@electron-forge/plugin-fuses": "^7.10.2",
-    "@electron-forge/plugin-vite": "^7.10.2",
+    "@electron-forge/plugin-fuses": "^7.11.2",
+    "@electron-forge/plugin-vite": "^7.11.2",
     "@electron-forge/publisher-github": "^7.11.1",
     "@electron/fuses": "^1.8.0",
     "@electron/notarize": "^3.1.1",
@@ -66,7 +71,7 @@
     "eslint-plugin-import-x": "^4.16.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "jsdom": "^29.0.0",
-    "postcss": "^8.5.6",
+    "postcss": "^8.5.14",
     "prettier": "^3.8.1",
     "react-hotkeys-hook": "^5.2.4",
     "tailwindcss": "^4.1.18",
@@ -92,6 +97,7 @@
     "koffi": "^2.15.1",
     "launch-editor": "^2.13.2",
     "marked": "^17.0.5",
+    "mermaid": "^11.15.0",
     "node-pty": "^1.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -103,7 +109,11 @@
   "overrides": {
     "tar": "^7.5.7",
     "tmp": "^0.2.5",
-    "@xmldom/xmldom": "^0.8.11",
-    "lodash": "^4.18.1"
+    "@xmldom/xmldom": "^0.8.13",
+    "lodash": "^4.18.1",
+    "fast-uri": "^3.1.2",
+    "ip-address": "^10.2.0",
+    "make-fetch-happen": "^15.0.5",
+    "macos-alias": "npm:@napi-rs/macos-alias@^0.0.4"
   }
 }

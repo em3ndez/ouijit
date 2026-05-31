@@ -24,6 +24,7 @@ import {
   getScripts,
   saveScript,
   deleteScript,
+  getTaskByNumber,
 } from '../db';
 import {
   beginTask,
@@ -38,6 +39,7 @@ import { isPtyActive, getPtyTaskContext } from '../ptyManager';
 import { typedPush } from '../ipc/helpers';
 import { getLogger } from '../logger';
 import { authenticateRequest, type AuthContext, type ApiScope } from '../apiAuth';
+import type { CliHookMode } from '../types';
 import { isCaptureMode } from '../capture/captureMode';
 import { handleCaptureNavigate, handleCaptureSnapshot } from '../capture/captureRoutes';
 
@@ -95,6 +97,65 @@ class HttpError extends Error {
   ) {
     super(message);
   }
+}
+
+interface TaskStartResult {
+  success: boolean;
+  worktreePath?: string;
+  task?: { taskNumber: number; branch?: string; createdAt: string; sandboxed?: boolean };
+}
+
+function isSuccessfulStart(result: unknown): result is TaskStartResult {
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    (result as { success?: unknown }).success === true &&
+    typeof (result as { worktreePath?: unknown }).worktreePath === 'string'
+  );
+}
+
+interface HookControl {
+  hookMode?: CliHookMode;
+  hookCommand?: string;
+}
+
+/**
+ * Validate the optional hook-control fields on a task-start request body.
+ * Throws HttpError on a bad request; returns the fields to forward to the
+ * renderer via the `cli:task-started` push so it can bypass the start-hook
+ * dialog. An empty result means "use the default dialog behavior".
+ */
+function parseHookControl(body: Record<string, unknown>): HookControl {
+  const mode = body.hookMode;
+  if (mode === undefined) return {};
+  if (mode !== 'run' && mode !== 'skip' && mode !== 'command') {
+    throw new HttpError(400, `Invalid hookMode: ${String(mode)}. Must be run, skip, or command`);
+  }
+  if (mode === 'command') {
+    const command = body.hookCommand;
+    if (typeof command !== 'string' || !command.trim()) {
+      throw new HttpError(400, 'hookMode "command" requires a non-empty hookCommand');
+    }
+    return { hookMode: mode, hookCommand: command };
+  }
+  return { hookMode: mode };
+}
+
+function isTaskStartRoute(method: string, segments: string[]): boolean {
+  if (method !== 'POST') return false;
+  // POST /api/tasks/start
+  if (segments.length === 2 && segments[0] === 'tasks' && segments[1] === 'start') return true;
+  // POST /api/tasks/:number/start
+  if (segments.length === 3 && segments[0] === 'tasks' && segments[2] === 'start') return true;
+  return false;
+}
+
+function isStatusPatchRoute(method: string, segments: string[]): boolean {
+  return method === 'PATCH' && segments.length === 3 && segments[0] === 'tasks' && segments[2] === 'status';
+}
+
+function isSuccessfulMutation(result: unknown): result is { success: true } {
+  return typeof result === 'object' && result !== null && (result as Record<string, unknown>).success === true;
 }
 
 // ── Route dispatch ───────────────────────────────────────────────────
@@ -189,6 +250,10 @@ const routes: Route[] = [
     'tasks/start',
     (r) => {
       const project = requireProject(r.query);
+      // Validate hook-control flags up front so a bad request fails before
+      // any worktree is created. The values themselves are forwarded to the
+      // renderer in the cli:task-started push below.
+      parseHookControl(r.body);
       // Sandbox scope can't reach this route (default minScope is 'host'),
       // but double-check the intent: an unsandboxed task must never be
       // created from a sandbox-scoped caller.
@@ -212,6 +277,7 @@ const routes: Route[] = [
     (r) => {
       const project = requireProject(r.query);
       const num = requireInt(r.segments[1], 'Task number');
+      parseHookControl(r.body);
       return beginTask(project, num, r.body.branchName as string | undefined);
     },
     true,
@@ -225,6 +291,10 @@ const routes: Route[] = [
       const num = requireInt(r.segments[1], 'Task number');
       const status = r.body.status;
       if (typeof status !== 'string') throw new HttpError(400, 'Missing status in body');
+      // in_progress / in_review / done all fire a renderer-side hook and carry
+      // the same hook-control flags as task-start. Validate them up front so a
+      // bad hookMode fails before any status is written.
+      if (status === 'in_progress' || status === 'in_review' || status === 'done') parseHookControl(r.body);
       return setTaskStatusWithHooks(project, num, status as 'todo' | 'in_progress' | 'in_review' | 'done');
     },
     true,
@@ -503,6 +573,23 @@ async function handleAsync(req: IncomingMessage, res: ServerResponse, window: Br
     }
   }
 
+  // A status PATCH to in_progress/in_review/done fires a renderer-side hook,
+  // which needs the *old* status to disambiguate start vs continue and to skip
+  // a no-op (status unchanged — e.g. re-running set-status on a task already in
+  // that column would otherwise re-spawn the hook / re-show the dialog).
+  // Capture it before the handler overwrites it.
+  let prevStatus: string | undefined;
+  if (
+    isStatusPatchRoute(method, segments) &&
+    (body.status === 'in_progress' || body.status === 'in_review' || body.status === 'done')
+  ) {
+    const num = parseInt(segments[1] ?? '', 10);
+    if (!Number.isNaN(num)) {
+      const existing = await getTaskByNumber(url.searchParams.get('project') ?? '', num);
+      prevStatus = existing?.status;
+    }
+  }
+
   try {
     const result = await matched.route.handler({ method, segments, query: url.searchParams, body, auth });
     json(res, 200, { data: result });
@@ -515,6 +602,85 @@ async function handleAsync(req: IncomingMessage, res: ServerResponse, window: Br
         action: `${method} /api/${apiPath}`,
         ts: Date.now(),
       });
+
+      // Task-start routes also need a terminal + hook in the renderer.
+      // The HTTP handler only creates the worktree + DB row; the renderer
+      // owns terminal/hook lifecycle, so signal it explicitly here.
+      if (isTaskStartRoute(method, segments) && isSuccessfulStart(result)) {
+        const startResult = result as TaskStartResult;
+        const task = startResult.task;
+        if (task && startResult.worktreePath && task.branch) {
+          const hookControl = parseHookControl(body);
+          typedPush(window, 'cli:task-started', {
+            project,
+            taskNumber: task.taskNumber,
+            worktreePath: startResult.worktreePath,
+            branch: task.branch,
+            createdAt: task.createdAt,
+            sandboxed: task.sandboxed ?? false,
+            hookMode: hookControl.hookMode,
+            hookCommand: hookControl.hookCommand,
+          });
+        }
+      }
+
+      // CLI set-status N done: the server wrote the status, but the renderer
+      // owns the rest of the done lifecycle (terminal cleanup + done-hook
+      // spawn). The task is fetched here and included in the payload so the
+      // renderer doesn't need projectStore.tasks (which only holds the active
+      // project's task list — would miss when the user is viewing elsewhere).
+      if (
+        isStatusPatchRoute(method, segments) &&
+        body.status === 'done' &&
+        isSuccessfulMutation(result) &&
+        prevStatus !== 'done'
+      ) {
+        const taskNumber = parseInt(segments[1] ?? '', 10);
+        if (!Number.isNaN(taskNumber)) {
+          const task = await getTaskWithWorkspace(project, taskNumber);
+          if (task) {
+            const hookControl = parseHookControl(body);
+            typedPush(window, 'cli:task-completed', {
+              project,
+              taskNumber,
+              task,
+              hookMode: hookControl.hookMode,
+              hookCommand: hookControl.hookCommand,
+            });
+          }
+        }
+      }
+
+      // CLI set-status N in_progress|in_review: the server wrote the status, but
+      // the in_progress/in_review hook lives in the renderer (beginTransition).
+      // Push the transition with the *old* status so the renderer runs the same
+      // path a kanban drop would — dialog by default, headless when the CLI
+      // passed --run-hook/--skip-hook/--hook-command. Skipped when the status
+      // didn't actually change (no transition, no hook).
+      if (
+        isStatusPatchRoute(method, segments) &&
+        (body.status === 'in_progress' || body.status === 'in_review') &&
+        isSuccessfulMutation(result) &&
+        prevStatus &&
+        prevStatus !== body.status
+      ) {
+        const taskNumber = parseInt(segments[1] ?? '', 10);
+        if (!Number.isNaN(taskNumber)) {
+          const task = await getTaskWithWorkspace(project, taskNumber);
+          if (task) {
+            const hookControl = parseHookControl(body);
+            typedPush(window, 'cli:task-transitioned', {
+              project,
+              taskNumber,
+              origStatus: prevStatus as 'todo' | 'in_progress' | 'in_review' | 'done',
+              newStatus: body.status,
+              task,
+              hookMode: hookControl.hookMode,
+              hookCommand: hookControl.hookCommand,
+            });
+          }
+        }
+      }
     }
   } catch (err) {
     if (err instanceof HttpError) {

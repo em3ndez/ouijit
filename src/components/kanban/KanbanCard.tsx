@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useRef, useEffect, useMemo, type ReactNode } from 'react';
+import { memo, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { useShallow } from 'zustand/react/shallow';
 import type { TaskWithWorkspace } from '../../types';
@@ -11,9 +11,9 @@ import { HookConfigDialog } from '../dialogs/HookConfigDialog';
 import { BranchFromTaskDialog } from '../dialogs/BranchFromTaskDialog';
 import { Tooltip } from '../ui/Tooltip';
 import type { TaskChainInfo } from '../../utils/taskChain';
-import { getChainColor, getChainBgColor, isChainMember, isDescendantOf } from '../../utils/taskChain';
-
-const isMac = navigator.platform.toLowerCase().includes('mac');
+import { isChainMember, isDescendantOf } from '../../utils/taskChain';
+import { KanbanCardView } from './KanbanCardView';
+import { KanbanBadgeView } from './KanbanBadgeView';
 
 interface KanbanCardProps {
   task: TaskWithWorkspace;
@@ -22,6 +22,12 @@ interface KanbanCardProps {
   chainMap?: Map<number, TaskChainInfo>;
   isSettingUp?: boolean;
   isSelected?: boolean;
+  /** Hoisted from per-card IPC to a single board-level call. */
+  sandboxAvailable?: boolean;
+  /** Hoisted from per-card IPC to a single board-level call. */
+  hasEditorHook?: boolean;
+  /** Called after the user saves an editor hook from this card's dialog. */
+  onEditorHookConfigured?: () => void;
   onRename: (taskNumber: number, newName: string) => void;
   onUpdateDescription: (taskNumber: number, description: string) => void;
   onOpenTerminal: (task: TaskWithWorkspace, sandboxed?: boolean) => void;
@@ -36,25 +42,23 @@ export const KanbanCard = memo(function KanbanCard({
   chainMap,
   isSettingUp,
   isSelected,
+  sandboxAvailable = false,
+  hasEditorHook = false,
+  onEditorHookConfigured,
   onRename,
   onUpdateDescription,
   onOpenTerminal,
   onSwitchToTerminal,
   onSelect,
 }: KanbanCardProps) {
-  const [expanded, setExpanded] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [editingDesc, setEditingDesc] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [editorHookDialog, setEditorHookDialog] = useState(false);
   const [branchFromDialog, setBranchFromDialog] = useState(false);
   const [terminalContextMenu, setTerminalContextMenu] = useState<{ x: number; y: number; ptyId: string } | null>(null);
   const [renamingTerminalId, setRenamingTerminalId] = useState<string | null>(null);
-  const terminalRenameRef = useRef<HTMLInputElement>(null);
-  const nameInputRef = useRef<HTMLTextAreaElement>(null);
-  const descInputRef = useRef<HTMLSpanElement>(null);
+  const [initialRenamingLabel, setInitialRenamingLabel] = useState<string>('');
+  const [isRenamingTask, setIsRenamingTask] = useState(false);
 
-  const isDone = task.status === 'done';
   const isInChain = isChainMember(chainInfo);
 
   // Badge drag visual feedback — derive per-card booleans in selectors to avoid O(N) re-renders
@@ -77,73 +81,54 @@ export const KanbanCard = memo(function KanbanCard({
       const result: TerminalDisplayState[] = [];
       for (const ptyId of ids) {
         const d = s.displayStates[ptyId];
-        if (d?.taskId === task.taskNumber) result.push(d);
+        if (d?.taskId === task.taskNumber && !d.isLoading) result.push(d);
       }
       return result;
     }),
   );
 
-  // Handle inline name editing
-  const startEditing = useCallback(() => {
-    setEditing(true);
+  const formattedDate = task.createdAt
+    ? new Date(task.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : '';
+
+  const handleCommitRenameTerminal = useCallback((ptyId: string, label: string) => {
+    useTerminalStore.getState().updateDisplay(ptyId, { label });
+    setRenamingTerminalId(null);
   }, []);
 
-  useEffect(() => {
-    if (editing && nameInputRef.current) {
-      nameInputRef.current.value = task.name;
-      nameInputRef.current.focus();
-      nameInputRef.current.select();
-      // Auto-height
-      nameInputRef.current.style.height = 'auto';
-      nameInputRef.current.style.height = `${nameInputRef.current.scrollHeight}px`;
-    }
-  }, [editing, task.name]);
+  const handleCancelRenameTerminal = useCallback(() => {
+    setRenamingTerminalId(null);
+  }, []);
 
-  const commitRename = useCallback(() => {
-    if (!nameInputRef.current) return;
-    const newName = nameInputRef.current.value.trim();
-    if (newName && newName !== task.name) {
-      onRename(task.taskNumber, newName);
-    }
-    setEditing(false);
-  }, [task.taskNumber, task.name, onRename]);
+  const startRenamingTerminal = useCallback((ptyId: string) => {
+    const display = useTerminalStore.getState().displayStates[ptyId];
+    setInitialRenamingLabel(display?.label ?? '');
+    setRenamingTerminalId(ptyId);
+  }, []);
 
-  const handleNameKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commitRename();
-      } else if (e.key === 'Escape') {
-        setEditing(false);
-      }
+  const handleCommitRenameTask = useCallback(
+    (taskNumber: number, newName: string) => {
+      onRename(taskNumber, newName);
+      setIsRenamingTask(false);
     },
-    [commitRename],
+    [onRename],
   );
 
-  // Handle description editing
-  const commitDescription = useCallback(() => {
-    if (!descInputRef.current) return;
-    const desc = descInputRef.current.textContent?.trim() || '';
-    onUpdateDescription(task.taskNumber, desc);
-    setEditingDesc(false);
-  }, [task.taskNumber, onUpdateDescription]);
+  const handleCancelRenameTask = useCallback(() => {
+    setIsRenamingTask(false);
+  }, []);
 
-  const commitTerminalRename = useCallback(() => {
-    const value = terminalRenameRef.current?.value.trim();
-    if (value && renamingTerminalId) {
-      useTerminalStore.getState().updateDisplay(renamingTerminalId, { label: value });
-    }
-    setRenamingTerminalId(null);
-  }, [renamingTerminalId]);
+  const handleStartRenameTask = useCallback(() => {
+    setIsRenamingTask(true);
+  }, []);
 
-  useEffect(() => {
-    if (renamingTerminalId && terminalRenameRef.current) {
-      const display = useTerminalStore.getState().displayStates[renamingTerminalId];
-      terminalRenameRef.current.value = display?.label ?? '';
-      terminalRenameRef.current.focus();
-      terminalRenameRef.current.select();
+  const handlePlainClick = useCallback(() => {
+    if (useProjectStore.getState().selectedTaskNumbers.size > 0) {
+      useProjectStore.getState().clearSelection();
     }
-  }, [renamingTerminalId]);
+  }, []);
+
+  const isDone = task.status === 'done';
 
   const terminalContextMenuItems = useMemo((): ContextMenuEntry[] => {
     if (!terminalContextMenu) return [];
@@ -151,26 +136,13 @@ export const KanbanCard = memo(function KanbanCard({
       {
         label: 'Rename',
         icon: 'pencil-simple',
-        onClick: () => setRenamingTerminalId(terminalContextMenu.ptyId),
+        onClick: () => startRenamingTerminal(terminalContextMenu.ptyId),
       },
     ];
-  }, [terminalContextMenu]);
+  }, [terminalContextMenu, startRenamingTerminal]);
 
-  const formattedDate = task.createdAt
-    ? new Date(task.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-    : '';
-
-  const [sandboxAvailable, setSandboxAvailable] = useState(false);
-  const [hasEditorHook, setHasEditorHook] = useState(false);
-  useEffect(() => {
-    window.api.lima.status(projectPath).then((s) => setSandboxAvailable(s.available));
-    window.api.hooks.get(projectPath).then((hooks) => setHasEditorHook(!!hooks.editor));
-  }, [projectPath]);
-
-  // Build context menu items
   const selectedCount = useProjectStore((s) => s.selectedTaskNumbers.size);
   const contextMenuItems = useMemo((): ContextMenuEntry[] => {
-    // Bulk context menu when this card is part of a multi-selection
     if (isSelected && selectedCount > 1) {
       const items: ContextMenuEntry[] = [
         {
@@ -227,7 +199,7 @@ export const KanbanCard = memo(function KanbanCard({
         },
         { separator: true },
         {
-          label: 'Delete',
+          label: 'Move to Trash',
           icon: 'trash',
           danger: true,
           onClick: async () => {
@@ -235,7 +207,7 @@ export const KanbanCard = memo(function KanbanCard({
             await Promise.allSettled(selected.map((n) => window.api.task.trash(projectPath, n)));
             useProjectStore.getState().loadTasks(projectPath);
             useProjectStore.getState().clearSelection();
-            useProjectStore.getState().addToast(`Deleted ${selected.length} tasks`, 'success');
+            useProjectStore.getState().addToast(`Moved ${selected.length} tasks to trash`, 'success');
           },
         },
       ];
@@ -244,7 +216,6 @@ export const KanbanCard = memo(function KanbanCard({
 
     const items: ContextMenuEntry[] = [];
 
-    // Connected terminals
     for (const display of connectedDisplays) {
       items.push({
         label: display.lastOscTitle || display.label || 'Shell',
@@ -255,14 +226,12 @@ export const KanbanCard = memo(function KanbanCard({
       items.push({ separator: true });
     }
 
-    // Open in terminal (always available — creates worktree if needed)
     items.push({
       label: 'Open in Terminal',
       icon: 'terminal',
       onClick: () => onOpenTerminal(task),
     });
 
-    // Open in sandbox (only when worktree exists and lima available)
     if (task.worktreePath && task.branch && sandboxAvailable) {
       items.push({
         label: 'Open in Sandbox',
@@ -271,7 +240,6 @@ export const KanbanCard = memo(function KanbanCard({
       });
     }
 
-    // Open in editor (always visible — prompts config dialog if not set up)
     items.push({
       label: 'Open in Editor',
       icon: 'code',
@@ -284,14 +252,12 @@ export const KanbanCard = memo(function KanbanCard({
       },
     });
 
-    // View Plan (if any connected terminal has a plan)
     const planDisplay = connectedDisplays.find((d) => d.planPath);
     if (planDisplay) {
       items.push({
         label: 'View Plan',
         icon: 'list-checks',
         onClick: () => {
-          // Switch to the terminal and open its plan panel
           onSwitchToTerminal(planDisplay.ptyId);
           const inst = terminalInstances.get(planDisplay.ptyId);
           if (inst && !inst.planPanelOpen) {
@@ -306,7 +272,6 @@ export const KanbanCard = memo(function KanbanCard({
 
     items.push({ separator: true });
 
-    // Branch from this task (only for started tasks with a branch)
     if (task.branch && task.status !== 'done') {
       items.push({
         label: 'Branch from this task',
@@ -315,14 +280,12 @@ export const KanbanCard = memo(function KanbanCard({
       });
     }
 
-    // Rename
     items.push({
       label: 'Rename',
       icon: 'pencil-simple',
-      onClick: () => startEditing(),
+      onClick: handleStartRenameTask,
     });
 
-    // Close/Reopen
     if (isDone) {
       items.push({
         label: 'Reopen',
@@ -343,15 +306,14 @@ export const KanbanCard = memo(function KanbanCard({
       });
     }
 
-    // Delete
     items.push({
-      label: 'Delete',
+      label: 'Move to Trash',
       icon: 'trash',
       danger: true,
       onClick: async () => {
         await window.api.task.trash(projectPath, task.taskNumber);
         useProjectStore.getState().loadTasks(projectPath);
-        useProjectStore.getState().addToast('Task deleted', 'success');
+        useProjectStore.getState().addToast('Task moved to trash', 'success');
       },
     });
 
@@ -365,57 +327,65 @@ export const KanbanCard = memo(function KanbanCard({
     hasEditorHook,
     isSelected,
     selectedCount,
-    startEditing,
     onSwitchToTerminal,
     onOpenTerminal,
+    handleStartRenameTask,
   ]);
 
+  const handleAttachFile = useCallback(async (file: File): Promise<string | null> => {
+    // Prefer the file's existing on-disk path — drag-drop from Finder and
+    // most clipboard file pastes already have one. Skipping the copy keeps
+    // the user's file under their control and works for any extension.
+    const existingPath = window.api.getPathForFile(file);
+    if (existingPath) return existingPath;
+
+    // No source path — bytes only (typically a clipboard-pasted screenshot).
+    // Save those to userData so CLI agents have a stable path to read.
+    if (!file.type.startsWith('image/')) {
+      useProjectStore.getState().addToast('Only image clipboard content can be attached', 'error');
+      return null;
+    }
+    const ext = file.type.split('/')[1] || 'png';
+    const data = new Uint8Array(await file.arrayBuffer());
+    const result = await window.api.task.saveAttachment(data, ext);
+    if (result.success && result.path) return result.path;
+    useProjectStore.getState().addToast(result.error || 'Failed to attach image', 'error');
+    return null;
+  }, []);
+
   return (
-    <div
-      className="kanban-card group px-3 py-3.5 ease-out [-webkit-app-region:no-drag] hover:bg-black/10 active:bg-black/[0.12]"
-      style={{
-        background: isSelected
-          ? 'rgba(10, 132, 255, 0.06)'
-          : isHoveredBadgeTarget
-            ? 'rgba(10, 132, 255, 0.08)'
-            : expanded
-              ? 'rgba(0, 0, 0, 0.15)'
-              : 'var(--color-terminal-bg)',
-        transition:
-          'background 150ms ease-out, opacity 150ms ease-out, outline-color 150ms ease-out, box-shadow 150ms ease-out',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
-        outline: isHoveredBadgeTarget
-          ? '1px solid rgba(10, 132, 255, 0.6)'
-          : isValidBadgeTarget
-            ? '1px dashed rgba(10, 132, 255, 0.3)'
-            : 'none',
-        outlineOffset: -1,
-        ...(isInvalidBadgeTarget && { opacity: 0.4 }),
-        ...(isSelected && { boxShadow: 'inset 2px 0 0 0 #0A84FF' }),
-      }}
-      data-task-number={task.taskNumber}
-      onMouseDown={(e) => {
-        // Prevent browser text selection when shift-clicking to range-select
-        if (e.shiftKey) e.preventDefault();
-      }}
-      onClick={(e) => {
-        // Don't interfere with double-click (rename)
-        if (e.detail >= 2) return;
-        const mod = isMac ? e.metaKey : e.ctrlKey;
-        if (mod || e.shiftKey) {
-          e.stopPropagation();
-          onSelect(task.taskNumber, e);
-        } else if (useProjectStore.getState().selectedTaskNumbers.size > 0) {
-          // Plain click clears selection
-          useProjectStore.getState().clearSelection();
+    <>
+      <KanbanCardView
+        task={task}
+        connectedDisplays={connectedDisplays}
+        isSettingUp={isSettingUp}
+        isSelected={isSelected}
+        isHoveredBadgeTarget={isHoveredBadgeTarget}
+        isValidBadgeTarget={isValidBadgeTarget}
+        isInvalidBadgeTarget={isInvalidBadgeTarget}
+        showBadge={showBadge}
+        badge={
+          showBadge ? (
+            <DraggableBadge task={task} projectPath={projectPath} chainInfo={chainInfo} chainMap={chainMap} />
+          ) : null
         }
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setContextMenu({ x: e.clientX, y: e.clientY });
-      }}
-    >
+        formattedDate={formattedDate}
+        onSelect={onSelect}
+        onPlainClick={handlePlainClick}
+        onContextMenu={(e) => setContextMenu({ x: e.clientX, y: e.clientY })}
+        onUpdateDescription={onUpdateDescription}
+        onAttachFile={handleAttachFile}
+        onSwitchToTerminal={onSwitchToTerminal}
+        onTerminalContextMenu={(ptyId, e) => setTerminalContextMenu({ x: e.clientX, y: e.clientY, ptyId })}
+        isRenamingTask={isRenamingTask}
+        onStartRenameTask={handleStartRenameTask}
+        onCommitRenameTask={handleCommitRenameTask}
+        onCancelRenameTask={handleCancelRenameTask}
+        renamingTerminalId={renamingTerminalId}
+        initialRenamingLabel={initialRenamingLabel}
+        onCommitRenameTerminal={handleCommitRenameTerminal}
+        onCancelRenameTerminal={handleCancelRenameTerminal}
+      />
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
@@ -424,13 +394,21 @@ export const KanbanCard = memo(function KanbanCard({
           onClose={() => setContextMenu(null)}
         />
       )}
+      {terminalContextMenu && (
+        <ContextMenu
+          x={terminalContextMenu.x}
+          y={terminalContextMenu.y}
+          items={terminalContextMenuItems}
+          onClose={() => setTerminalContextMenu(null)}
+        />
+      )}
       {editorHookDialog && (
         <HookConfigDialog
           projectPath={projectPath}
           hookType="editor"
           onClose={(result) => {
             setEditorHookDialog(false);
-            if (result?.saved) setHasEditorHook(true);
+            if (result?.saved) onEditorHookConfigured?.();
           }}
         />
       )}
@@ -446,159 +424,7 @@ export const KanbanCard = memo(function KanbanCard({
           }}
         />
       )}
-      <div className="flex items-start gap-2">
-        {isSettingUp && (
-          <span
-            className="w-2 h-2 rounded-full bg-transparent border-[1.5px] border-white/30 border-t-white/80 shrink-0 mt-[5px]"
-            style={{ animation: 'loading-dot-spin 0.8s linear infinite' }}
-          />
-        )}
-        {editing ? (
-          <textarea
-            ref={nameInputRef}
-            className="flex-1 font-mono text-sm font-medium text-text-primary bg-transparent border-0 border-b border-accent p-0 outline-none min-w-0 resize-none overflow-hidden [-webkit-app-region:no-drag] break-words"
-            onBlur={commitRename}
-            onKeyDown={handleNameKeyDown}
-            rows={1}
-          />
-        ) : (
-          <span
-            className={`kanban-card-name flex-1 font-mono text-sm font-medium min-w-0 break-words ${isDone ? 'line-through text-text-secondary' : 'text-text-primary'}`}
-            onDoubleClick={startEditing}
-          >
-            {task.name}
-          </span>
-        )}
-        <button
-          className={`flex items-center justify-center w-5 h-5 p-0 bg-transparent border-none rounded text-text-secondary opacity-0 transition-all duration-150 ease-out shrink-0 [-webkit-app-region:no-drag] group-hover:opacity-60 hover:!opacity-100 [&>svg]:w-3 [&>svg]:h-3 [&>svg]:transition-transform [&>svg]:duration-150 [&>svg]:ease-out${expanded ? ' [&>svg]:rotate-180' : ''}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded(!expanded);
-          }}
-        >
-          <Icon name="caret-down" />
-        </button>
-      </div>
-      {showBadge && (
-        <div className="mt-1">
-          <DraggableBadge task={task} projectPath={projectPath} chainInfo={chainInfo} chainMap={chainMap} />
-        </div>
-      )}
-
-      {isSettingUp && <div className="font-mono text-xs text-white/40 mt-1">Setting up workspace{'\u2026'}</div>}
-
-      {/* Connected terminal status dots */}
-      {connectedDisplays.length > 0 && (
-        <div className="flex flex-col" style={{ paddingTop: 3 }}>
-          {connectedDisplays.map((display, i) => {
-            const isLast = i === connectedDisplays.length - 1;
-            const isRenaming = renamingTerminalId === display.ptyId;
-            const dotLabel = display.lastOscTitle || display.label || 'Shell';
-            const truncated = dotLabel.length > 35 ? dotLabel.slice(0, 35) + '\u2026' : dotLabel;
-
-            return (
-              <div
-                key={display.ptyId}
-                className="flex flex-row items-center gap-1.5 hover:bg-white/[0.06] active:bg-white/[0.03]"
-                style={{ padding: '3px 2px', borderRadius: 3, transition: 'background 0.1s ease' }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSwitchToTerminal(display.ptyId);
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setTerminalContextMenu({ x: e.clientX, y: e.clientY, ptyId: display.ptyId });
-                }}
-              >
-                <span className="font-mono text-sm leading-none text-text-secondary shrink-0 select-none opacity-40">
-                  {isLast ? '\u2514\u2500' : '\u251C\u2500'}
-                </span>
-                <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${display.summaryType === 'thinking' ? 'bg-[#da77f2]' : 'bg-[#69db7c]'}`}
-                  style={{
-                    ...(display.summaryType === 'thinking'
-                      ? { animation: 'terminal-status-pulse 1s ease-in-out infinite' }
-                      : {}),
-                    ...(display.sandboxed
-                      ? { outline: '1.5px solid rgba(116, 192, 252, 0.6)', outlineOffset: '1.5px' }
-                      : {}),
-                  }}
-                />
-                {isRenaming ? (
-                  <input
-                    ref={terminalRenameRef}
-                    className="font-mono text-[10px] leading-tight text-text-secondary bg-transparent border-0 border-b border-accent p-0 outline-none min-w-0 [-webkit-app-region:no-drag]"
-                    onClick={(e) => e.stopPropagation()}
-                    onBlur={commitTerminalRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitTerminalRename();
-                      if (e.key === 'Escape') setRenamingTerminalId(null);
-                    }}
-                  />
-                ) : (
-                  <span className="font-mono text-[10px] leading-tight text-text-secondary truncate min-w-0">
-                    {truncated}
-                    {display.sandboxed ? ' (sandbox)' : ''}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {terminalContextMenu && (
-        <ContextMenu
-          x={terminalContextMenu.x}
-          y={terminalContextMenu.y}
-          items={terminalContextMenuItems}
-          onClose={() => setTerminalContextMenu(null)}
-        />
-      )}
-
-      {/* Detail section */}
-      {expanded && (
-        <div className="grid mt-2 pt-2 border-t border-white/[0.04] gap-2">
-          <div className="flex flex-col gap-1 text-sm">
-            <span
-              ref={descInputRef}
-              className={`text-text-secondary cursor-text break-words${editingDesc ? ' outline-none' : ' line-clamp-3'}${!task.prompt && !editingDesc ? ' text-text-tertiary italic transition-colors duration-150 ease-out hover:text-text-secondary' : ''}`}
-              style={editingDesc ? { whiteSpace: 'pre-wrap', wordWrap: 'break-word', lineHeight: 1.5 } : undefined}
-              contentEditable={editingDesc}
-              suppressContentEditableWarning
-              onClick={() => {
-                if (!editingDesc) {
-                  setEditingDesc(true);
-                  // Clear placeholder text and focus
-                  requestAnimationFrame(() => {
-                    if (descInputRef.current && !task.prompt) {
-                      descInputRef.current.textContent = '';
-                    }
-                    descInputRef.current?.focus();
-                  });
-                }
-              }}
-              onBlur={commitDescription}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  commitDescription();
-                }
-              }}
-            >
-              {task.prompt || (editingDesc ? '' : 'Add description\u2026')}
-            </span>
-          </div>
-          {task.branch && (
-            <div className="flex items-center gap-1 font-mono text-[13px] text-white/50 min-w-0 overflow-hidden [&>svg]:w-3 [&>svg]:h-3 [&>svg]:shrink-0">
-              <Icon name="git-branch" />
-              <span className="truncate min-w-0">{task.branch}</span>
-            </div>
-          )}
-          {formattedDate && <div className="flex flex-col gap-1 text-sm">Created {formattedDate}</div>}
-        </div>
-      )}
-    </div>
+    </>
   );
 });
 
@@ -626,10 +452,6 @@ function DraggableBadge({
     hoveredChainRoot === chainInfo.rootTaskNumber &&
     highlightedChainTask !== task.taskNumber;
 
-  const badgeColor =
-    isInChain && chainInfo ? getChainColor(chainInfo.rootTaskNumber, chainInfo.depth) : 'rgba(255, 255, 255, 0.2)';
-  const badgeBg =
-    isInChain && chainInfo ? getChainBgColor(chainInfo.rootTaskNumber, chainInfo.depth) : 'rgba(255, 255, 255, 0.04)';
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `badge-${task.taskNumber}`,
     data: { type: 'badge', taskNumber: task.taskNumber },
@@ -640,7 +462,6 @@ function DraggableBadge({
   const detachHoverParent = useProjectStore((s) => s.detachHoverParent);
   const isDimmedByDetach = detachHoverParent === task.taskNumber;
 
-  // Clear detachHoverParent on unmount to prevent stuck dimmed state
   useEffect(() => {
     return () => {
       if (useProjectStore.getState().detachHoverParent != null) {
@@ -678,64 +499,63 @@ function DraggableBadge({
       </span>
     );
 
+  const detachButton =
+    task.parentTaskNumber != null ? (
+      <Tooltip text={`Detach from #${task.parentTaskNumber}`} placement="bottom" delay={300}>
+        <button
+          className="w-0 overflow-hidden group-hover/badge:w-4 flex items-center justify-center border-none bg-transparent text-white/30 hover:text-red-400 transition-all duration-150 [-webkit-app-region:no-drag] [&>svg]:w-2.5 [&>svg]:h-2.5 shrink-0 p-0"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={async (e) => {
+            e.stopPropagation();
+            if (detachingRef.current) return;
+            detachingRef.current = true;
+            try {
+              setDetachHovered(false);
+              useProjectStore.getState().clearChainHighlights();
+              const mainBranch = await window.api.worktree.getMainBranch(projectPath);
+              await window.api.task.setParent(projectPath, task.taskNumber, null, mainBranch);
+              useProjectStore.getState().loadTasks(projectPath);
+            } finally {
+              detachingRef.current = false;
+            }
+          }}
+          onMouseEnter={() => {
+            setDetachHovered(true);
+            if (task.parentTaskNumber != null) {
+              useProjectStore.getState().setDetachHoverParent(task.parentTaskNumber);
+            }
+          }}
+          onMouseLeave={() => {
+            setDetachHovered(false);
+            useProjectStore.getState().setDetachHoverParent(null);
+          }}
+        >
+          <Icon name="x" />
+        </button>
+      </Tooltip>
+    ) : undefined;
+
   return (
     <Tooltip
       text={tooltipContent}
       placement="bottom"
       disabled={isDragging || detachHovered}
-      referenceClassName="group/badge inline-flex items-center gap-0.5 shrink-0 font-mono text-[11px] leading-none px-2 py-1 rounded-full whitespace-nowrap"
-      referenceStyle={{
-        color: badgeColor,
-        background: badgeBg,
-        ...(shouldJitter && { animation: 'chain-badge-jitter 0.4s ease-out forwards' }),
-        ...(isDragging && { opacity: 0.3 }),
-        ...(isDimmedByDetach && { opacity: 0.4 }),
-      }}
+      referenceClassName="inline-flex"
       onHoverChange={
         isInChain
           ? (hovering) => useProjectStore.getState().setHighlightedChainTask(hovering ? task.taskNumber : null)
           : undefined
       }
     >
-      <span ref={setNodeRef} {...listeners} {...attributes} className="inline-flex items-center gap-0.5">
-        {chainInfo && chainInfo.depth > 0 && <Icon name="git-merge" className="w-3 h-3" />}
-        <span className="opacity-50">#</span>
-        {task.taskNumber}
-      </span>
-      {task.parentTaskNumber != null && (
-        <Tooltip text={`Detach from #${task.parentTaskNumber}`} placement="bottom" delay={300}>
-          <button
-            className="w-0 overflow-hidden group-hover/badge:w-4 flex items-center justify-center border-none bg-transparent text-white/30 hover:text-red-400 transition-all duration-150 [-webkit-app-region:no-drag] [&>svg]:w-2.5 [&>svg]:h-2.5 shrink-0 p-0"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={async (e) => {
-              e.stopPropagation();
-              if (detachingRef.current) return;
-              detachingRef.current = true;
-              try {
-                setDetachHovered(false);
-                useProjectStore.getState().clearChainHighlights();
-                const mainBranch = await window.api.worktree.getMainBranch(projectPath);
-                await window.api.task.setParent(projectPath, task.taskNumber, null, mainBranch);
-                useProjectStore.getState().loadTasks(projectPath);
-              } finally {
-                detachingRef.current = false;
-              }
-            }}
-            onMouseEnter={() => {
-              setDetachHovered(true);
-              if (task.parentTaskNumber != null) {
-                useProjectStore.getState().setDetachHoverParent(task.parentTaskNumber);
-              }
-            }}
-            onMouseLeave={() => {
-              setDetachHovered(false);
-              useProjectStore.getState().setDetachHoverParent(null);
-            }}
-          >
-            <Icon name="x" />
-          </button>
-        </Tooltip>
-      )}
+      <KanbanBadgeView
+        taskNumber={task.taskNumber}
+        chainInfo={chainInfo}
+        isDragging={isDragging}
+        isDimmed={isDimmedByDetach}
+        shouldJitter={shouldJitter}
+        dragHandleProps={{ ref: setNodeRef, ...listeners, ...attributes }}
+        detachButton={detachButton}
+      />
     </Tooltip>
   );
 }

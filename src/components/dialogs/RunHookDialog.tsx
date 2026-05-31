@@ -2,22 +2,15 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ScriptHook, HookType } from '../../types';
 import { useAutoResize } from '../../hooks/useAutoResize';
 import { DialogOverlay } from './DialogOverlay';
+import { HookEnvVars } from './HookEnvVars';
 
 const HOOK_TITLES: Record<string, string> = {
   start: 'Start Task',
   continue: 'Continue Task',
   review: 'Review Task',
-  cleanup: 'Done \u2014 Cleanup',
+  done: 'Done',
   run: 'Run',
 };
-
-const ENV_VARS = [
-  '$OUIJIT_PROJECT_PATH',
-  '$OUIJIT_WORKTREE_PATH',
-  '$OUIJIT_TASK_BRANCH',
-  '$OUIJIT_TASK_NAME',
-  '$OUIJIT_TASK_PROMPT',
-];
 
 export interface RunHookResult {
   command: string;
@@ -29,15 +22,34 @@ interface RunHookDialogProps {
   hookType: HookType;
   hook: ScriptHook;
   projectPath: string;
+  /** Name of the task this hook belongs to — shown in the stepper subtitle. */
+  taskName?: string;
+  /** 1-based position of this prompt in the queue (only set when queued). */
+  queuePosition?: number;
+  /** Total prompts in the current queue run (only set when more than one). */
+  queueTotal?: number;
   onClose: (result: RunHookResult | null) => void;
+  /** Run this hook with `result`, then run every remaining queued hook with defaults. */
+  onRunAll?: (result: RunHookResult) => void;
+  /** Skip this hook and every remaining queued hook. */
+  onSkipAll?: () => void;
 }
 
-export function RunHookDialog({ hookType, hook, projectPath, onClose }: RunHookDialogProps) {
+export function RunHookDialog({
+  hookType,
+  hook,
+  projectPath,
+  taskName,
+  queuePosition,
+  queueTotal,
+  onClose,
+  onRunAll,
+  onSkipAll,
+}: RunHookDialogProps) {
   const [command, setCommand] = useState(hook.command);
   const [sandboxed, setSandboxed] = useState(false);
   const [limaAvailable, setLimaAvailable] = useState(false);
   const [visible, setVisible] = useState(false);
-  const [copiedVar, setCopiedVar] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autoResize = useAutoResize();
 
@@ -62,19 +74,42 @@ export function RunHookDialog({ hookType, hook, projectPath, onClose }: RunHookD
     [onClose],
   );
 
-  const copyVar = useCallback((varName: string) => {
-    navigator.clipboard.writeText(varName);
-    setCopiedVar(varName);
-    setTimeout(() => setCopiedVar(null), 1500);
-  }, []);
+  const dismissRunAll = useCallback(
+    (result: RunHookResult) => {
+      setVisible(false);
+      setTimeout(() => onRunAll?.(result), 200);
+    },
+    [onRunAll],
+  );
+
+  const dismissSkipAll = useCallback(() => {
+    setVisible(false);
+    setTimeout(() => onSkipAll?.(), 200);
+  }, [onSkipAll]);
 
   const title = HOOK_TITLES[hookType] || hookType;
+  const queued = queueTotal != null && queueTotal > 1;
 
   return (
     <DialogOverlay visible={visible} onDismiss={() => dismiss(null)} maxWidth={420}>
-      <h2 data-testid="dialog-title" className="dialog-title text-lg font-semibold text-text-primary mb-4 text-center">
+      <h2
+        data-testid="dialog-title"
+        className={`dialog-title text-lg font-semibold text-text-primary text-center ${queued ? 'mb-1' : 'mb-4'}`}
+      >
         {title}
       </h2>
+
+      {queued && (
+        <div data-testid="hook-queue-stepper" className="text-xs text-text-secondary text-center mb-4">
+          Hook {queuePosition} of {queueTotal}
+          {taskName ? (
+            <span className="text-text-tertiary">
+              {' '}
+              {'·'} {taskName}
+            </span>
+          ) : null}
+        </div>
+      )}
 
       <textarea
         ref={textareaRef}
@@ -88,28 +123,13 @@ export function RunHookDialog({ hookType, hook, projectPath, onClose }: RunHookD
         rows={1}
       />
 
-      <details className="mt-3 text-xs text-text-secondary [&>summary]:cursor-default [&>summary]:select-none [&_ul]:mt-2 [&_ul]:mb-0 [&_ul]:pl-5 [&_li]:my-1">
-        <summary>Environment variables</summary>
-        <ul>
-          {ENV_VARS.map((v) => (
-            <li key={v}>
-              <code
-                className={`font-mono text-[13px] px-1.5 py-0.5 rounded inline-block bg-background-secondary hover:text-text-primary hover:bg-border-hover ${copiedVar === v ? 'text-accent !bg-[color-mix(in_srgb,var(--color-accent)_15%,transparent)]' : ''}`}
-                style={{ transition: 'background 100ms ease, color 100ms ease' }}
-                onClick={() => copyVar(v)}
-              >
-                {copiedVar === v ? 'Copied!' : v}
-              </code>
-            </li>
-          ))}
-        </ul>
-      </details>
+      <HookEnvVars />
 
       <div className="flex gap-2 justify-between mt-4 items-center">
         {limaAvailable ? (
           <div className="flex items-center gap-2" onClick={() => setSandboxed((s) => !s)}>
             <div
-              className={`relative w-[34px] h-5 rounded-[10px] shrink-0 transition-[background] duration-200 ease-out ${sandboxed ? 'bg-[#0a84ff]' : 'bg-white/15'}`}
+              className={`relative w-[34px] h-5 rounded-[10px] shrink-0 transition-[background] duration-200 ease-out ${sandboxed ? 'bg-accent' : 'bg-white/15'}`}
             >
               <div
                 className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.3)] transition-transform duration-200 ease-out ${sandboxed ? 'translate-x-3.5' : ''}`}
@@ -121,16 +141,12 @@ export function RunHookDialog({ hookType, hook, projectPath, onClose }: RunHookD
           <div />
         )}
         <div className="flex gap-2">
-          <button
-            data-testid="dialog-cancel"
-            className="btn-secondary inline-flex items-center justify-center gap-2 px-4 py-1.5 font-sans text-sm font-medium no-underline border-none rounded-full outline-none transition-all duration-150 ease-out [-webkit-app-region:no-drag] focus-visible:ring-3 focus-visible:ring-accent-light text-accent bg-accent-light hover:bg-[rgba(0,122,255,0.15)]"
-            onClick={() => dismiss(null)}
-          >
-            Cancel
+          <button data-testid="dialog-cancel" className="btn-secondary" onClick={() => dismiss(null)}>
+            {queued ? 'Skip' : 'Cancel'}
           </button>
           <button
             data-testid="dialog-run-open"
-            className="btn-primary inline-flex items-center justify-center gap-2 px-4 py-1.5 font-sans text-sm font-medium no-underline border-none rounded-full outline-none transition-all duration-150 ease-out [-webkit-app-region:no-drag] focus-visible:ring-3 focus-visible:ring-accent-light text-white bg-accent hover:bg-accent-hover active:scale-[0.98] whitespace-nowrap"
+            className="btn-primary whitespace-nowrap"
             onClick={() => dismiss({ command: command.trim(), sandboxed, foreground: true })}
             disabled={!command.trim()}
           >
@@ -138,7 +154,7 @@ export function RunHookDialog({ hookType, hook, projectPath, onClose }: RunHookD
           </button>
           <button
             data-testid="dialog-run"
-            className="btn-primary inline-flex items-center justify-center gap-2 px-4 py-1.5 font-sans text-sm font-medium no-underline border-none rounded-full outline-none transition-all duration-150 ease-out [-webkit-app-region:no-drag] focus-visible:ring-3 focus-visible:ring-accent-light text-white bg-accent hover:bg-accent-hover active:scale-[0.98]"
+            className="btn-primary"
             onClick={() => dismiss({ command: command.trim(), sandboxed, foreground: false })}
             disabled={!command.trim()}
           >
@@ -146,6 +162,27 @@ export function RunHookDialog({ hookType, hook, projectPath, onClose }: RunHookD
           </button>
         </div>
       </div>
+
+      {queued && (
+        <div className="flex justify-end items-center gap-4 mt-3 pt-3 border-t border-border text-xs">
+          <span className="text-text-tertiary mr-auto">{queueTotal} hooks queued</span>
+          <button
+            data-testid="dialog-skip-all"
+            className="text-text-secondary hover:text-text-primary outline-none [-webkit-app-region:no-drag] transition-colors duration-100"
+            onClick={dismissSkipAll}
+          >
+            Skip all
+          </button>
+          <button
+            data-testid="dialog-run-all"
+            className="text-accent hover:text-accent-hover outline-none [-webkit-app-region:no-drag] transition-colors duration-100 disabled:opacity-40"
+            onClick={() => dismissRunAll({ command: command.trim(), sandboxed, foreground: false })}
+            disabled={!command.trim()}
+          >
+            Run all
+          </button>
+        </div>
+      )}
     </DialogOverlay>
   );
 }

@@ -40,6 +40,57 @@ import type { HookStatus, HookStatusEntry } from './hookServer';
 export type LastActiveView = { type: 'home' } | { type: 'project'; path: string };
 
 /**
+ * Per-terminal UI state captured for cross-launch session restore.
+ *
+ * Lives in `lastSession:snapshot` global setting as JSON. Restoring the live
+ * shell process is impossible across an app quit — these fields preserve the
+ * configuration around it (plan attachment, panel layout, last runner script
+ * to one-click re-run).
+ */
+export interface SnapshotTerminalUi {
+  planPath: string | null;
+  /** Whether the plan panel was open. Older snapshots omit this — treat as the
+   *  legacy "open if a plan was attached" behaviour when undefined. */
+  planPanelOpen?: boolean;
+  /** Whether the diff panel was open. Older snapshots omit this. */
+  diffPanelOpen?: boolean;
+  webPreview: {
+    url: string | null;
+    panelOpen: boolean;
+    fullWidth: boolean;
+    splitRatio: number;
+  } | null;
+  runner: {
+    scriptName: string | null;
+    scriptCommand: string;
+    panelOpen: boolean;
+    fullWidth: boolean;
+  } | null;
+}
+
+export interface SnapshotTerminal {
+  /** Live PTY id at capture time. Useful only for a renderer-reload reconnect
+   *  (PTYs survive); meaningless across a full quit. Older snapshots omit it. */
+  ptyId?: string;
+  projectPath: string;
+  taskNumber: number | null;
+  worktreePath: string | null;
+  worktreeBranch: string | null;
+  sandboxed: boolean;
+  label: string | null;
+  ordinalInProject: number;
+  isActiveInProject: boolean;
+  ui: SnapshotTerminalUi;
+}
+
+export interface LastSessionSnapshot {
+  version: 1;
+  capturedAt: string;
+  activeProjectPath: string | null;
+  terminals: SnapshotTerminal[];
+}
+
+/**
  * Represents a run configuration for launching a project
  */
 export interface RunConfig {
@@ -75,7 +126,17 @@ export interface CustomCommand {
 /**
  * Hook type - when the script runs
  */
-export type HookType = 'start' | 'continue' | 'run' | 'review' | 'cleanup' | 'editor';
+export type HookType = 'start' | 'continue' | 'run' | 'review' | 'done' | 'editor';
+
+/**
+ * Hook-control mode from the `ouijit task start` CLI flags. Threads from the
+ * CLI through the task-start API into the renderer to bypass the start-hook
+ * dialog so an agent can start a task headlessly.
+ *  - `run`: run the configured hook for the transition (plain shell if none).
+ *  - `skip`: spawn the terminal but run no hook.
+ *  - `command`: run a one-off command instead of the configured hook.
+ */
+export type CliHookMode = 'run' | 'skip' | 'command';
 
 /**
  * Script hook configuration
@@ -125,7 +186,7 @@ export interface ProjectSettings {
     continue?: ScriptHook;
     run?: ScriptHook;
     review?: ScriptHook;
-    cleanup?: ScriptHook;
+    done?: ScriptHook;
     editor?: ScriptHook;
   };
   /** If true, kill existing instances of a command before starting a new one (default: true) */
@@ -214,6 +275,8 @@ export interface PtyAPI {
   write(ptyId: PtyId, data: string): void;
   resize(ptyId: PtyId, cols: number, rows: number): void;
   kill(ptyId: PtyId): void;
+  /** Update a terminal's display label after a user rename */
+  setLabel(ptyId: PtyId, label: string): void;
   onData(ptyId: PtyId, callback: (data: string) => void): () => void;
   onExit(ptyId: PtyId, callback: (exitCode: number) => void): () => void;
   /** Get list of active sessions (for reconnection after reload) */
@@ -249,7 +312,7 @@ export interface HooksAPI {
     continue?: ScriptHook;
     run?: ScriptHook;
     review?: ScriptHook;
-    cleanup?: ScriptHook;
+    done?: ScriptHook;
     editor?: ScriptHook;
   }>;
   /** Save a hook for a project */
@@ -330,6 +393,7 @@ export interface TaskAPI {
     parentTaskNumber: number | null,
     mergeTarget?: string,
   ): Promise<{ success: boolean; error?: string }>;
+  saveAttachment(data: Uint8Array, ext: string): Promise<{ success: boolean; path?: string; error?: string }>;
 }
 
 /**
@@ -418,7 +482,9 @@ export interface ElectronAPI {
   /** Show native folder picker dialog */
   showFolderPicker(): Promise<{ canceled: boolean; filePaths: string[] }>;
   /** Add a project folder to the app */
-  addProject(folderPath: string): Promise<{ success: boolean; error?: string }>;
+  addProject(folderPath: string): Promise<{ success: boolean; error?: string; reason?: ValidateFolderFailureReason }>;
+  /** Initialize a git repository in an existing folder (recovers a non-git folder) */
+  initGitRepo(folderPath: string, initialCommit?: boolean): Promise<{ success: boolean; error?: string }>;
   /** Remove a project folder from the app */
   removeProject(folderPath: string): Promise<{ success: boolean }>;
   /** Reorder projects in the sidebar */
@@ -433,6 +499,41 @@ export interface ElectronAPI {
   onCliChange(
     callback: (payload: { project: string; action: string; message?: string; ts: number }) => void,
   ): () => void;
+  /** Listen for a CLI-initiated task start that requires spawning a terminal */
+  onCliTaskStarted(
+    callback: (payload: {
+      project: string;
+      taskNumber: number;
+      worktreePath: string;
+      branch: string;
+      createdAt: string;
+      sandboxed: boolean;
+      hookMode?: CliHookMode;
+      hookCommand?: string;
+    }) => void,
+  ): () => void;
+  /** Listen for a CLI-initiated done transition that needs terminal cleanup + hook spawn */
+  onCliTaskCompleted(
+    callback: (payload: {
+      project: string;
+      taskNumber: number;
+      task: TaskWithWorkspace;
+      hookMode?: CliHookMode;
+      hookCommand?: string;
+    }) => void,
+  ): () => void;
+  /** Listen for a CLI-initiated in_progress/in_review transition that needs a hook spawn */
+  onCliTaskTransitioned(
+    callback: (payload: {
+      project: string;
+      taskNumber: number;
+      origStatus: TaskStatus;
+      newStatus: TaskStatus;
+      task: TaskWithWorkspace;
+      hookMode?: CliHookMode;
+      hookCommand?: string;
+    }) => void,
+  ): () => void;
   /** Get project settings */
   getProjectSettings(projectPath: string): Promise<ProjectSettings>;
   /** Set whether to kill existing command instances on run */
@@ -443,8 +544,8 @@ export interface ElectronAPI {
   tags: TagsAPI;
   /** Ad-hoc scripts API */
   scripts: ScriptsAPI;
-  /** Claude Code hook events */
-  claudeHooks: ClaudeHooksAPI;
+  /** CLI agent hook events (claude/codex/pi) */
+  agentHooks: AgentHooksAPI;
   /** Plan file detection and viewing */
   plan: PlanAPI;
   /** Get file path from a dropped File object */
@@ -455,8 +556,51 @@ export interface ElectronAPI {
   lima: LimaAPI;
   /** Global settings API */
   globalSettings: GlobalSettingsAPI;
+  /** Onboarding API */
+  onboarding: OnboardingAPI;
+  /** Health probe API (git/claude/lima detection) */
+  health: HealthAPI;
   /** Capture-mode API (only populated when OUIJIT_CAPTURE_MODE=1) */
   capture: CaptureAPI;
+}
+
+/**
+ * Onboarding API exposed to the renderer
+ */
+export interface OnboardingAPI {
+  seedTask(projectPath: string): Promise<{ success: boolean }>;
+}
+
+/**
+ * Whether the user's first project was created fresh or added from an
+ * existing folder. Used to vary the intro stage lead.
+ */
+export type FirstProjectSource = 'created' | 'added';
+
+/**
+ * All first-run onboarding state, stored as a single JSON blob under the
+ * `onboarding:state` global setting. Single read on mount, single write per
+ * transition. The seeded task itself lives in the task table — only the
+ * task number is kept here so the panel can resolve it.
+ *
+ * `version` exists for schema evolution: bump the constant in
+ * `src/onboardingState.ts` and add migration logic to `normalizeOnboardingState`
+ * when the shape changes.
+ */
+export interface OnboardingState {
+  version: number;
+  firstProjectPath: string;
+  source: FirstProjectSource;
+  seededTaskNumber: number | null;
+  dismissed: boolean;
+}
+
+/**
+ * Health probe API exposed to the renderer
+ */
+export interface HealthAPI {
+  check(): Promise<import('./healthCheck').HealthStatus>;
+  onUpdate(callback: (status: import('./healthCheck').HealthStatus) => void): () => void;
 }
 
 /**
@@ -467,9 +611,9 @@ export interface CaptureAPI {
 }
 
 /**
- * Claude Code hook events API exposed to the renderer
+ * CLI agent hook events API exposed to the renderer. Shared by claude / codex / pi.
  */
-export interface ClaudeHooksAPI {
+export interface AgentHooksAPI {
   onStatus(callback: (ptyId: PtyId, status: HookStatus) => void): () => void;
   getStatus(ptyId: PtyId): Promise<HookStatusEntry | null>;
 }
@@ -530,6 +674,9 @@ export interface CreateProjectResult {
   projectPath?: string;
   error?: string;
 }
+
+/** Why a picked folder failed project validation. `not-a-git-repo` is recoverable via `initGitRepo`. */
+export type ValidateFolderFailureReason = 'not-found' | 'not-a-directory' | 'not-a-git-repo';
 
 declare global {
   interface Window {

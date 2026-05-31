@@ -2,18 +2,19 @@ import { Fragment, memo, useState, useCallback, useEffect, useMemo, useRef } fro
 import { useTerminalStore } from '../../stores/terminalStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useShallow } from 'zustand/react/shallow';
 import { terminalInstances } from './terminalReact';
-import { addProjectTerminal } from './terminalActions';
+import { addProjectTerminal, renameTerminal } from './terminalActions';
+import { completeTask } from '../../services/taskCompletion';
 
 const EMPTY_TAGS: string[] = [];
 import type { GitFileStatus, RunnerScript } from '../../types';
 import { Icon } from './Icon';
 import { TagInput } from './TagInput';
+import { TerminalHeaderView, TerminalHeaderName } from './TerminalHeaderView';
 import { ContextMenu, type ContextMenuEntry } from '../ui/ContextMenu';
 import { HookConfigDialog } from '../dialogs/HookConfigDialog';
 import { RunScriptDropdown } from '../scripts/RunScriptDropdown';
-
-const isMac = navigator.platform.toLowerCase().includes('mac');
 
 interface TerminalHeaderProps {
   ptyId: string;
@@ -40,23 +41,50 @@ export const TerminalHeader = memo(function TerminalHeader({
   onToggleWebPreviewPanel,
   onToggleRunner,
 }: TerminalHeaderProps) {
-  const label = useTerminalStore((s) => s.displayStates[ptyId]?.label ?? '');
-  const summary = useTerminalStore((s) => s.displayStates[ptyId]?.summary ?? '');
-  const summaryType = useTerminalStore((s) => s.displayStates[ptyId]?.summaryType ?? 'ready');
-  const gitFileStatus = useTerminalStore((s) => s.displayStates[ptyId]?.gitFileStatus ?? null);
-  const lastOscTitle = useTerminalStore((s) => s.displayStates[ptyId]?.lastOscTitle ?? '');
-  const tags = useTerminalStore((s) => s.displayStates[ptyId]?.tags) ?? EMPTY_TAGS;
-  const sandboxed = useTerminalStore((s) => s.displayStates[ptyId]?.sandboxed ?? false);
-  const runnerStatus = useTerminalStore((s) => s.displayStates[ptyId]?.runnerStatus ?? 'idle');
-  const runnerScriptName = useTerminalStore((s) => s.displayStates[ptyId]?.runnerScriptName ?? null);
-  const runnerPanelOpen = useTerminalStore((s) => s.displayStates[ptyId]?.runnerPanelOpen ?? false);
-  const diffPanelOpen = useTerminalStore((s) => s.displayStates[ptyId]?.diffPanelOpen ?? false);
-  const planPath = useTerminalStore((s) => s.displayStates[ptyId]?.planPath ?? null);
-  const planPanelOpen = useTerminalStore((s) => s.displayStates[ptyId]?.planPanelOpen ?? false);
-  const webPreviewUrl = useTerminalStore((s) => s.displayStates[ptyId]?.webPreviewUrl ?? null);
-  const webPreviewPanelOpen = useTerminalStore((s) => s.displayStates[ptyId]?.webPreviewPanelOpen ?? false);
-  const taskId = useTerminalStore((s) => s.displayStates[ptyId]?.taskId ?? null);
-  const worktreeBranch = useTerminalStore((s) => s.displayStates[ptyId]?.worktreeBranch ?? null);
+  // One shallow-compared subscription replaces seventeen individual selectors.
+  // Each `updateDisplay` (~4Hz during active terminal output) previously ran
+  // 17 selector closures per visible card; now it runs one + a shallow compare,
+  // and the header only re-renders when one of these fields actually changes.
+  const {
+    label,
+    summaryType,
+    gitFileStatus,
+    lastOscTitle,
+    tags,
+    sandboxed,
+    runnerStatus,
+    runnerScriptName,
+    runnerPanelOpen,
+    diffPanelOpen,
+    planPath,
+    planPanelOpen,
+    webPreviewUrl,
+    webPreviewPanelOpen,
+    taskId,
+    worktreeBranch,
+  } = useTerminalStore(
+    useShallow((s) => {
+      const d = s.displayStates[ptyId];
+      return {
+        label: d?.label ?? '',
+        summaryType: d?.summaryType ?? 'ready',
+        gitFileStatus: d?.gitFileStatus ?? null,
+        lastOscTitle: d?.lastOscTitle ?? '',
+        tags: d?.tags ?? EMPTY_TAGS,
+        sandboxed: d?.sandboxed ?? false,
+        runnerStatus: d?.runnerStatus ?? 'idle',
+        runnerScriptName: d?.runnerScriptName ?? null,
+        runnerPanelOpen: d?.runnerPanelOpen ?? false,
+        diffPanelOpen: d?.diffPanelOpen ?? false,
+        planPath: d?.planPath ?? null,
+        planPanelOpen: d?.planPanelOpen ?? false,
+        webPreviewUrl: d?.webPreviewUrl ?? null,
+        webPreviewPanelOpen: d?.webPreviewPanelOpen ?? false,
+        taskId: d?.taskId ?? null,
+        worktreeBranch: d?.worktreeBranch ?? null,
+      };
+    }),
+  );
 
   const [tagInputOpen, setTagInputOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -72,24 +100,18 @@ export const TerminalHeader = memo(function TerminalHeader({
 
   const scriptDropdownVisible = useUIStore((s) => s.scriptDropdownVisible && s.scriptDropdownPtyId === ptyId);
 
-  const [sandboxAvailable, setSandboxAvailable] = useState(false);
-  const [hasEditorHook, setHasEditorHook] = useState(false);
-  const [hasRunHook, setHasRunHook] = useState(false);
-  // Subscribe to scripts from projectStore for live updates
+  // Project-scoped config lives in the store (loaded once per project by
+  // ProjectViewReact) — reading from the store keeps every card sharing one
+  // pair of IPC calls instead of fanning out N spawns of limactl.
+  const sandboxAvailable = useProjectStore((s) => s.sandboxAvailable);
+  const hasEditorHook = useProjectStore((s) => !!s.configuredHooks.editor);
+  const hasRunHook = useProjectStore((s) => !!s.configuredHooks.run);
   const storeScripts = useProjectStore((s) => s.scripts);
   const hasScripts = storeScripts.length > 0;
 
   useEffect(() => {
-    if (projectPath) {
-      window.api.lima.status(projectPath).then((s) => setSandboxAvailable(s.available));
-      window.api.hooks.get(projectPath).then((h) => {
-        setHasEditorHook(!!h.editor);
-        setHasRunHook(!!h.run);
-      });
-      // Also load scripts into store if not already loaded
-      if (storeScripts.length === 0) {
-        useProjectStore.getState().loadScripts(projectPath);
-      }
+    if (projectPath && storeScripts.length === 0) {
+      useProjectStore.getState().loadScripts(projectPath);
     }
   }, [projectPath, storeScripts.length]);
 
@@ -190,9 +212,9 @@ export const TerminalHeader = memo(function TerminalHeader({
         label: 'Close Task',
         icon: 'archive',
         onClick: async () => {
-          await window.api.task.setStatus(projectPath, taskId!, 'done');
-          onClose();
-          useProjectStore.getState().invalidateTaskList();
+          const storeTask = useProjectStore.getState().tasks.find((t) => t.taskNumber === taskId);
+          if (!storeTask) return;
+          await completeTask({ projectPath, task: storeTask });
           useProjectStore.getState().addToast('Task closed', 'success');
         },
       });
@@ -206,7 +228,6 @@ export const TerminalHeader = memo(function TerminalHeader({
     taskId,
     sandboxAvailable,
     hasEditorHook,
-    onClose,
     webPreviewUrl,
     webPreviewPanelOpen,
     onToggleWebPreviewPanel,
@@ -228,9 +249,7 @@ export const TerminalHeader = memo(function TerminalHeader({
 
   const commitRename = useCallback(() => {
     const value = renameInputRef.current?.value.trim();
-    if (value) {
-      useTerminalStore.getState().updateDisplay(ptyId, { label: value });
-    }
+    if (value) renameTerminal(ptyId, value);
     setRenaming(false);
   }, [ptyId]);
 
@@ -323,11 +342,92 @@ export const TerminalHeader = memo(function TerminalHeader({
   const isWorktree = taskId != null && !!worktreeBranch;
   const showChevron = runnerStatus === 'idle' && (hasRunHook || hasScripts);
 
-  return (
-    <div
-      className={`flex items-center justify-between pl-3 pr-3 ${compact || isBackCard ? 'pt-0.5 pb-1' : 'py-2'} min-h-9`}
-      onContextMenu={handleContextMenu}
-    >
+  const nameContent = renaming ? (
+    <input
+      ref={renameInputRef}
+      className="font-mono text-xs font-medium text-white/85 bg-transparent border-0 border-b border-accent p-0 outline-none min-w-0 shrink-0 [-webkit-app-region:no-drag]"
+      onBlur={commitRename}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commitRename();
+        if (e.key === 'Escape') setRenaming(false);
+      }}
+    />
+  ) : (
+    <TerminalHeaderName label={label} lastOscTitle={lastOscTitle} />
+  );
+
+  const tagsContent =
+    isActive && tagInputOpen ? (
+      <TagInput ptyId={ptyId} onClose={() => setTagInputOpen(false)} />
+    ) : isActive ? (
+      <>
+        {tags.map((tag) => (
+          <button
+            key={tag}
+            className={`${METADATA_CHIP} border-none hover:bg-white/[0.1] hover:text-white/75 transition-colors duration-150`}
+            onMouseDown={handleTagButtonClick}
+          >
+            {tag}
+          </button>
+        ))}
+        {tags.length === 0 && (
+          <button
+            className="inline-flex items-center gap-1 font-mono text-[11px] text-white/35 bg-transparent border-none px-2 py-0.5 rounded-full shrink-0 opacity-0 group-hover/meta:opacity-100 hover:text-white/70 hover:bg-white/[0.05] transition-all duration-150"
+            onMouseDown={handleTagButtonClick}
+            aria-label="Add tag"
+          >
+            <Icon name="tag" className="w-3 h-3" />
+            <span>Tag</span>
+          </button>
+        )}
+      </>
+    ) : (
+      tags.map((tag) => (
+        <span key={tag} className={METADATA_CHIP}>
+          {tag}
+        </span>
+      ))
+    );
+
+  const actionsContent = (
+    <>
+      {isActive && (
+        <ActionGroup
+          compact={compact}
+          planPath={planPath}
+          planPanelOpen={planPanelOpen}
+          onPlanClick={handlePlanClick}
+          webPreviewUrl={webPreviewUrl}
+          webPreviewPanelOpen={webPreviewPanelOpen}
+          onWebPreviewClick={handleWebPreviewClick}
+          gitFileStatus={gitFileStatus}
+          isWorktree={isWorktree}
+          diffPanelOpen={diffPanelOpen}
+          onDiffClick={handleDiffClick}
+          runnerStatus={runnerStatus}
+          runnerScriptName={runnerScriptName}
+          runnerPanelOpen={runnerPanelOpen}
+          showChevron={showChevron}
+          onRunnerPrimaryClick={handleRunnerPrimaryClick}
+          onChevronClick={handleChevronClick}
+          chevronRef={chevronRef}
+        />
+      )}
+      {scriptDropdownVisible && (
+        <RunScriptDropdown
+          anchorRef={chevronRef}
+          projectPath={projectPath}
+          hasRunHook={hasRunHook}
+          onSelectScript={handleScriptSelect}
+          onSelectRunHook={handleRunHookSelect}
+          onClose={() => useUIStore.getState().setScriptDropdownVisible(false)}
+        />
+      )}
+    </>
+  );
+
+  const overlays = (
+    <>
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
@@ -342,7 +442,7 @@ export const TerminalHeader = memo(function TerminalHeader({
           hookType="editor"
           onClose={(result) => {
             setEditorHookDialog(false);
-            if (result?.saved) setHasEditorHook(true);
+            if (result?.saved) useProjectStore.getState().markHookConfigured('editor');
           }}
         />
       )}
@@ -354,120 +454,32 @@ export const TerminalHeader = memo(function TerminalHeader({
           onClose={(result) => {
             setRunHookDialog(null);
             if (result?.saved && result.hook) {
-              setHasRunHook(true);
+              useProjectStore.getState().markHookConfigured('run');
               onToggleRunner?.();
             }
           }}
         />
       )}
-      <div className="flex flex-col min-w-0 shrink gap-0.5">
-        {/* Row 1 \u2014 identity: status + label/summary + tags */}
-        <div className="group/meta flex items-center gap-2 min-w-0">
-          <StatusDot summaryType={summaryType} sandboxed={sandboxed} />
-          {!isActive && stackPosition != null && stackPosition <= 9 && (
-            <kbd className="inline-flex items-center font-mono text-base text-white/40 shrink-0">
-              {isMac ? '\u2318' : 'Ctrl+'}
-              <span className="text-xs">{stackPosition}</span>
-            </kbd>
-          )}
-          {renaming ? (
-            <input
-              ref={renameInputRef}
-              className="font-mono text-xs font-medium text-white/85 bg-transparent border-0 border-b border-accent p-0 outline-none min-w-0 shrink-0 [-webkit-app-region:no-drag]"
-              onBlur={commitRename}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitRename();
-                if (e.key === 'Escape') setRenaming(false);
-              }}
-            />
-          ) : (
-            <span className="font-mono text-xs font-medium text-white/85 shrink-0">{label}</span>
-          )}
-          {summary && !renaming && (
-            <span className="font-mono text-xs text-white/45 min-w-0 truncate">\u2014 {summary}</span>
-          )}
-          {lastOscTitle && !renaming && (
-            <span className="font-mono text-xs font-medium text-white/40 min-w-0 truncate">{lastOscTitle}</span>
-          )}
-          <span className="inline-flex items-center gap-1 min-w-0 shrink-0">
-            {isActive && tagInputOpen ? (
-              <TagInput ptyId={ptyId} onClose={() => setTagInputOpen(false)} />
-            ) : isActive ? (
-              <>
-                {tags.map((tag) => (
-                  <button
-                    key={tag}
-                    className={`${METADATA_CHIP} border-none hover:bg-white/[0.1] hover:text-white/75 transition-colors duration-150`}
-                    onMouseDown={handleTagButtonClick}
-                  >
-                    {tag}
-                  </button>
-                ))}
-                {tags.length === 0 && (
-                  <button
-                    className="inline-flex items-center gap-1 font-mono text-[11px] text-white/35 bg-transparent border-none px-2 py-0.5 rounded-full shrink-0 opacity-0 group-hover/meta:opacity-100 hover:text-white/70 hover:bg-white/[0.05] transition-all duration-150"
-                    onMouseDown={handleTagButtonClick}
-                    aria-label="Add tag"
-                  >
-                    <Icon name="tag" className="w-3 h-3" />
-                    <span>Tag</span>
-                  </button>
-                )}
-              </>
-            ) : (
-              tags.map((tag) => (
-                <span key={tag} className={METADATA_CHIP}>
-                  {tag}
-                </span>
-              ))
-            )}
-          </span>
-        </div>
+    </>
+  );
 
-        {/* Row 2 \u2014 subordinate context: branch */}
-        {!compact && isActive && gitFileStatus?.branch && <BranchCopy branch={gitFileStatus.branch} />}
-      </div>
-      <div className="flex items-center gap-2 shrink-0 justify-end">
-        {isActive && (
-          <ActionGroup
-            compact={compact}
-            planPath={planPath}
-            planPanelOpen={planPanelOpen}
-            onPlanClick={handlePlanClick}
-            webPreviewUrl={webPreviewUrl}
-            webPreviewPanelOpen={webPreviewPanelOpen}
-            onWebPreviewClick={handleWebPreviewClick}
-            gitFileStatus={gitFileStatus}
-            isWorktree={isWorktree}
-            diffPanelOpen={diffPanelOpen}
-            onDiffClick={handleDiffClick}
-            runnerStatus={runnerStatus}
-            runnerScriptName={runnerScriptName}
-            runnerPanelOpen={runnerPanelOpen}
-            showChevron={showChevron}
-            onRunnerPrimaryClick={handleRunnerPrimaryClick}
-            onChevronClick={handleChevronClick}
-            chevronRef={chevronRef}
-          />
-        )}
-        {scriptDropdownVisible && (
-          <RunScriptDropdown
-            anchorRef={chevronRef}
-            projectPath={projectPath}
-            hasRunHook={hasRunHook}
-            onSelectScript={handleScriptSelect}
-            onSelectRunHook={handleRunHookSelect}
-            onClose={() => useUIStore.getState().setScriptDropdownVisible(false)}
-          />
-        )}
-        <button
-          className="w-7 h-7 flex items-center justify-center bg-transparent border-none text-white/40 hover:text-white/90 transition-colors duration-150 ml-1 [&_svg]:w-4 [&_svg]:h-4"
-          onClick={handleCloseClick}
-        >
-          <Icon name="x" />
-        </button>
-      </div>
-    </div>
+  return (
+    <TerminalHeaderView
+      summaryType={summaryType}
+      sandboxed={sandboxed}
+      stackPosition={stackPosition}
+      isActive={isActive}
+      isBackCard={isBackCard}
+      compact={compact}
+      nameContent={nameContent}
+      tagsContent={tagsContent}
+      branchContent={gitFileStatus?.branch ? <BranchCopy branch={gitFileStatus.branch} /> : undefined}
+      actions={actionsContent}
+      showCloseButton
+      onClose={handleCloseClick}
+      onContextMenu={handleContextMenu}
+      overlays={overlays}
+    />
   );
 });
 
@@ -509,23 +521,6 @@ function BranchCopy({ branch }: { branch: string }) {
       <Icon name={iconName} className="w-3 h-3 shrink-0 text-white/35" />
       <span className="truncate">{copied ? 'Copied' : branch}</span>
     </button>
-  );
-}
-
-function StatusDot({ summaryType, sandboxed }: { summaryType: string; sandboxed: boolean }) {
-  const isThinking = summaryType === 'thinking';
-  return (
-    <span
-      className={`w-[9px] h-[9px] rounded-full shrink-0 transition-all duration-200 ease-out ${isThinking ? 'bg-[#da77f2]' : 'bg-[#4ee82e]'}`}
-      data-status={summaryType}
-      style={{
-        boxShadow: isThinking
-          ? '0 0 4px rgba(218, 119, 242, 0.5), inset 0 0 0 1px #000'
-          : '0 0 4px rgba(78, 232, 46, 0.5), inset 0 0 0 1px #000',
-        ...(isThinking ? { animation: 'terminal-status-pulse 1s ease-in-out infinite' } : {}),
-        ...(sandboxed ? { outline: '1.5px solid rgba(116, 192, 252, 0.6)', outlineOffset: '2px' } : {}),
-      }}
-    />
   );
 }
 

@@ -4,13 +4,23 @@
  * and register them in both the instance registry and the Zustand store.
  */
 
-import type { PtySpawnOptions, RunConfig, WorktreeInfo, ActiveSession, RunnerScript } from '../../types';
+import type {
+  PtySpawnOptions,
+  RunConfig,
+  WorktreeInfo,
+  ActiveSession,
+  RunnerScript,
+  SnapshotTerminalUi,
+  TaskWithWorkspace,
+} from '../../types';
 import { useTerminalStore, type TerminalDisplayState } from '../../stores/terminalStore';
 import { useCanvasStore, persistCanvas } from '../../stores/canvasStore';
 import { useAppStore, staleGuard } from '../../stores/appStore';
-import { useProjectStore } from '../../stores/projectStore';
 import { OuijitTerminal, terminalInstances, resolveTerminalLabel, type SummaryType } from './terminalReact';
+import { parseOsc133ExitCodes } from './osc133';
+import { readSnapshot } from './sessionSnapshot';
 import { detectDevServerUrl } from '../webPreview/urlHelpers';
+import { descriptionToHookPrompt } from '../../utils/descriptionAttachments';
 import log from 'electron-log/renderer';
 
 const actionsLog = log.scope('terminalActions');
@@ -30,15 +40,70 @@ function applyDetectedWebPreviewUrl(parent: OuijitTerminal, url: string): void {
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface AddProjectTerminalOptions {
-  useWorktree?: boolean;
   existingWorktree?: WorktreeInfo & { prompt?: string; sandboxed?: boolean };
-  worktreeName?: string;
-  worktreePrompt?: string;
-  worktreeBranchName?: string;
   sandboxed?: boolean;
   taskId?: number;
   skipAutoHook?: boolean;
   background?: boolean;
+  /** Overrides the auto-derived card label (e.g. a user-renamed terminal being
+   *  restored from a session snapshot). */
+  label?: string;
+  /** Apply persisted UI state (plan, web preview, runner panel) after spawn — for session restore. */
+  initialUiState?: SnapshotTerminalUi;
+  /** If set, the new terminal takes this loading slot's place via
+   *  `rekeyTerminal` rather than being appended. Lets the kanban-drop loading
+   *  card morph into the real terminal in the same stack position. */
+  replaceLoadingId?: string;
+  /** Close this terminal automatically after a short grace period when its
+   *  underlying command exits with code 0 (signalled by OSC 133;D from the
+   *  shell-integration precmd hook). On non-zero exit it stays open so the
+   *  failure is debuggable in the interactive shell that survives the command. */
+  autoCloseOnSuccess?: boolean;
+}
+
+// ── Apply persisted UI state from a session snapshot ────────────────
+
+/**
+ * Re-apply per-terminal UI state captured in a session snapshot. Shared by
+ * the cross-launch restore path (fresh shells) and the renderer-reload
+ * reconnect path (live PTYs), so the two stay in lockstep.
+ */
+export async function applyInitialUiState(term: OuijitTerminal, ui: SnapshotTerminalUi): Promise<void> {
+  if (ui.planPath) {
+    term.planPath = ui.planPath;
+    // Older snapshots had no planPanelOpen flag and always re-opened the panel
+    // when a plan was attached — preserve that as the fallback.
+    term.planPanelOpen = ui.planPanelOpen ?? true;
+    term.pushDisplayState({ planPath: ui.planPath, planPanelOpen: term.planPanelOpen });
+  }
+
+  if (ui.diffPanelOpen) {
+    term.diffPanelOpen = true;
+    term.pushDisplayState({ diffPanelOpen: true });
+  }
+
+  if (ui.webPreview?.url) {
+    term.webPreviewUrl = ui.webPreview.url;
+    term.webPreviewUrlAutoDetected = false;
+    term.webPreviewPanelOpen = ui.webPreview.panelOpen;
+    term.webPreviewFullWidth = ui.webPreview.fullWidth;
+    term.webPreviewSplitRatio = ui.webPreview.splitRatio;
+    term.pushDisplayState({
+      webPreviewUrl: ui.webPreview.url,
+      webPreviewPanelOpen: ui.webPreview.panelOpen,
+      webPreviewFullWidth: ui.webPreview.fullWidth,
+    });
+  }
+
+  if (ui.runner) {
+    // Don't auto-respawn the previously-running script. A user's `npm run dev`
+    // is benign to re-run, but a `Reset DB` or similar destructive script
+    // would silently fire on Resume. Pre-load the script so one click on Run
+    // re-launches it, and surface its name in the header.
+    term.runnerFullWidth = ui.runner.fullWidth;
+    term.runnerScript = { name: ui.runner.scriptName ?? '', command: ui.runner.scriptCommand };
+    term.pushDisplayState({ runnerScriptName: ui.runner.scriptName ?? null });
+  }
 }
 
 // ── Add a terminal to the system ─────────────────────────────────────
@@ -48,6 +113,7 @@ function registerTerminal(
   projectPath: string,
   initial: Partial<TerminalDisplayState>,
   background?: boolean,
+  replaceLoadingId?: string,
 ): void {
   const ptyId = term.ptyId;
 
@@ -57,19 +123,67 @@ function registerTerminal(
   // Set project name getter for notifications
   term.setProjectNameGetter(() => useAppStore.getState().activeProjectData?.name ?? 'Ouijit');
 
-  // Add to Zustand store
-  useTerminalStore.getState().addTerminal(projectPath, ptyId, initial);
+  if (replaceLoadingId) {
+    // Take the loading slot's place: same array position, same active index.
+    // Clear the `isLoading` flag now that a real PTY backs the slot.
+    useTerminalStore.getState().rekeyTerminal(replaceLoadingId, ptyId);
+    useTerminalStore.getState().updateDisplay(ptyId, { ...initial, isLoading: false });
+  } else {
+    useTerminalStore.getState().addTerminal(projectPath, ptyId, initial);
+  }
 
   // Add to canvas
   useCanvasStore.getState().ensureProject(projectPath);
   useCanvasStore.getState().addNode(projectPath, ptyId);
   persistCanvas(projectPath);
 
-  // Activate last unless background
+  // Activate last unless background. With a replaced loading slot the
+  // active index already points at it — just focus the new xterm.
   if (!background) {
-    useTerminalStore.getState().activateLast(projectPath);
+    if (!replaceLoadingId) {
+      useTerminalStore.getState().activateLast(projectPath);
+    }
     requestAnimationFrame(() => term.xterm.focus());
   }
+}
+
+// ── Worktree hook environment ────────────────────────────────────────
+
+/**
+ * Build the env vars handed to a worktree-backed terminal's hook.
+ *
+ * The task description MUST come from `task` — a live DB fetch — and never
+ * from the worktree snapshot in `AddProjectTerminalOptions.existingWorktree`.
+ * That snapshot is captured when the worktree is created and never refreshed,
+ * so sourcing it from there leaves OUIJIT_TASK_DESCRIPTION stale (or absent
+ * entirely, since the var is only set when the value is truthy) after a task's
+ * description is edited.
+ *
+ * OUIJIT_TASK_PROMPT is kept as a deprecated alias of OUIJIT_TASK_DESCRIPTION
+ * so existing user hooks that reference the old name keep working.
+ */
+export function buildWorktreeStartEnv(params: {
+  hookType: string;
+  projectPath: string;
+  worktreeInfo: WorktreeInfo;
+  label: string;
+  task: TaskWithWorkspace | null;
+}): Record<string, string> {
+  const { hookType, projectPath, worktreeInfo, label, task } = params;
+  const env: Record<string, string> = {
+    OUIJIT_HOOK_TYPE: hookType,
+    OUIJIT_PROJECT_PATH: projectPath,
+    OUIJIT_WORKTREE_PATH: worktreeInfo.path,
+    OUIJIT_TASK_BRANCH: worktreeInfo.branch,
+    OUIJIT_TASK_NAME: label,
+  };
+  const description = task?.prompt;
+  if (description) {
+    const descriptionForHook = descriptionToHookPrompt(description);
+    env.OUIJIT_TASK_DESCRIPTION = descriptionForHook;
+    env.OUIJIT_TASK_PROMPT = descriptionForHook;
+  }
+  return env;
 }
 
 // ── Spawn a new project terminal ─────────────────────────────────────
@@ -83,58 +197,26 @@ export async function addProjectTerminal(
   const isStale = staleGuard(version);
 
   let terminalCwd = projectPath;
-  let worktreeInfo: (WorktreeInfo & { prompt?: string }) | undefined = options?.existingWorktree;
-  let taskPrompt: string | undefined = options?.existingWorktree?.prompt;
-
-  // Create worktree if needed
-  if (options?.useWorktree && !worktreeInfo) {
-    useTerminalStore.getState().setLoadingLabel(options.worktreeName || 'New task');
-
-    const result = await window.api.task.createAndStart(
-      projectPath,
-      options.worktreeName,
-      options.worktreePrompt,
-      options.worktreeBranchName,
-      options.sandboxed,
-    );
-
-    useTerminalStore.getState().setLoadingLabel(null);
-
-    if (isStale()) return false;
-
-    if (!result.success || !result.task || !result.worktreePath) {
-      useProjectStore.getState().addToast(result.error || 'Failed to create task', 'error');
-      return false;
-    }
-
-    worktreeInfo = {
-      path: result.worktreePath,
-      branch: result.task.branch || '',
-      createdAt: result.task.createdAt,
-    };
-    taskPrompt = options.worktreePrompt;
-
-    if (!options) options = {};
-    options.taskId = result.task.taskNumber;
-    useProjectStore.getState().invalidateTaskList();
-  }
+  const worktreeInfo: (WorktreeInfo & { prompt?: string }) | undefined = options?.existingWorktree;
 
   if (worktreeInfo) {
     terminalCwd = worktreeInfo.path;
   }
 
-  // Look up current task name and merge target
-  let taskName: string | undefined;
-  let mergeTarget: string | undefined;
+  // Look up the current task. Name, merge target AND prompt all come from this
+  // live fetch — the worktree snapshot's prompt is a stale copy from worktree
+  // creation time and would not reflect a description edited afterwards.
+  let task: TaskWithWorkspace | null = null;
   if (options?.taskId != null) {
-    const task = await window.api.task.getByNumber(projectPath, options.taskId);
-    taskName = task?.name;
-    mergeTarget = task?.mergeTarget;
+    task = await window.api.task.getByNumber(projectPath, options.taskId);
   }
+  const taskName = task?.name;
+  const mergeTarget = task?.mergeTarget;
+  const taskPrompt = task?.prompt;
 
   if (isStale()) return false;
 
-  const label = resolveTerminalLabel(taskName, worktreeInfo?.branch, runConfig?.name);
+  const label = options?.label ?? resolveTerminalLabel(taskName, worktreeInfo?.branch, runConfig?.name);
   const command = runConfig?.command;
 
   // Determine command to run
@@ -142,25 +224,18 @@ export async function addProjectTerminal(
   let startEnv: Record<string, string> | undefined;
 
   if (worktreeInfo) {
-    const isNewTask = options?.useWorktree && !options?.existingWorktree;
-    const hookType = isNewTask ? 'start' : 'continue';
-
-    startEnv = {
-      OUIJIT_HOOK_TYPE: hookType,
-      OUIJIT_PROJECT_PATH: projectPath,
-      OUIJIT_WORKTREE_PATH: worktreeInfo.path,
-      OUIJIT_TASK_BRANCH: worktreeInfo.branch,
-      OUIJIT_TASK_NAME: label,
-    };
-    if (taskPrompt) {
-      startEnv.OUIJIT_TASK_PROMPT = taskPrompt;
-    }
+    startEnv = buildWorktreeStartEnv({
+      hookType: 'continue',
+      projectPath,
+      worktreeInfo,
+      label,
+      task,
+    });
 
     if (!runConfig && !options?.skipAutoHook) {
       const hooks = await window.api.hooks.get(projectPath);
-      const hook = isNewTask ? hooks.start : hooks.continue;
-      if (hook) {
-        startCommand = hook.command;
+      if (hooks.continue) {
+        startCommand = hooks.continue.command;
       }
     }
   }
@@ -183,13 +258,16 @@ export async function addProjectTerminal(
     worktreePath: worktreeInfo?.path,
     worktreeBranch: worktreeInfo?.branch,
     mergeTarget,
+    autoCloseOnSuccess: options?.autoCloseOnSuccess,
   });
 
   // Open xterm into viewport element (not yet in DOM — React will attach via XTermContainer)
   term.openTerminal();
 
-  // For sandbox: register early (before spawn) so the card shows
-  const addedEarly = useSandbox;
+  // For sandbox: register early (before spawn) so the card shows. Skip if
+  // we're replacing an existing loading slot — that slot is already the
+  // visible card.
+  const addedEarly = useSandbox && !options?.replaceLoadingId;
   if (addedEarly) {
     registerTerminal(
       term,
@@ -242,7 +320,7 @@ export async function addProjectTerminal(
       return false;
     }
 
-    // If not added early, register now
+    // If not added early, register now (replacing the loading slot if given).
     if (!addedEarly) {
       registerTerminal(
         term,
@@ -255,12 +333,17 @@ export async function addProjectTerminal(
           diffPanelMode: term.diffPanelMode,
         },
         options?.background,
+        options?.replaceLoadingId,
       );
     }
 
     // Fetch initial git status and tags
     term.refreshGitStatus();
     term.loadTags();
+
+    if (options?.initialUiState) {
+      await applyInitialUiState(term, options.initialUiState);
+    }
 
     return true;
   } catch (error) {
@@ -271,6 +354,24 @@ export async function addProjectTerminal(
     term.dispose();
     return false;
   }
+}
+
+// ── Rename a terminal ────────────────────────────────────────────────
+
+/**
+ * Apply a user rename. Writes through to (1) the display state the card reads
+ * from, (2) the OuijitTerminal instance — which `gatherSnapshot` persists, so
+ * the rename survives a cross-launch restore — and (3) the main-process PTY
+ * record, so a renderer-reload reconnect comes back with the renamed label
+ * rather than the original. Empty/whitespace names are ignored.
+ */
+export function renameTerminal(ptyId: string, label: string): void {
+  const trimmed = label.trim();
+  if (!trimmed) return;
+  const instance = terminalInstances.get(ptyId);
+  if (instance) instance.label = trimmed;
+  useTerminalStore.getState().updateDisplay(ptyId, { label: trimmed });
+  window.api.pty.setLabel(ptyId, trimmed);
 }
 
 // ── Close a terminal ─────────────────────────────────────────────────
@@ -294,13 +395,14 @@ export function closeProjectTerminal(ptyId: string): void {
 
 export async function reconnectTerminal(
   session: ActiveSession,
-  opts: { worktreeBranch?: string; mergeTarget?: string; initialStatus?: SummaryType } = {},
+  opts: { worktreeBranch?: string; mergeTarget?: string; initialStatus?: SummaryType; label?: string } = {},
 ): Promise<OuijitTerminal | null> {
+  const label = opts.label ?? session.label;
   const term = new OuijitTerminal({
     ptyId: session.ptyId,
     projectPath: session.projectPath,
     command: session.command,
-    label: session.label,
+    label,
     sandboxed: !!session.sandboxed,
     taskId: session.taskId ?? null,
     worktreePath: session.worktreePath,
@@ -327,14 +429,21 @@ export async function reconnectTerminal(
   // Bind to PTY (wires data, input, exit, resize)
   term.bind(session.ptyId);
 
-  // Register in store
-  registerTerminal(term, session.projectPath, {
-    label: session.label,
-    sandboxed: !!session.sandboxed,
-    taskId: session.taskId ?? null,
-    worktreeBranch: opts.worktreeBranch ?? null,
-    summaryType: opts.initialStatus ?? 'ready',
-  });
+  // Register in store as a background terminal — focus is restored explicitly
+  // by reconnectOrphanedSessions once every PTY for the project is back, so the
+  // last-reconnected one doesn't steal it.
+  registerTerminal(
+    term,
+    session.projectPath,
+    {
+      label,
+      sandboxed: !!session.sandboxed,
+      taskId: session.taskId ?? null,
+      worktreeBranch: opts.worktreeBranch ?? null,
+      summaryType: opts.initialStatus ?? 'ready',
+    },
+    /* background */ true,
+  );
 
   // Load tags and git status
   term.loadTags();
@@ -344,6 +453,25 @@ export async function reconnectTerminal(
 }
 
 // ── Run hook or ad-hoc script as runner terminal ────────────────────
+
+/**
+ * Drive the parent terminal's runnerStatus from OSC 133;D sequences emitted by
+ * the runner's shell-integration precmd hook. The PTY's onExit fires only when
+ * the *shell* exits (i.e. when the user types `exit`), which is essentially
+ * never for a long-running runner — OSC 133 is the per-command signal that
+ * actually reflects whether the script succeeded or failed.
+ */
+export function updateRunnerStatusFromOsc133(data: string, parent: OuijitTerminal): void {
+  // Only the most recent exit code in this batch matters — earlier codes are
+  // already visually obsolete by the time the renderer sees them.
+  const codes = parseOsc133ExitCodes(data);
+  if (codes.length === 0) return;
+  const next = codes[codes.length - 1] === 0 ? 'success' : 'error';
+  if (parent.runnerStatus !== next) {
+    parent.runnerStatus = next;
+    parent.pushDisplayState({ runnerStatus: next });
+  }
+}
 
 export async function spawnRunner(ptyId: string, script?: RunnerScript): Promise<void> {
   const instance = terminalInstances.get(ptyId);
@@ -430,7 +558,11 @@ async function _spawnRunnerInner(instance: OuijitTerminal, script?: RunnerScript
       ...(instance.worktreePath && { OUIJIT_WORKTREE_PATH: instance.worktreePath }),
       ...(instance.worktreeBranch && { OUIJIT_TASK_BRANCH: instance.worktreeBranch }),
       ...(instance.label && { OUIJIT_TASK_NAME: instance.label }),
-      ...(instance.taskPrompt && { OUIJIT_TASK_PROMPT: instance.taskPrompt }),
+      ...(instance.taskPrompt && {
+        OUIJIT_TASK_DESCRIPTION: descriptionToHookPrompt(instance.taskPrompt),
+        // Deprecated alias for OUIJIT_TASK_DESCRIPTION.
+        OUIJIT_TASK_PROMPT: descriptionToHookPrompt(instance.taskPrompt),
+      }),
     },
   };
 
@@ -458,6 +590,7 @@ async function _spawnRunnerInner(instance: OuijitTerminal, script?: RunnerScript
             instance.pushDisplayState({ runnerStatus: instance.runnerStatus });
           }
         }
+        updateRunnerStatusFromOsc133(data, instance);
         const detected = detectDevServerUrl(data);
         if (detected) applyDetectedWebPreviewUrl(instance, detected);
       },
@@ -517,6 +650,16 @@ export async function reconnectOrphanedSessions(projectPath: string): Promise<vo
   const projectSessions = sessions.filter((s) => s.projectPath === projectPath);
   if (projectSessions.length === 0) return;
 
+  // The session snapshot from the same launch (PTYs survive a renderer reload)
+  // carries per-terminal UI state and which card was focused. Match its rows to
+  // live sessions by ptyId.
+  const snapshot = await readSnapshot();
+  const snapByPtyId = new Map(
+    (snapshot?.terminals ?? [])
+      .filter((t) => t.projectPath === projectPath && t.ptyId)
+      .map((t) => [t.ptyId as string, t] as const),
+  );
+
   const mainSessions = projectSessions.filter((s) => !s.isRunner);
   const runnerSessions = projectSessions.filter((s) => s.isRunner);
 
@@ -531,15 +674,41 @@ export async function reconnectOrphanedSessions(projectPath: string): Promise<vo
     }
 
     const [hookStatus, planPath] = await Promise.all([
-      window.api.claudeHooks.getStatus(session.ptyId),
+      window.api.agentHooks.getStatus(session.ptyId),
       window.api.plan.getForPty(session.ptyId),
     ]);
     const initialStatus: SummaryType = hookStatus?.status === 'thinking' ? 'thinking' : 'ready';
 
-    const term = await reconnectTerminal(session, { worktreeBranch, mergeTarget, initialStatus });
-    if (term && planPath) {
-      term.planPath = planPath;
-      term.pushDisplayState({ planPath });
+    const snapEntry = snapByPtyId.get(session.ptyId);
+    const term = await reconnectTerminal(session, {
+      worktreeBranch,
+      mergeTarget,
+      initialStatus,
+      label: snapEntry?.label ?? undefined,
+    });
+    if (term) {
+      if (snapEntry) await applyInitialUiState(term, snapEntry.ui);
+      // The plan association lives in the main process — authoritative for the
+      // path; the snapshot only contributes whether the panel was open.
+      if (planPath) {
+        term.planPath = planPath;
+        term.pushDisplayState({ planPath });
+      }
+    }
+  }
+
+  // Restore the focused card. Without this, every reconnectTerminal would have
+  // run activateLast and the last PTY back would win the selection.
+  {
+    const store = useTerminalStore.getState();
+    const activeEntry = (snapshot?.terminals ?? []).find(
+      (t) => t.projectPath === projectPath && t.isActiveInProject && t.ptyId,
+    );
+    const idx = activeEntry ? (store.terminalsByProject[projectPath] ?? []).indexOf(activeEntry.ptyId as string) : -1;
+    if (idx >= 0) {
+      store.setActiveIndex(projectPath, idx);
+    } else {
+      store.activateLast(projectPath);
     }
   }
 
@@ -577,6 +746,7 @@ export async function reconnectOrphanedSessions(projectPath: string): Promise<vo
             parentTerminal.pushDisplayState({ runnerStatus: parentTerminal.runnerStatus });
           }
         }
+        updateRunnerStatusFromOsc133(data, parentTerminal);
         const detected = detectDevServerUrl(data);
         if (detected) applyDetectedWebPreviewUrl(parentTerminal, detected);
       },

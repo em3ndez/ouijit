@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
+import { useAppStore } from '../stores/appStore';
 import { useTerminalStore } from '../stores/terminalStore';
 import { useUIStore } from '../stores/uiStore';
 import { terminalInstances } from './terminal/terminalReact';
@@ -7,8 +8,11 @@ import { TerminalHeader } from './terminal/TerminalHeader';
 import { TerminalBody } from './terminal/TerminalBody';
 import { XTermContainer } from './terminal/XTermContainer';
 import { useTerminalPanels } from './terminal/useTerminalPanels';
+import { useHookStatusListener } from '../hooks/useHookStatusListener';
 import { Icon } from './terminal/Icon';
 import { stringToColor, getInitials } from '../utils/projectIcon';
+import { RecentTasksPanel } from './RecentTasksPanel';
+import { ResumeBanner } from './ResumeBanner';
 import type { Project } from '../types';
 
 /** Inline depth positioning for home view cards — no CSS class dependency */
@@ -28,6 +32,9 @@ function getDepthStyle(depth: number): React.CSSProperties {
 
 export function HomeView() {
   const [projects, setProjects] = useState<Map<string, Project>>(new Map());
+  const allProjects = useAppStore((s) => s.projects);
+  const projectCount = allProjects.length;
+  const homeRecents = useAppStore((s) => s.homeRecents);
   const terminalsByProject = useTerminalStore((s) => s.terminalsByProject);
   const displayStates = useTerminalStore((s) => s.displayStates);
   const homeGroupMode = useUIStore((s) => s.homeGroupMode);
@@ -35,13 +42,17 @@ export function HomeView() {
   const allPtyIds = useMemo(() => {
     const ids: string[] = [];
     for (const ptyIds of Object.values(terminalsByProject)) {
-      ids.push(...ptyIds);
+      for (const id of ptyIds) {
+        if (!displayStates[id]?.isLoading) ids.push(id);
+      }
     }
     return ids;
-  }, [terminalsByProject]);
+  }, [terminalsByProject, displayStates]);
 
   const [activePtyId, setActivePtyId] = useState<string | null>(null);
   const reconnectedRef = useRef(false);
+
+  useHookStatusListener(null);
 
   // Keep activePtyId valid: if the active terminal was removed, fall back
   useEffect(() => {
@@ -83,7 +94,7 @@ export function HomeView() {
           worktreeBranch = task?.branch;
         }
         const [hookStatus, planPath] = await Promise.all([
-          window.api.claudeHooks.getStatus(session.ptyId),
+          window.api.agentHooks.getStatus(session.ptyId),
           window.api.plan.getForPty(session.ptyId),
         ]);
         const initialStatus = hookStatus?.status === 'thinking' ? ('thinking' as const) : ('ready' as const);
@@ -282,7 +293,10 @@ export function HomeView() {
   } = useTerminalPanels(activePtyId);
 
   if (allPtyIds.length === 0) {
+    const noProjects = projectCount === 0;
+    const noRecents = !noProjects && homeRecents !== null && homeRecents.length === 0;
     const isMac = navigator.platform.toLowerCase().includes('mac');
+
     return (
       <div
         className="fixed top-[82px] right-4 bottom-4 z-[100] overflow-visible"
@@ -291,24 +305,56 @@ export function HomeView() {
           transition: 'left 0.2s ease-out, right 0.25s ease, top 0.2s ease',
         }}
       >
-        <div
-          className="absolute inset-0 flex flex-col items-center justify-center text-center rounded-[14px] border border-dashed border-white/10 p-12 opacity-100"
-          style={{ background: 'var(--color-terminal-bg)' }}
-        >
-          <div className="text-sm text-white/30">No active sessions</div>
-          <div className="flex justify-center gap-6 mt-6">
-            <span className="flex items-center gap-1.5 text-[13px]" style={{ color: 'rgba(255, 255, 255, 0.35)' }}>
-              <span
-                className="inline-flex items-center font-mono"
-                style={{ fontSize: isMac ? 16 : 13, color: 'rgba(255, 255, 255, 0.25)' }}
+        {noProjects ? (
+          <div className="absolute inset-0 flex items-center justify-center overflow-hidden p-6">
+            <div className="w-full max-w-[36rem]">
+              <div
+                className="glass-bevel relative border border-black/60 rounded-[14px] overflow-hidden"
+                style={{
+                  background: 'var(--color-terminal-bg)',
+                  boxShadow:
+                    '0 0 0 1px rgba(0, 0, 0, 0.05), 0 4px 12px rgba(0, 0, 0, 0.15), 0 20px 40px rgba(0, 0, 0, 0.2)',
+                }}
               >
-                {isMac ? '\u2318' : 'Ctrl+'}
-                <span className={isMac ? 'text-xs' : 'text-[13px]'}>I</span>
-              </span>
-              New Terminal
-            </span>
+                <div className="px-5 py-3">
+                  <span className="text-sm text-text-primary leading-tight">Start a project</span>
+                </div>
+                <div className="border-t border-white/[0.06] divide-y divide-white/[0.04]">
+                  <EmptyStateChoice
+                    verb="Open"
+                    noun="a folder you already have"
+                    detail="Brings an existing folder into Ouijit as a project."
+                    onClick={() => document.dispatchEvent(new Event('add-existing-project'))}
+                  />
+                  <EmptyStateChoice
+                    verb="Create"
+                    noun="a new project"
+                    detail="Creates a new folder, initialized as a git repo."
+                    onClick={() => document.dispatchEvent(new Event('create-new-project'))}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : noRecents ? (
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-text-tertiary rounded-[14px] border border-dashed border-white/10"
+            style={{ background: 'var(--color-terminal-bg)' }}
+          >
+            <div className="text-sm">No tasks yet.</div>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="font-mono text-[13px]">{isMac ? '⌘ I' : '⌃ I'}</span>
+              <span>to open a terminal</span>
+            </div>
+          </div>
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center overflow-hidden p-6">
+            <div className="w-full max-w-[36rem] flex flex-col gap-3 max-h-full min-h-0">
+              <ResumeBanner />
+              <RecentTasksPanel projects={allProjects} />
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -392,9 +438,9 @@ export function HomeView() {
               marginTop: -1,
             }}
           >
-            {/* Card body below the tab */}
+            {/* Card body below the tab — square TL so tab sits flush */}
             <div
-              className="absolute border border-white/10"
+              className="absolute border border-black/60"
               style={{
                 top: 27,
                 left: 0,
@@ -402,14 +448,20 @@ export function HomeView() {
                 bottom: 0,
                 background: '#252528',
                 borderRadius: '0 14px 14px 14px',
-                borderTop: 'none',
+                boxShadow:
+                  'inset 0 1px 0 rgba(255,255,255,0.14), inset -1px 0 0 rgba(255,255,255,0.05), inset 1px 0 0 rgba(255,255,255,0.05), inset 0 -1px 0 rgba(0,0,0,0.5)',
               }}
             />
             <div
-              className="home-folder-tab absolute top-0 left-0 pointer-events-auto"
+              className="home-folder-tab absolute top-0 left-0 pointer-events-auto border border-black/60"
               style={{
-                width: 234,
+                width: 220,
                 height: 28,
+                background: '#252528',
+                borderBottom: 'none',
+                borderRadius: '12px 12px 0 0',
+                boxShadow:
+                  'inset 0 1px 0 rgba(255,255,255,0.14), inset 1px 0 0 rgba(255,255,255,0.05), inset -1px 0 0 rgba(255,255,255,0.05), inset 0 2px 6px -3px rgba(255,255,255,0.08)',
                 transform: `scale(${Math.max(0.92, 1 - item.depth * 0.015)})`,
                 transformOrigin: 'bottom left',
                 transition: 'transform 200ms ease-out',
@@ -421,19 +473,7 @@ export function HomeView() {
                 }
               }}
             >
-              <svg viewBox="0 0 234 28" width="234" height="28" className="absolute inset-0 w-full h-full">
-                <path
-                  d="M 14 0.5 H 205.5 Q 219.5 0.5 219.5 14.5 L 219.5 13.5 Q 219.5 27.5 233.5 27.5 L 0.5 27.5 L 0.5 14 Q 0.5 0.5 14 0.5 Z"
-                  fill="#252528"
-                />
-                <path
-                  d="M 0.5 27.5 L 0.5 14 Q 0.5 0.5 14 0.5 H 205.5 Q 219.5 0.5 219.5 14.5 L 219.5 13.5 Q 219.5 27.5 233.5 27.5"
-                  fill="none"
-                  stroke="rgba(255,255,255,0.08)"
-                  strokeWidth="1"
-                />
-              </svg>
-              <div className="absolute inset-0 flex items-center" style={{ gap: 6, padding: '4px 12px 0 8px' }}>
+              <div className="absolute inset-0 flex items-center" style={{ gap: 6, padding: '0 12px 0 8px' }}>
                 {item.icon === 'tag' ? (
                   <span
                     className="shrink-0 object-cover flex items-center justify-center"
@@ -445,7 +485,7 @@ export function HomeView() {
                   project?.iconDataUrl ? (
                     <img
                       className="shrink-0 object-cover"
-                      style={{ width: 16, minWidth: 16, height: 16, borderRadius: 4, aspectRatio: '1' }}
+                      style={{ width: 16, minWidth: 16, height: 16, aspectRatio: '1' }}
                       src={project.iconDataUrl}
                       alt={name}
                       draggable={false}
@@ -496,5 +536,32 @@ export function HomeView() {
         );
       })}
     </div>
+  );
+}
+
+interface EmptyStateChoiceProps {
+  verb: string;
+  noun: string;
+  detail: string;
+  onClick: () => void;
+}
+
+function EmptyStateChoice({ verb, noun, detail, onClick }: EmptyStateChoiceProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex items-baseline gap-3 w-full text-left px-5 py-3 hover:bg-white/[0.04] transition-colors duration-150 ease-out focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-light outline-none [-webkit-app-region:no-drag]"
+    >
+      <span className="text-[15px] text-text-tertiary group-hover:text-text-primary transition-colors w-3 shrink-0">
+        →
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="text-[14px] text-text-primary">
+          <span className="font-semibold">{verb}</span> <span className="text-text-secondary">{noun}.</span>
+        </span>
+        <span className="block text-[12px] text-text-tertiary mt-0.5 leading-relaxed">{detail}</span>
+      </span>
+    </button>
   );
 }

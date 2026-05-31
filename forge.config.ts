@@ -2,6 +2,7 @@ import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerDeb } from '@electron-forge/maker-deb';
+import { MakerDMG } from '@electron-forge/maker-dmg';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
@@ -10,6 +11,9 @@ import { notarize } from '@electron/notarize';
 import { execFileSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { resolveSigningIdentity, notarizeAndStapleDMGs } from './forge.dmg';
+
+const dmgSigningIdentity = resolveSigningIdentity();
 
 // Copy a directory tree. Does NOT preserve unix permissions (fs.copyFileSync doesn't),
 // so anything that needs +x must be chmod'd explicitly after copying.
@@ -153,15 +157,22 @@ const config: ForgeConfig = {
   },
   hooks: {
     postMake: async (_config, makeResults) => {
-      // Strip version from artifact filenames so GitHub release asset URLs
-      // are stable across versions (enables /releases/latest/download/<name>)
+      // Stabilize artifact filenames so GitHub release asset URLs are stable
+      // across versions (enables /releases/latest/download/<name>)
       for (const result of makeResults) {
         result.artifacts = result.artifacts.map((artifact) => {
           const dir = path.dirname(artifact);
           const ext = path.extname(artifact);
           const base = path.basename(artifact, ext);
-          // Match patterns like "ouijit-1.0.6-darwin-arm64" or "ouijit-darwin-arm64-1.0.6"
-          const stripped = base.replace(/-\d+\.\d+\.\d+/, '');
+          // maker-dmg can't see targetArch in its static config, so each DMG is
+          // emitted with the same version-stamped name and would collide on the
+          // shared release. Rename here (result.arch is available) to a stable,
+          // arch-distinct, version-less name matching the ZIP convention.
+          const stripped =
+            ext === '.dmg'
+              ? `ouijit-darwin-${result.arch}`
+              : // Match patterns like "ouijit-1.0.6-darwin-arm64" or "ouijit-darwin-arm64-1.0.6"
+                base.replace(/-\d+\.\d+\.\d+/, '');
           if (stripped === base) return artifact;
           const newPath = path.join(dir, stripped + ext);
           fs.renameSync(artifact, newPath);
@@ -169,6 +180,16 @@ const config: ForgeConfig = {
           return newPath;
         });
       }
+
+      // Notarize and staple the DMG wrapper. The app inside is already
+      // notarized via postPackage, but Apple requires the distribution
+      // artifact itself to be notarized too, otherwise Gatekeeper warns
+      // on first open.
+      for (const result of makeResults) {
+        if (result.platform !== 'darwin') continue;
+        await notarizeAndStapleDMGs(result.artifacts);
+      }
+
       return makeResults;
     },
     postPackage: async (_config, options) => {
@@ -212,8 +233,34 @@ const config: ForgeConfig = {
   },
   makers: [
     new MakerSquirrel({}),
+    // macOS ZIP is required for Squirrel.Mac auto-updates; the DMG below is the first-install download.
     new MakerZIP({}, ['darwin', 'linux']),
     new MakerDeb({}),
+    new MakerDMG(
+      {
+        // Mounted volume title only. Leave `name` unset so the DMG filename is
+        // renamed to a stable, arch-distinct name in the postMake hook below
+        // (where targetArch is available, unlike here in the static config).
+        title: 'Ouijit',
+        icon: './src/assets/icons/icon.icns',
+        background: './src/assets/dmg/background.png',
+        format: 'ULFO',
+        iconSize: 144,
+        additionalDMGOptions: {
+          window: {
+            size: { width: 720, height: 460 },
+          },
+          ...(dmgSigningIdentity
+            ? { 'code-sign': { 'signing-identity': dmgSigningIdentity } }
+            : {}),
+        },
+        contents: (opts) => [
+          { x: 180, y: 235, type: 'file', path: opts.appPath },
+          { x: 540, y: 235, type: 'link', path: '/Applications' },
+        ],
+      },
+      ['darwin'],
+    ),
   ],
   publishers: [
     new PublisherGithub({

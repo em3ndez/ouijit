@@ -13,13 +13,15 @@ import type { PtyId, PtySpawnOptions, GitFileStatus } from '../../types';
 import { notifyReady, readyBody } from '../../utils/notifications';
 import { generateId } from '../../utils/ids';
 import { useTerminalStore } from '../../stores/terminalStore';
+import { closeProjectTerminal } from './terminalActions';
+import { parseOsc133ExitCodes } from './osc133';
 
 // ── Idle fallback timer constants ────────────────────────────────────
 const IDLE_FALLBACK_MS = 3000;
 const READY_DEFERRAL_MS = 5_000;
 const SIDE_EFFECT_THROTTLE_MS = 250;
 
-export type SummaryType = 'thinking' | 'ready';
+export type SummaryType = 'thinking' | 'ready' | 'success' | 'error';
 
 export interface TerminalOptions {
   ptyId?: PtyId;
@@ -35,6 +37,29 @@ export interface TerminalOptions {
   tags?: string[];
   isRunner?: boolean;
   initialSummaryType?: SummaryType;
+  /**
+   * When true, this terminal closes itself after a short grace period when its
+   * underlying command exits with code 0. The exit signal comes from OSC 133;D
+   * (emitted by the shell-integration precmd hook) or from PTY exit. On
+   * non-zero exit it stays open with an error status, so the failure is
+   * debuggable in the interactive shell that survives the command.
+   */
+  autoCloseOnSuccess?: boolean;
+}
+
+/** How long to leave an auto-close terminal visible on success before closing. */
+export const AUTO_CLOSE_GRACE_MS = 3000;
+
+/**
+ * Schedule a self-tidy close for a terminal that opted into autoCloseOnSuccess.
+ * Extracted so the timing behavior is unit-testable without standing up an
+ * OuijitTerminal instance (which couples to xterm + DOM).
+ */
+export function scheduleAutoCloseOnSuccess(ptyId: PtyId, isDisposed: () => boolean): ReturnType<typeof setTimeout> {
+  return setTimeout(() => {
+    if (isDisposed()) return;
+    closeProjectTerminal(ptyId);
+  }, AUTO_CLOSE_GRACE_MS);
 }
 
 function getTerminalTheme(): Record<string, string> {
@@ -69,9 +94,33 @@ function getTerminalTheme(): Record<string, string> {
 // Platform detection
 const isMac = navigator.platform.toLowerCase().includes('mac');
 
-function setupTerminalAppHotkeys(terminal: XTerminal): void {
+function setupTerminalAppHotkeys(terminal: XTerminal, writeToPty: (data: string) => void): void {
   terminal.attachCustomKeyEventHandler((event) => {
     const hasModifier = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+
+    // Shift+Enter — emit the Kitty keyboard-protocol CSI 13;2u sequence so
+    // TUIs (Claude Code, Pi, Codex) insert a line break instead of submitting.
+    // xterm.js otherwise maps Shift+Enter to a plain CR, identical to Enter.
+    // Pi only recognizes shift+enter via CSI-u when the kitty protocol is
+    // inactive — the previous ESC+CR (`\x1b\r`) was parsed by Pi as
+    // alt+enter and queued a follow-up instead of breaking the line. See
+    // pi-mono/packages/tui/src/keys.ts.
+    if (
+      event.type === 'keydown' &&
+      event.key === 'Enter' &&
+      event.shiftKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    ) {
+      // preventDefault is required: returning false alone skips xterm's
+      // keydown handling but also skips the preventDefault it would have
+      // done, so the textarea still emits a trailing carriage return that
+      // submits the prompt right after our newline.
+      event.preventDefault();
+      writeToPty('\x1b[13;2u');
+      return false;
+    }
 
     if (hasModifier && !event.altKey) {
       const key = event.key.toLowerCase();
@@ -182,6 +231,56 @@ export function resolveTerminalLabel(
 /** Global registry of OuijitTerminal instances by ptyId */
 export const terminalInstances = new Map<string, OuijitTerminal>();
 
+// ── Terminal font (global setting cache) ─────────────────────────────
+
+const DEFAULT_TERMINAL_FONT_FAMILY = 'Iosevka Term Extended, SF Mono, Monaco, Menlo, monospace';
+const DEFAULT_TERMINAL_FONT_SIZE = 14;
+
+let cachedTerminalFontFamily = DEFAULT_TERMINAL_FONT_FAMILY;
+let cachedTerminalFontSize = DEFAULT_TERMINAL_FONT_SIZE;
+let terminalFontHydrationStarted = false;
+
+/**
+ * Hydrate the terminal-font cache from global settings. Idempotent — call once
+ * at app boot. Terminals constructed before this resolves use the defaults.
+ */
+export async function hydrateTerminalFont(): Promise<void> {
+  if (terminalFontHydrationStarted) return;
+  terminalFontHydrationStarted = true;
+  const [family, size] = await Promise.all([
+    window.api.globalSettings.get('terminal:font-family'),
+    window.api.globalSettings.get('terminal:font-size'),
+  ]);
+  if (family?.trim()) cachedTerminalFontFamily = family.trim();
+  const parsed = parseFloat((size ?? '').trim());
+  if (Number.isFinite(parsed) && parsed > 0) cachedTerminalFontSize = parsed;
+}
+
+function applyCachedFontToAll(): void {
+  for (const t of terminalInstances.values()) {
+    t.xterm.options.fontFamily = cachedTerminalFontFamily;
+    t.xterm.options.fontSize = cachedTerminalFontSize;
+    t.fit();
+  }
+}
+
+/**
+ * Update only the font family. Pass null/empty to revert to the default.
+ * Caller doesn't need to keep the size in sync — the cache is the source of truth.
+ */
+export function setTerminalFontFamily(family: string | null): void {
+  cachedTerminalFontFamily = family?.trim() || DEFAULT_TERMINAL_FONT_FAMILY;
+  applyCachedFontToAll();
+}
+
+/**
+ * Update only the font size. Pass null to revert to the default.
+ */
+export function setTerminalFontSize(size: number | null): void {
+  cachedTerminalFontSize = size && Number.isFinite(size) && size > 0 ? size : DEFAULT_TERMINAL_FONT_SIZE;
+  applyCachedFontToAll();
+}
+
 // ── Git status refresh scheduling ────────────────────────────────────
 
 const pendingTerminalGitRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
@@ -282,7 +381,6 @@ export class OuijitTerminal {
 
   // ── Display state (plain values, pushed to Zustand) ────────────────
   label: string;
-  summary = '';
   summaryType: SummaryType;
   gitFileStatus: GitFileStatus | null = null;
   lastOscTitle = '';
@@ -295,6 +393,11 @@ export class OuijitTerminal {
   worktreePath?: string;
   worktreeBranch?: string;
   mergeTarget?: string;
+  /** See TerminalOptions.autoCloseOnSuccess. */
+  readonly autoCloseOnSuccess: boolean;
+  /** Guards against scheduling the auto-close timer twice when both the OSC
+   *  133;D path and the PTY-exit path fire for the same successful command. */
+  private autoCloseScheduled = false;
 
   // ── Per-terminal diff panel state ───────────────────────────────────
   diffPanelOpen = false;
@@ -356,6 +459,7 @@ export class OuijitTerminal {
     this.worktreePath = opts.worktreePath;
     this.worktreeBranch = opts.worktreeBranch;
     this.mergeTarget = opts.mergeTarget;
+    this.autoCloseOnSuccess = opts.autoCloseOnSuccess ?? false;
 
     if (opts.taskId != null) {
       this.diffPanelMode = 'worktree';
@@ -369,8 +473,8 @@ export class OuijitTerminal {
     // Create xterm instance
     this.xterm = new XTerminal({
       theme: getTerminalTheme(),
-      fontFamily: 'Iosevka Term Extended, SF Mono, Monaco, Menlo, monospace',
-      fontSize: 14,
+      fontFamily: cachedTerminalFontFamily,
+      fontSize: cachedTerminalFontSize,
       lineHeight: 1.2,
       cursorBlink: !this.isRunner,
       cursorStyle: 'bar',
@@ -386,7 +490,9 @@ export class OuijitTerminal {
       }),
     );
 
-    setupTerminalAppHotkeys(this.xterm);
+    setupTerminalAppHotkeys(this.xterm, (data) => {
+      if (this.ptyId) window.api.pty.write(this.ptyId, data);
+    });
 
     // Create viewport element (minimal — React owns card chrome)
     this.viewportElement = document.createElement('div');
@@ -807,17 +913,28 @@ export class OuijitTerminal {
       this.xterm.writeln('');
       const exitColor = exitCode === 0 ? '32' : '31';
       this.xterm.writeln(`\x1b[${exitColor}m● Process exited with code ${exitCode}\x1b[0m`);
-
-      this.summary = exitCode === 0 ? 'Exited' : `Exit ${exitCode}`;
-      this.summaryType = 'ready';
-      this.pushDisplayState({
-        summary: this.summary,
-        summaryType: 'ready',
-        exited: true,
-      });
-
+      this.applyExitState(exitCode, { isPtyExit: true });
       onExit?.(exitCode);
     });
+  }
+
+  /**
+   * Apply an exit-code-driven status flip. Used by both the PTY-exit path
+   * (`wireExitHandler`) and the OSC 133;D in-shell path (`handleCommandExit`).
+   * Only the status dot (`summaryType`) reflects the exit code; the PTY-exit
+   * path additionally sets the `exited: true` flag. We don't surface a textual
+   * "Done" / "Exit N" suffix in the header — the dot carries that signal, and
+   * the suffix only collided with the OSC title the shell/agent renders.
+   */
+  private applyExitState(exitCode: number, opts: { isPtyExit: boolean }): void {
+    const nextType: SummaryType = exitCode === 0 ? 'success' : 'error';
+    if (this.summaryType !== nextType) {
+      this.summaryType = nextType;
+      this.pushDisplayState(opts.isPtyExit ? { summaryType: nextType, exited: true } : { summaryType: nextType });
+    } else if (opts.isPtyExit) {
+      this.pushDisplayState({ exited: true });
+    }
+    this.maybeScheduleAutoClose(exitCode);
   }
 
   private wireInputForwarding(): void {
@@ -894,7 +1011,25 @@ export class OuijitTerminal {
       }
     }
 
+    // OSC 133;D from our shell-integration precmd hook lets us reflect the
+    // real exit code without requiring the PTY to die. Drives the success/
+    // error status dot and autoCloseOnSuccess. A throttled batch may carry
+    // multiple codes (e.g. `false; true`) — only the last one is meaningful
+    // since the prior commands have already been visually superseded.
+    const codes = parseOsc133ExitCodes(batch);
+    if (codes.length > 0) this.handleCommandExit(codes[codes.length - 1]);
+
     scheduleTerminalGitStatusRefresh(this);
+  }
+
+  private handleCommandExit(exitCode: number): void {
+    this.applyExitState(exitCode, { isPtyExit: false });
+  }
+
+  private maybeScheduleAutoClose(exitCode: number): void {
+    if (!this.autoCloseOnSuccess || exitCode !== 0 || this.autoCloseScheduled) return;
+    this.autoCloseScheduled = true;
+    scheduleAutoCloseOnSuccess(this.ptyId, () => this.disposed);
   }
 
   clearDataThrottle(): void {

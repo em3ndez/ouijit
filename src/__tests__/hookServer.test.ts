@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
+import * as ts from 'typescript';
 import type { BrowserWindow } from 'electron';
 
 const hasZsh = (() => {
@@ -34,10 +35,19 @@ import {
   startHookServer,
   stopHookServer,
   getApiPort,
+  setPlanPath,
+  clearPlanPath,
+  getPlanPath,
   installWrapper,
   migrateFromSettingsHooks,
   buildVmHookSettings,
+  buildVmCodexConfig,
+  buildVmCodexTrustState,
+  buildVmPiExtension,
   CLAUDE_WRAPPER,
+  CODEX_WRAPPER,
+  PI_WRAPPER,
+  PI_EXTENSION,
 } from '../hookServer';
 import { issueToken, revokeAllTokens } from '../apiAuth';
 
@@ -235,12 +245,12 @@ describe('status action', () => {
 
   test('sends IPC for valid thinking status', async () => {
     await post(port, { action: 'status', ptyId: 'pty-123', status: 'thinking' });
-    expect(mockSend).toHaveBeenCalledWith('claude-hook-status', 'pty-123', 'thinking');
+    expect(mockSend).toHaveBeenCalledWith('agent-hook-status', 'pty-123', 'thinking');
   });
 
   test('sends IPC for valid ready status', async () => {
     await post(port, { action: 'status', ptyId: 'pty-789', status: 'ready' });
-    expect(mockSend).toHaveBeenCalledWith('claude-hook-status', 'pty-789', 'ready');
+    expect(mockSend).toHaveBeenCalledWith('agent-hook-status', 'pty-789', 'ready');
   });
 
   test('rejects invalid status values', async () => {
@@ -264,6 +274,38 @@ describe('status action', () => {
     port = getApiPort();
 
     await post(port, { action: 'status', ptyId: 'pty-123', status: 'thinking' });
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+});
+
+describe('clearPlanPath', () => {
+  beforeEach(async () => {
+    await startHookServer(createMockWindow());
+  });
+
+  test('notifies renderer and returns true when a plan was set', () => {
+    setPlanPath('pty-plan-1', '/tmp/plan.md');
+    mockSend.mockClear();
+
+    const had = clearPlanPath('pty-plan-1');
+
+    expect(had).toBe(true);
+    expect(getPlanPath('pty-plan-1')).toBeNull();
+    expect(mockSend).toHaveBeenCalledWith('claude-plan-detected', 'pty-plan-1', null);
+  });
+
+  test('still notifies renderer when the map has no entry (stale renderer state)', () => {
+    const had = clearPlanPath('pty-never-set');
+
+    expect(had).toBe(false);
+    expect(mockSend).toHaveBeenCalledWith('claude-plan-detected', 'pty-never-set', null);
+  });
+
+  test('does not throw when window is destroyed', async () => {
+    await stopHookServer();
+    await startHookServer(createMockWindow(true));
+
+    expect(() => clearPlanPath('pty-destroyed')).not.toThrow();
     expect(mockSend).not.toHaveBeenCalled();
   });
 });
@@ -295,7 +337,7 @@ describe('installWrapper', () => {
     const wrapper = fs.readFileSync(wrapperPath, 'utf-8');
     expect(wrapper).toContain('#!/bin/bash');
     expect(wrapper).toContain('WRAPPER_DIR');
-    expect(wrapper).toContain('exec "$REAL_CLAUDE" --settings');
+    expect(wrapper).toContain('exec "$REAL_BIN" --settings');
     expect(wrapper).toContain('ouijit-hook');
   });
 
@@ -306,7 +348,7 @@ describe('installWrapper', () => {
     const wrapper = fs.readFileSync(wrapperPath, 'utf-8');
     // Contains the fallthrough: exec real claude without --settings but with reference file
     expect(wrapper).toContain('if [ -z "$OUIJIT_API_URL" ]; then');
-    expect(wrapper).toContain('exec "$REAL_CLAUDE" --append-system-prompt-file "$REFERENCE_FILE" "$@"');
+    expect(wrapper).toContain('exec "$REAL_BIN" --append-system-prompt-file "$REFERENCE_FILE" "$@"');
   });
 
   test('wrapper injects all 4 hook events via --settings', () => {
@@ -328,6 +370,51 @@ describe('installWrapper', () => {
     expect(settings.hooks!.Stop).toHaveLength(1);
     expect(settings.hooks!.Notification).toHaveLength(1);
     expect(settings.hooks!.Notification![0].matcher).toBe('permission_prompt|idle_prompt');
+  });
+
+  test('creates codex wrapper on first install', () => {
+    installWrapper();
+
+    const wrapperPath = path.join(tmpHome, '.config', 'Ouijit', 'bin', 'codex');
+    const wrapper = fs.readFileSync(wrapperPath, 'utf-8');
+    expect(wrapper).toContain('#!/bin/bash');
+    expect(wrapper).toContain('REAL_BIN=');
+    expect(wrapper).toContain('export PATH="$WRAPPER_DIR:$CLEAN_PATH"');
+    // Injects the CLI reference + lifecycle hooks + per-hook pre-trust + notify via -c overrides
+    expect(wrapper).toContain('-c "developer_instructions=$(cat "$REFERENCE_FILE" 2>/dev/null)"');
+    expect(wrapper).toContain("-c 'hooks.UserPromptSubmit=");
+    expect(wrapper).toContain("-c 'hooks.PostToolUse=");
+    expect(wrapper).toContain("-c 'hooks.Stop=");
+    expect(wrapper).toContain("-c 'hooks.PermissionRequest=");
+    expect(wrapper).toContain('-c \'hooks.state."/<session-flags>/config.toml:user_prompt_submit:0:0".trusted_hash=');
+    expect(wrapper).toContain('-c \'hooks.state."/<session-flags>/config.toml:permission_request:0:0".trusted_hash=');
+    expect(wrapper).toContain("-c 'notify=");
+    // No-API fallthrough still passes developer_instructions
+    expect(wrapper).toContain('if [ -z "$OUIJIT_API_URL" ]; then');
+    expect(wrapper).toContain('exec "$REAL_BIN" -c "developer_instructions=$(cat "$REFERENCE_FILE" 2>/dev/null)" "$@"');
+  });
+
+  test('creates pi wrapper and extension on first install', () => {
+    installWrapper();
+
+    const wrapperPath = path.join(tmpHome, '.config', 'Ouijit', 'bin', 'pi');
+    const wrapper = fs.readFileSync(wrapperPath, 'utf-8');
+    expect(wrapper).toContain('#!/bin/bash');
+    expect(wrapper).toContain('REAL_BIN=');
+    expect(wrapper).toContain('export PATH="$WRAPPER_DIR:$CLEAN_PATH"');
+    expect(wrapper).toContain('--append-system-prompt "$(cat "$REFERENCE_FILE" 2>/dev/null)"');
+    expect(wrapper).toContain('--extension "$EXTENSION_FILE"');
+    expect(wrapper).toContain('OUIJIT_HOOK_BIN="$HOOK_BIN" exec "$REAL_BIN"');
+    expect(wrapper).toContain('if [ -z "$OUIJIT_API_URL" ]; then');
+    expect(wrapper).toContain('exec "$REAL_BIN" --append-system-prompt "$(cat "$REFERENCE_FILE" 2>/dev/null)" "$@"');
+
+    const extPath = path.join(tmpHome, '.config', 'Ouijit', 'pi', 'ouijit-extension.ts');
+    expect(fs.existsSync(extPath)).toBe(true);
+    const ext = fs.readFileSync(extPath, 'utf-8');
+    expect(ext).toContain('export default');
+    expect(ext).toContain("pi.on('agent_start'");
+    expect(ext).toContain("pi.on('agent_end'");
+    expect(ext).toContain('OUIJIT_HOOK_BIN');
   });
 
   test('creates CLI reference file with command documentation', () => {
@@ -377,12 +464,78 @@ describe('installWrapper', () => {
   });
 });
 
+// ── Shared wrapper resolver (claude / codex / pi) ────────────────────
+
+describe('wrapper resolver (shared)', () => {
+  // Each entry: [wrapper label, wrapper source, binary name, sentinel the
+  // wrapper injects when OUIJIT_API_URL is unset]. The injection sentinel
+  // lets us confirm the wrapper still wrapped — that we didn't accidentally
+  // skip everything to dodge recursion.
+  const wrappers: Array<[string, string, string, RegExp]> = [
+    ['claude', CLAUDE_WRAPPER, 'claude', /--append-system-prompt-file/],
+    ['codex', CODEX_WRAPPER, 'codex', /developer_instructions=/],
+    ['pi', PI_WRAPPER, 'pi', /--append-system-prompt/],
+  ];
+
+  for (const [label, wrapper, bin, injectedSentinel] of wrappers) {
+    test(`${label} wrapper: does not recurse into itself when PATH lists the wrapper dir twice (regression for T-407)`, () => {
+      // Reproduces the reported failure mode: the wrapper dir appears twice
+      // in PATH (once verbatim, once via a symlink) so the string-only strip
+      // leaves a wrapper-pointing entry behind. Pre-fix the wrapper exec's
+      // itself, argv balloons across each hop, and execve fails with E2BIG.
+      // Post-fix the `-ef` guard rejects the wrapper match and we resolve
+      // the real binary.
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `wrapper-resolver-${label}-`));
+      try {
+        const wrapperDir = path.join(tmp, 'wrapper-bin');
+        const realDir = path.join(tmp, 'real-bin');
+        fs.mkdirSync(wrapperDir);
+        fs.mkdirSync(realDir);
+
+        fs.writeFileSync(path.join(wrapperDir, bin), wrapper, { mode: 0o755 });
+
+        // Real-binary stand-in: prints a sentinel then echoes its argv so we
+        // can also assert the wrapper passed through the expected injection.
+        fs.writeFileSync(path.join(realDir, bin), '#!/bin/bash\necho REAL_BIN_OK\nprintf "%s\\n" "$@"\n', {
+          mode: 0o755,
+        });
+
+        // Symlink with a different spelling that the strip pattern misses.
+        const wrapperDirSymlink = path.join(tmp, 'wrapper-bin-link');
+        fs.symlinkSync(wrapperDir, wrapperDirSymlink);
+
+        // PATH: wrapper verbatim, real dir, wrapper via symlink, plus the
+        // system dirs so dirname/basename are reachable.
+        const fakePath = [wrapperDir, realDir, wrapperDirSymlink, '/usr/bin', '/bin'].join(':');
+
+        const result = execFileSync('bash', [path.join(wrapperDir, bin), 'hello'], {
+          env: {
+            PATH: fakePath,
+            HOME: tmp,
+            // Force the no-OUIJIT_API_URL branch — keeps the injected argv
+            // small and predictable across the three wrappers.
+            OUIJIT_API_URL: '',
+          },
+          encoding: 'utf8',
+          timeout: 10_000,
+        });
+
+        expect(result).toContain('REAL_BIN_OK');
+        expect(result).toMatch(injectedSentinel);
+        expect(result).toContain('hello');
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 // ── CLAUDE_WRAPPER constant ──────────────────────────────────────────
 
 describe('CLAUDE_WRAPPER', () => {
   test('resolves real claude and re-exports wrapper dir on PATH', () => {
     expect(CLAUDE_WRAPPER).toContain('WRAPPER_DIR=');
-    expect(CLAUDE_WRAPPER).toContain('REAL_CLAUDE=');
+    expect(CLAUDE_WRAPPER).toContain('REAL_BIN=');
     expect(CLAUDE_WRAPPER).toContain('export PATH="$WRAPPER_DIR:$CLEAN_PATH"');
   });
 
@@ -434,6 +587,132 @@ describe('CLAUDE_WRAPPER', () => {
 
     expect(result.stdout.trim()).toBe('/usr/bin:/usr/local/bin');
   });
+
+  describe('subcommand passthrough (issue #177)', () => {
+    const runWrapper = (args: string[], extraEnv: Record<string, string> = {}) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-wrapper-test-'));
+      const wrapperDir = path.join(root, 'wrapper');
+      const stubDir = path.join(root, 'stub');
+      fs.mkdirSync(wrapperDir);
+      fs.mkdirSync(stubDir);
+      const argvLog = path.join(root, 'argv.log');
+      fs.writeFileSync(path.join(wrapperDir, 'claude'), CLAUDE_WRAPPER, { mode: 0o755 });
+      fs.writeFileSync(
+        path.join(stubDir, 'claude'),
+        `#!/bin/bash\nfor a in "$@"; do printf '%s\\n' "$a" >> "${argvLog}"; done\n`,
+        { mode: 0o755 },
+      );
+      try {
+        execFileSync(path.join(wrapperDir, 'claude'), args, {
+          env: {
+            PATH: `${wrapperDir}:${stubDir}:/usr/bin:/bin`,
+            HOME: root,
+            ...extraEnv,
+          },
+          encoding: 'utf8',
+        });
+        const argv = fs.existsSync(argvLog) ? fs.readFileSync(argvLog, 'utf8').replace(/\n$/, '').split('\n') : [];
+        return { argv };
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    };
+
+    test('`claude update` passes through with no --settings / --append-system-prompt-file', () => {
+      const { argv } = runWrapper(['update'], { OUIJIT_API_URL: 'http://stub' });
+      expect(argv).toEqual(['update']);
+    });
+
+    test('`claude mcp serve` passes through unchanged', () => {
+      const { argv } = runWrapper(['mcp', 'serve'], { OUIJIT_API_URL: 'http://stub' });
+      expect(argv).toEqual(['mcp', 'serve']);
+    });
+
+    test('bare `claude` still gets --settings and --append-system-prompt-file', () => {
+      const { argv } = runWrapper([], { OUIJIT_API_URL: 'http://stub' });
+      expect(argv).toContain('--settings');
+      expect(argv).toContain('--append-system-prompt-file');
+    });
+
+    test('`claude <message>` (non-subcommand first arg) still gets injection', () => {
+      const { argv } = runWrapper(['hello world'], { OUIJIT_API_URL: 'http://stub' });
+      expect(argv).toContain('--settings');
+      expect(argv).toContain('--append-system-prompt-file');
+      expect(argv).toContain('hello world');
+    });
+  });
+});
+
+// ── CODEX_WRAPPER constant ───────────────────────────────────────────
+
+describe('CODEX_WRAPPER', () => {
+  test('resolves real codex and re-exports wrapper dir on PATH', () => {
+    expect(CODEX_WRAPPER).toContain('WRAPPER_DIR=');
+    expect(CODEX_WRAPPER).toContain('REAL_BIN=');
+    expect(CODEX_WRAPPER).toContain('export PATH="$WRAPPER_DIR:$CLEAN_PATH"');
+  });
+
+  test('the notify override is a valid TOML/JSON array pointing at ouijit-hook', () => {
+    const notifyMatch = CODEX_WRAPPER.match(/-c 'notify=(.+?)' \\/);
+    expect(notifyMatch).not.toBeNull();
+    const notify = JSON.parse(notifyMatch![1]) as string[];
+    expect(notify[0]).toBe('bash');
+    expect(notify).toContain('-c');
+    expect(notify[2]).toBe('$HOME/.config/Ouijit/bin/ouijit-hook status status=ready');
+  });
+
+  test('injects the four status hooks as TOML arrays of inline tables (must NOT be JSON)', () => {
+    // Each hooks.<Event> override is a TOML array. Codex parses -c values as
+    // TOML; a JSON object would fail parse and degrade to a string, failing
+    // typed deserialization. Asserting TOML inline-table syntax (`{k=v}`).
+    const expected: Array<[string, 'thinking' | 'ready']> = [
+      ['UserPromptSubmit', 'thinking'],
+      ['PostToolUse', 'thinking'],
+      ['Stop', 'ready'],
+      ['PermissionRequest', 'ready'],
+    ];
+    for (const [event, status] of expected) {
+      const re = new RegExp(
+        `-c 'hooks\\.${event}=(\\[\\{hooks=\\[\\{type="command",command="[^"]+"\\}\\]\\}\\])' \\\\`,
+      );
+      const match = CODEX_WRAPPER.match(re);
+      expect(match, `hooks.${event} override should be a TOML array of inline tables`).not.toBeNull();
+      // Pull the command out and check the status mapping
+      const cmdMatch = match![1].match(/command="([^"]+)"/);
+      expect(cmdMatch![1]).toBe(`$HOME/.config/Ouijit/bin/ouijit-hook status status=${status}`);
+      // Must be TOML, not JSON: no `"key":value` syntax
+      expect(match![1]).not.toMatch(/"[A-Za-z_]+":/);
+      // Codex skips async hooks today ("async hooks are not supported yet")
+      expect(match![1]).not.toContain('async');
+    }
+  });
+
+  test('falls through with just developer_instructions when OUIJIT_API_URL is unset', () => {
+    expect(CODEX_WRAPPER).toContain('if [ -z "$OUIJIT_API_URL" ]; then');
+    expect(CODEX_WRAPPER).toContain(
+      'exec "$REAL_BIN" -c "developer_instructions=$(cat "$REFERENCE_FILE" 2>/dev/null)" "$@"',
+    );
+  });
+
+  test('pre-trusts each hook with the sha256 codex expects (locks the hash recipe)', () => {
+    // These hashes mirror codex-rs/hooks/src/engine/discovery.rs:command_hook_hash —
+    // sha256(canonical_json({event_name, hooks:[{type:"command",command,timeout:600,async:false}]})).
+    // If any of them ever fail, either Codex's normalization changed or our recipe drifted;
+    // a mismatch is graceful (Codex falls back to the /hooks review prompt) but we still
+    // want a tripwire so we know to recompute.
+    const expected: Record<string, string> = {
+      'user_prompt_submit:0:0': 'sha256:f5cd19bf6ce12a88c683852526d77e2553778f51f15d92b0d7f18c1773161245',
+      'post_tool_use:0:0': 'sha256:bba7cb97708e558b3d7746468ec196312d9c1a6cb685467177da4e99cca85115',
+      'stop:0:0': 'sha256:bd8907212bcda4a71b2e580355c07c837a9f34ac96d01a037526921bdf435ffd',
+      'permission_request:0:0': 'sha256:cb24d6656dd4fef6523820ae479cec67acfeae414590e837a926a7aa0daae1e5',
+    };
+    for (const [keySuffix, hash] of Object.entries(expected)) {
+      const re = new RegExp(
+        `-c 'hooks\\.state\\."/<session-flags>/config\\.toml:${keySuffix.replace(/:/g, '\\:')}"\\.trusted_hash="${hash}"'`,
+      );
+      expect(CODEX_WRAPPER, `pre-trust hash for ${keySuffix}`).toMatch(re);
+    }
+  });
 });
 
 // ── ouijit-hook → hook server integration ────────────────────────────
@@ -481,7 +760,7 @@ describe('ouijit-hook script → hook server integration', () => {
     });
 
     await waitForIpc();
-    expect(mockSend).toHaveBeenCalledWith('claude-hook-status', 'pty-integration-1', 'thinking');
+    expect(mockSend).toHaveBeenCalledWith('agent-hook-status', 'pty-integration-1', 'thinking');
   });
 
   test('ready status reaches hook server and triggers IPC', async () => {
@@ -493,7 +772,7 @@ describe('ouijit-hook script → hook server integration', () => {
     });
 
     await waitForIpc();
-    expect(mockSend).toHaveBeenCalledWith('claude-hook-status', 'pty-integration-2', 'ready');
+    expect(mockSend).toHaveBeenCalledWith('agent-hook-status', 'pty-integration-2', 'ready');
   });
 
   test('script exits silently when OUIJIT_API_URL is unset', async () => {
@@ -605,7 +884,7 @@ describe('wrapper → ouijit-hook → hook server (end-to-end)', () => {
     });
 
     await waitForIpc();
-    expect(mockSend).toHaveBeenCalledWith('claude-hook-status', 'pty-e2e-1', 'thinking');
+    expect(mockSend).toHaveBeenCalledWith('agent-hook-status', 'pty-e2e-1', 'thinking');
   });
 
   test('hooks fire even when shell init prepends paths before wrapper dir', async () => {
@@ -644,7 +923,7 @@ describe('wrapper → ouijit-hook → hook server (end-to-end)', () => {
     });
 
     await waitForIpc();
-    expect(mockSend).toHaveBeenCalledWith('claude-hook-status', 'pty-e2e-2', 'thinking');
+    expect(mockSend).toHaveBeenCalledWith('agent-hook-status', 'pty-e2e-2', 'thinking');
   });
 
   test.skipIf(!hasZsh)('hooks fire in zsh after start hook runs and exec drops into interactive shell', async () => {
@@ -703,7 +982,7 @@ describe('wrapper → ouijit-hook → hook server (end-to-end)', () => {
     );
 
     await waitForIpc();
-    expect(mockSend).toHaveBeenCalledWith('claude-hook-status', 'pty-e2e-zsh-hook', 'thinking');
+    expect(mockSend).toHaveBeenCalledWith('agent-hook-status', 'pty-e2e-zsh-hook', 'thinking');
   });
 });
 
@@ -848,5 +1127,243 @@ describe('buildVmHookSettings', () => {
       expect(cmd).not.toContain('CLAUDE_PROJECT_DIR');
       expect(cmd).not.toContain('.config/Ouijit');
     }
+  });
+});
+
+// ── buildVmCodexConfig ───────────────────────────────────────────────
+
+describe('buildVmCodexConfig', () => {
+  test('wires notify + the four status hooks via $HOME/ouijit-hook and omits the CLI reference', () => {
+    const toml = buildVmCodexConfig();
+    expect(toml).toContain('notify = ["bash", "-c", "$HOME/ouijit-hook status status=ready"]');
+    expect(toml).toMatch(
+      /hooks\.UserPromptSubmit = \[\{hooks=\[\{type="command",command="\$HOME\/ouijit-hook status status=thinking"\}\]\}\]/,
+    );
+    expect(toml).toMatch(/hooks\.PostToolUse = .+status=thinking/);
+    expect(toml).toMatch(/hooks\.Stop = .+status=ready/);
+    expect(toml).toMatch(/hooks\.PermissionRequest = .+status=ready/);
+    // Codex skips async hooks today ("async hooks are not supported yet")
+    expect(toml).not.toContain('async');
+    // Sandbox must not get the ouijit CLI reference (lateral-movement concern)
+    expect(toml).not.toContain('developer_instructions');
+    expect(toml).not.toContain('.config/Ouijit');
+  });
+
+  test('the embedded notify array is valid JSON', () => {
+    const match = buildVmCodexConfig().match(/notify = (\[.+\])/);
+    expect(match).not.toBeNull();
+    const notify = JSON.parse(match![1]) as string[];
+    expect(notify).toEqual(['bash', '-c', '$HOME/ouijit-hook status status=ready']);
+  });
+});
+
+// ── buildVmCodexTrustState ───────────────────────────────────────────
+
+describe('buildVmCodexTrustState', () => {
+  test('emits a trusted_hash line per event keyed off the VM config path with $HOME literal', () => {
+    const toml = buildVmCodexTrustState();
+    // $HOME stays literal — the unquoted heredoc in lima/spawn expands it at write time.
+    for (const event of ['user_prompt_submit', 'post_tool_use', 'stop', 'permission_request']) {
+      const re = new RegExp(
+        `hooks\\.state\\."\\$HOME/\\.codex/config\\.toml:${event}:0:0"\\.trusted_hash = "sha256:[0-9a-f]{64}"`,
+      );
+      expect(toml).toMatch(re);
+    }
+  });
+});
+
+// ── PI_WRAPPER constant ──────────────────────────────────────────────
+
+describe('PI_WRAPPER', () => {
+  test('resolves real pi and re-exports wrapper dir on PATH', () => {
+    expect(PI_WRAPPER).toContain('WRAPPER_DIR=');
+    expect(PI_WRAPPER).toContain('REAL_BIN=');
+    expect(PI_WRAPPER).toContain('export PATH="$WRAPPER_DIR:$CLEAN_PATH"');
+  });
+
+  test('uses --append-system-prompt for the CLI reference (Pi has no `-c` overrides)', () => {
+    expect(PI_WRAPPER).toContain('--append-system-prompt "$(cat "$REFERENCE_FILE" 2>/dev/null)"');
+    expect(PI_WRAPPER).not.toMatch(/-c '[a-z_]+=/);
+  });
+
+  test('loads the extension via --extension and bridges OUIJIT_HOOK_BIN', () => {
+    expect(PI_WRAPPER).toMatch(/OUIJIT_HOOK_BIN="\$HOOK_BIN" exec "\$REAL_BIN" \\/);
+    expect(PI_WRAPPER).toContain('--extension "$EXTENSION_FILE"');
+    expect(PI_WRAPPER).toContain('HOOK_BIN="$HOME/.config/Ouijit/bin/ouijit-hook"');
+    expect(PI_WRAPPER).toContain('EXTENSION_FILE="$HOME/.config/Ouijit/pi/ouijit-extension.ts"');
+  });
+
+  test('falls through with just --append-system-prompt when OUIJIT_API_URL is unset', () => {
+    expect(PI_WRAPPER).toContain('if [ -z "$OUIJIT_API_URL" ]; then');
+    expect(PI_WRAPPER).toContain('exec "$REAL_BIN" --append-system-prompt "$(cat "$REFERENCE_FILE" 2>/dev/null)" "$@"');
+    // Fallthrough must not carry the extension or hook env var.
+    const fallthroughLine = PI_WRAPPER.split('\n').find(
+      (l) => l.includes('exec "$REAL_BIN" --append-system-prompt') && !l.endsWith('\\'),
+    );
+    expect(fallthroughLine).toBeDefined();
+    expect(fallthroughLine).not.toContain('--extension');
+    expect(fallthroughLine).not.toContain('OUIJIT_HOOK_BIN');
+  });
+
+  describe('subcommand passthrough (issue #177)', () => {
+    // Render PI_WRAPPER to a temp wrapper dir, plant a stub `pi` in a
+    // separate dir so CLEAN_PATH (which strips the wrapper dir) can still
+    // resolve it. The stub appends its argv to a log file, one per line.
+    const runWrapper = (args: string[], extraEnv: Record<string, string> = {}) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-wrapper-test-'));
+      const wrapperDir = path.join(root, 'wrapper');
+      const stubDir = path.join(root, 'stub');
+      fs.mkdirSync(wrapperDir);
+      fs.mkdirSync(stubDir);
+      const argvLog = path.join(root, 'argv.log');
+      fs.writeFileSync(path.join(wrapperDir, 'pi'), PI_WRAPPER, { mode: 0o755 });
+      fs.writeFileSync(
+        path.join(stubDir, 'pi'),
+        `#!/bin/bash\nfor a in "$@"; do printf '%s\\n' "$a" >> "${argvLog}"; done\n`,
+        { mode: 0o755 },
+      );
+      try {
+        const result = execFileSync(path.join(wrapperDir, 'pi'), args, {
+          env: {
+            PATH: `${wrapperDir}:${stubDir}:/usr/bin:/bin`,
+            HOME: root,
+            ...extraEnv,
+          },
+          encoding: 'utf8',
+        });
+        const argv = fs.existsSync(argvLog) ? fs.readFileSync(argvLog, 'utf8').replace(/\n$/, '').split('\n') : [];
+        return { argv, stdout: result };
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    };
+
+    test('`pi update` passes through with no injection', () => {
+      const { argv } = runWrapper(['update'], { OUIJIT_API_URL: 'http://stub' });
+      expect(argv).toEqual(['update']);
+    });
+
+    test('`pi install foo` passes through with no injection', () => {
+      const { argv } = runWrapper(['install', 'foo'], { OUIJIT_API_URL: 'http://stub' });
+      expect(argv).toEqual(['install', 'foo']);
+    });
+
+    test('all known subcommands (install/remove/uninstall/update/list/config) pass through clean', () => {
+      for (const sub of ['install', 'remove', 'uninstall', 'update', 'list', 'config']) {
+        const { argv } = runWrapper([sub], { OUIJIT_API_URL: 'http://stub' });
+        expect(argv, `subcommand ${sub} should pass through unchanged`).toEqual([sub]);
+      }
+    });
+
+    test('leading flags do not get mistaken for a subcommand', () => {
+      // `pi --version` is not a known subcommand → falls through to injection.
+      const { argv } = runWrapper(['--version'], { OUIJIT_API_URL: 'http://stub' });
+      expect(argv).toContain('--append-system-prompt');
+      expect(argv).toContain('--extension');
+      expect(argv).toContain('--version');
+    });
+
+    test('bare `pi` (no args) still gets --append-system-prompt and --extension', () => {
+      const { argv } = runWrapper([], { OUIJIT_API_URL: 'http://stub' });
+      expect(argv).toContain('--append-system-prompt');
+      expect(argv).toContain('--extension');
+    });
+
+    test('`pi <message>` (non-subcommand first arg) still gets injection', () => {
+      const { argv } = runWrapper(['hello world'], { OUIJIT_API_URL: 'http://stub' });
+      expect(argv).toContain('--append-system-prompt');
+      expect(argv).toContain('--extension');
+      expect(argv).toContain('hello world');
+    });
+
+    test('subcommand passthrough applies even when OUIJIT_API_URL is unset', () => {
+      const { argv } = runWrapper(['update']);
+      expect(argv).toEqual(['update']);
+    });
+  });
+});
+
+// ── PI_EXTENSION constant ────────────────────────────────────────────
+
+describe('PI_EXTENSION', () => {
+  test('is a TypeScript module with a default-export factory', () => {
+    expect(PI_EXTENSION).toMatch(/export default async \(pi: \w+\) =>/);
+  });
+
+  test('subscribes agent_start → thinking and agent_end → ready exactly once each', () => {
+    expect(PI_EXTENSION.match(/pi\.on\('agent_start'/g)).toHaveLength(1);
+    expect(PI_EXTENSION.match(/pi\.on\('agent_end'/g)).toHaveLength(1);
+    expect(PI_EXTENSION).not.toContain("pi.on('turn_end'");
+    expect(PI_EXTENSION).toContain("ping('thinking')");
+    expect(PI_EXTENSION).toContain("ping('ready')");
+  });
+
+  test('no-ops when OUIJIT_HOOK_BIN is unset (safe outside Ouijit)', () => {
+    expect(PI_EXTENSION).toMatch(/const hookBin = process\.env\.OUIJIT_HOOK_BIN/);
+    expect(PI_EXTENSION).toMatch(/if \(!hookBin\) return/);
+  });
+
+  test('shells out to ouijit-hook via pi.exec with a timeout and swallows errors', () => {
+    expect(PI_EXTENSION).toMatch(/pi\.exec\(hookBin, \['status', .* \{ timeout: 2000 \}\)/);
+    expect(PI_EXTENSION).toContain('.catch(() => {})');
+  });
+
+  test('pings ready once per prompt regardless of turn count when the factory runs', async () => {
+    // agent_* events fire once per prompt, so a multi-turn prompt should
+    // still produce exactly one 'ready' ping.
+    const handlers: Record<string, () => void> = {};
+    const pings: string[] = [];
+    const pi = {
+      on: (event: string, handler: () => void) => {
+        handlers[event] = handler;
+      },
+      exec: async (_cmd: string, args: string[]) => {
+        pings.push(args[1].replace('status=', ''));
+      },
+    };
+    const factory = compilePiExtension(PI_EXTENSION);
+    process.env.OUIJIT_HOOK_BIN = '/fake/ouijit-hook';
+    try {
+      await factory(pi);
+
+      // One prompt, three internal turns.
+      handlers.agent_start();
+      handlers.turn_start?.();
+      handlers.turn_end?.();
+      handlers.turn_start?.();
+      handlers.turn_end?.();
+      handlers.turn_start?.();
+      handlers.turn_end?.();
+      handlers.agent_end();
+
+      expect(pings).toEqual(['thinking', 'ready']);
+    } finally {
+      delete process.env.OUIJIT_HOOK_BIN;
+    }
+  });
+});
+
+/** Strips type annotations from the PI_EXTENSION TS string into a runnable factory. */
+function compilePiExtension(src: string): (pi: unknown) => Promise<void> {
+  const transpiled = ts.transpileModule(src, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  const moduleExports: { exports: { default?: unknown } } = { exports: {} };
+  new Function('exports', 'module', 'process', transpiled)(moduleExports.exports, moduleExports, process);
+  return moduleExports.exports.default as (pi: unknown) => Promise<void>;
+}
+
+// ── buildVmPiExtension ───────────────────────────────────────────────
+
+describe('buildVmPiExtension', () => {
+  test('matches the host-side extension exactly', () => {
+    expect(buildVmPiExtension()).toBe(PI_EXTENSION);
+  });
+
+  test('omits any reference to the host-only CLI reference file', () => {
+    // Lateral-movement: agent in sandbox must not get the CLI.
+    const ext = buildVmPiExtension();
+    expect(ext).not.toContain('ouijit-cli-reference');
+    expect(ext).not.toContain('.config/Ouijit');
   });
 });

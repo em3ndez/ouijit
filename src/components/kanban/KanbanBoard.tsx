@@ -17,14 +17,17 @@ import { arrayMove } from '@dnd-kit/sortable';
 import { useProjectStore } from '../../stores/projectStore';
 import { useTerminalStore } from '../../stores/terminalStore';
 import type { TaskWithWorkspace, TaskStatus, HookType } from '../../types';
-import { addProjectTerminal, closeProjectTerminal } from '../terminal/terminalActions';
+import { addProjectTerminal } from '../terminal/terminalActions';
+import { beginTransition, bulkTransitionTasks, surfaceStartWarnings } from '../../services/taskStartService';
+import { completeTask } from '../../services/taskCompletion';
 import { KanbanColumn } from './KanbanColumn';
 import { BulkActionBar } from './BulkActionBar';
+import { OnboardingPanel } from './OnboardingPanel';
 import { focusKanbanAddInput } from './KanbanAddInput';
+import { useAppStore } from '../../stores/appStore';
 import { HookConfigDialog } from '../dialogs/HookConfigDialog';
 import { CombinedHookConfigDialog } from '../dialogs/CombinedHookConfigDialog';
 import { MissingWorktreeDialog } from '../dialogs/MissingWorktreeDialog';
-import { RunHookDialog, type RunHookResult } from '../dialogs/RunHookDialog';
 import { Icon } from '../terminal/Icon';
 import { buildChainMap, isDescendantOf } from '../../utils/taskChain';
 import log from 'electron-log/renderer';
@@ -37,6 +40,7 @@ const COLUMNS: { status: TaskStatus; label: string }[] = [
   { status: 'in_review', label: 'In Review' },
   { status: 'done', label: 'Done' },
 ];
+
 const COLUMN_IDS: Set<string> = new Set(COLUMNS.map((c) => c.status));
 const TRASH_ID = 'trash-zone';
 
@@ -64,15 +68,12 @@ interface KanbanBoardProps {
 
 export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
   const storeTasks = useProjectStore((s) => s.tasks);
+  const startingTaskNumbers = useProjectStore((s) => s.startingTaskNumbers);
   const [activeTask, setActiveTask] = useState<TaskWithWorkspace | null>(null);
   const activeBadgeDrag = useProjectStore((s) => s.activeBadgeDrag);
-  const [configuredHooks, setConfiguredHooks] = useState<Record<string, boolean>>({});
-  const [runHookDialog, setRunHookDialog] = useState<{
-    hookType: HookType;
-    hook: any;
-    task: TaskWithWorkspace;
-    newStatus: TaskStatus;
-  } | null>(null);
+  // Project-scoped config is loaded once by ProjectViewReact; we just subscribe.
+  const configuredHooks = useProjectStore((s) => s.configuredHooks);
+  const sandboxAvailable = useProjectStore((s) => s.sandboxAvailable);
   const [hookDialog, setHookDialog] = useState<
     | { mode: 'single'; hookType: HookType; existingHook?: any }
     | { mode: 'combined'; start?: any; continue?: any }
@@ -83,14 +84,6 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
     branchExists: boolean;
     resolve: (action: 'recover' | null) => void;
   } | null>(null);
-  const [settingUpTaskNumber, setSettingUpTaskNumber] = useState<number | null>(null);
-  const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
-      mountedRef.current = false;
-    },
-    [],
-  );
 
   /**
    * Check if a task's worktree exists on disk. If missing, prompt the user to recover it.
@@ -132,21 +125,34 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
     [projectPath],
   );
 
-  // Load which hooks are configured
-  useEffect(() => {
-    window.api.hooks.get(projectPath).then((hooks) => {
-      const configured: Record<string, boolean> = {};
-      for (const key of Object.keys(hooks)) {
-        if (hooks[key as HookType]) configured[key] = true;
-      }
-      setConfiguredHooks(configured);
-    });
-  }, [projectPath]);
+  // Project config is owned by projectStore; loaded once per project by
+  // ProjectViewReact, and refreshed by HookList / this board's hook-dialog
+  // close handler whenever a hook is added. No on-mount refetch needed.
+  const markEditorHookConfigured = useCallback(() => {
+    useProjectStore.getState().markHookConfigured('editor');
+  }, []);
 
-  // Local task state for drag preview — synced from store, mutated during drag
-  const chainMap = useMemo(() => buildChainMap(storeTasks), [storeTasks]);
+  // Local task state for drag preview — synced from store, mutated during drag.
+  // chainMap depends only on parent relations, but `storeTasks` identity churns
+  // on every task edit (name, status, order). Memoize on a content fingerprint
+  // of just (taskNumber → parentTaskNumber) so the Map identity stays stable
+  // across reorders, status changes, and renames — and memoized cards keep
+  // their memo intact instead of re-rendering on every unrelated task tweak.
+  const chainFingerprint = useMemo(
+    () =>
+      storeTasks
+        .map((t) => `${t.taskNumber}:${t.parentTaskNumber ?? ''}`)
+        .sort()
+        .join('|'),
+    [storeTasks],
+  );
+  const chainMap = useMemo(
+    () => buildChainMap(storeTasks),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: rebuild only when parent relations change
+    [chainFingerprint],
+  );
   const [items, setItems] = useState<Record<string, TaskWithWorkspace[]>>({});
-  const originalStatusRef = useRef<string | null>(null);
+  const originalStatusRef = useRef<TaskStatus | null>(null);
 
   // Sync from store when not dragging
   useEffect(() => {
@@ -168,7 +174,8 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
   }, [projectPath]);
 
   // Hotkeys
-  const hasOpenDialog = !!(runHookDialog || hookDialog || missingWorktreeDialog);
+  const runHookActive = useProjectStore((s) => s.runHookQueue.length > 0);
+  const hasOpenDialog = !!(runHookActive || hookDialog || missingWorktreeDialog);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -177,10 +184,9 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
         if (selectedTaskNumbers.size > 0) {
           e.preventDefault();
           clearSelection();
-          return; // First Escape deselects; second closes board
         }
-        e.preventDefault();
-        onHide();
+        // Otherwise let Escape fall through — board/stack toggling is owned by
+        // Cmd/Ctrl+T, never Escape, so it doesn't fight with form-level resets.
         return;
       }
       const mod = isMac ? e.metaKey : e.ctrlKey;
@@ -191,17 +197,21 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
     };
     document.addEventListener('keydown', handler, true);
     return () => document.removeEventListener('keydown', handler, true);
-  }, [onHide, hasOpenDialog]);
+  }, [hasOpenDialog]);
 
-  // Track Option/Alt key for showing standalone badges
+  // Track Option/Alt (for standalone badge display) and Shift (for done-hook
+  // skip on drag-to-done) keys. Both are reset on blur so an external focus
+  // change doesn't leave the modifier latched.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (useProjectStore.getState().optionKeyHeld !== e.altKey) {
-        useProjectStore.setState({ optionKeyHeld: e.altKey });
-      }
+      const state = useProjectStore.getState();
+      if (state.optionKeyHeld !== e.altKey) useProjectStore.setState({ optionKeyHeld: e.altKey });
+      if (state.shiftKeyHeld !== e.shiftKey) useProjectStore.setState({ shiftKeyHeld: e.shiftKey });
     };
     const onBlur = () => {
-      if (useProjectStore.getState().optionKeyHeld) useProjectStore.setState({ optionKeyHeld: false });
+      const state = useProjectStore.getState();
+      if (state.optionKeyHeld) useProjectStore.setState({ optionKeyHeld: false });
+      if (state.shiftKeyHeld) useProjectStore.setState({ shiftKeyHeld: false });
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKey);
@@ -210,7 +220,7 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKey);
       window.removeEventListener('blur', onBlur);
-      useProjectStore.setState({ optionKeyHeld: false });
+      useProjectStore.setState({ optionKeyHeld: false, shiftKeyHeld: false });
     };
   }, []);
 
@@ -220,16 +230,26 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
     }),
   );
 
+  // O(1) reverse lookup for findContainer. `items` only changes when a card
+  // actually crosses a column (or when the store syncs); dnd-kit's onDragOver
+  // fires continuously during drag, so doing this once per items mutation
+  // instead of scanning every column on every drag tick is a clear win as
+  // the task list grows.
+  const taskStatusByNumber = useMemo(() => {
+    const lookup = new Map<number, TaskStatus>();
+    for (const [status, tasks] of Object.entries(items)) {
+      for (const t of tasks) lookup.set(t.taskNumber, status as TaskStatus);
+    }
+    return lookup;
+  }, [items]);
+
   const findContainer = useCallback(
     (id: string): TaskStatus | null => {
       if (COLUMN_IDS.has(id)) return id as TaskStatus;
       const taskNum = parseInt(id.replace('task-', ''), 10);
-      for (const [status, tasks] of Object.entries(items)) {
-        if (tasks.some((t) => t.taskNumber === taskNum)) return status as TaskStatus;
-      }
-      return null;
+      return taskStatusByNumber.get(taskNum) ?? null;
     },
-    [items],
+    [taskStatusByNumber],
   );
 
   const [showTrash, setShowTrash] = useState(false);
@@ -237,7 +257,9 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
   const overTrashRef = useRef(false);
   const trashRef = useRef<HTMLDivElement>(null);
 
-  // Track pointer proximity to right edge during drag, and whether pointer is over the trash zone
+  // Track pointer proximity to right edge during drag, and whether pointer is over the trash zone.
+  // Coalesce pointermove processing to one tick per animation frame — pointer events fire on every
+  // pixel during a drag and we don't need higher resolution than the display.
   useEffect(() => {
     if (!activeTask || activeBadgeDrag) {
       setShowTrash(false);
@@ -245,15 +267,18 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
       return;
     }
     const threshold = 200;
-    const onMove = (e: PointerEvent) => {
-      const distFromRight = window.innerWidth - e.clientX;
+    let rafId: number | null = null;
+    let lastX = 0;
+    let lastY = 0;
+    const flush = () => {
+      rafId = null;
+      const distFromRight = window.innerWidth - lastX;
       setShowTrash(distFromRight < threshold);
 
       const el = trashRef.current;
       if (el) {
         const rect = el.getBoundingClientRect();
-        const isOver =
-          e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+        const isOver = lastX >= rect.left && lastX <= rect.right && lastY >= rect.top && lastY <= rect.bottom;
         overTrashRef.current = isOver;
         setOverTrash(isOver);
       } else {
@@ -261,8 +286,16 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
         setOverTrash(false);
       }
     };
+    const onMove = (e: PointerEvent) => {
+      lastX = e.clientX;
+      lastY = e.clientY;
+      if (rafId == null) rafId = requestAnimationFrame(flush);
+    };
     window.addEventListener('pointermove', onMove);
-    return () => window.removeEventListener('pointermove', onMove);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      if (rafId != null) cancelAnimationFrame(rafId);
+    };
   }, [activeTask, activeBadgeDrag]);
 
   // Track multi-drag: task numbers being dragged together (null = single drag)
@@ -389,16 +422,14 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
         setActiveTask(null);
         if (multiDragTasks) {
           await Promise.allSettled(multiDragTasks.map((n) => window.api.task.trash(projectPath, n)));
-          if (!mountedRef.current) return;
           useProjectStore.getState().loadTasks(projectPath);
           useProjectStore.getState().clearSelection();
-          useProjectStore.getState().addToast(`Deleted ${multiDragTasks.length} tasks`, 'success');
+          useProjectStore.getState().addToast(`Moved ${multiDragTasks.length} tasks to trash`, 'success');
         } else {
           const taskNum = parseInt(activeId.replace('task-', ''), 10);
           await window.api.task.trash(projectPath, taskNum);
-          if (!mountedRef.current) return;
           useProjectStore.getState().loadTasks(projectPath);
-          useProjectStore.getState().addToast('Task deleted', 'success');
+          useProjectStore.getState().addToast('Task moved to trash', 'success');
         }
         return;
       }
@@ -422,13 +453,7 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
       // ── Multi-drag: move all selected tasks to the target column ───
       if (multiDragTasks && multiDragTasks.length > 1) {
         setActiveTask(null);
-        const newStatus = finalContainer as TaskStatus;
-        await Promise.allSettled(multiDragTasks.map((n) => window.api.task.setStatus(projectPath, n, newStatus)));
-        if (!mountedRef.current) return;
-        useProjectStore.getState().loadTasks(projectPath);
-        useProjectStore.getState().clearSelection();
-        const label = { todo: 'To Do', in_progress: 'In Progress', in_review: 'In Review', done: 'Done' }[newStatus];
-        useProjectStore.getState().addToast(`Moved ${multiDragTasks.length} tasks to ${label}`, 'success');
+        void bulkTransitionTasks(projectPath, multiDragTasks, finalContainer as TaskStatus);
         return;
       }
 
@@ -456,71 +481,69 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
 
       const newStatus = finalContainer as TaskStatus;
 
+      // Done is its own lifecycle: snapshot existing task terminals, spawn the
+      // done-hook terminal (if configured), close the snapshot, persist status.
+      // All three entry points (kanban, terminal Close Task menu, CLI) funnel
+      // through completeTask so they behave identically. Shift-drag skips the
+      // configured done hook for this one transition.
+      if (newStatus === 'done' && origStatus && origStatus !== newStatus) {
+        if (draggedTask.worktreePath) {
+          const wtPath = await ensureWorktreeExists(draggedTask);
+          if (!wtPath) {
+            setActiveTask(null);
+            return;
+          }
+          draggedTask = { ...draggedTask, worktreePath: wtPath };
+        }
+        // Plain drop prompts with the Done dialog (like every other column);
+        // shift-drag skips the hook outright.
+        const skipHook = useProjectStore.getState().shiftKeyHeld;
+        setActiveTask(null);
+        await completeTask({
+          projectPath,
+          task: draggedTask,
+          targetIndex,
+          hookControl: skipHook ? { mode: 'skip' } : undefined,
+        });
+        return;
+      }
+
       // Persist status + position optimistically BEFORE async work (worktree creation, etc.)
       // This updates the store so that when we clear activeTask the effect re-syncs to the new position.
       await useProjectStore.getState().moveTask(projectPath, activeTaskNum, finalContainer, targetIndex);
-      if (!mountedRef.current) return;
       setActiveTask(null);
 
-      // Create worktree BEFORE moving (while task is still todo)
-      if (newStatus === 'in_progress' && !draggedTask.worktreePath) {
-        setSettingUpTaskNumber(draggedTask.taskNumber);
-        const startResult = await window.api.task.start(projectPath, draggedTask.taskNumber);
-        if (!mountedRef.current) return;
-        setSettingUpTaskNumber(null);
-        if (!startResult.success) {
-          useProjectStore.getState().addToast(startResult.error || 'Failed to create worktree', 'error');
-        } else if (startResult.worktreePath) {
-          // Update the captured task so executeTransition uses the existing worktree
-          draggedTask = {
-            ...draggedTask,
-            worktreePath: startResult.worktreePath,
-            branch: startResult.task?.branch || draggedTask.branch,
-          };
-        }
-      }
-
-      // Verify existing worktree is still on disk; offer recovery if missing
+      // For an existing worktree that may have been deleted externally, prompt
+      // to recover it before kicking off a transition. This dialog still lives
+      // in the kanban because it's tied to the recovery flow.
       if (draggedTask.worktreePath) {
         const wtPath = await ensureWorktreeExists(draggedTask);
-        if (!mountedRef.current) return;
         if (!wtPath) return;
         draggedTask = { ...draggedTask, worktreePath: wtPath };
       }
 
-      await useProjectStore.getState().loadTasks(projectPath);
-      if (!mountedRef.current) return;
-
-      // Show hook dialog if configured for this transition
-      if (origStatus && origStatus !== finalContainer) {
-        const hooks = await window.api.hooks.get(projectPath);
-        if (!mountedRef.current) return;
-        let hookType: HookType | null = null;
-        let hook = null;
-
-        if (newStatus === 'in_progress') {
-          hookType = origStatus === 'todo' ? 'start' : 'continue';
-          hook = hooks[hookType] ?? null;
-        } else if (newStatus === 'in_review') {
-          hookType = 'review';
-          hook = hooks.review ?? null;
-        } else if (newStatus === 'done') {
-          hookType = 'cleanup';
-          hook = hooks.cleanup ?? null;
-        }
-
-        if (hook && hookType) {
-          setRunHookDialog({ hookType, hook, task: draggedTask, newStatus });
-        }
+      // Hand off the rest of the lifecycle (worktree creation if needed, hook
+      // prompt, terminal spawn) to the service. Returns immediately — the
+      // service runs to completion regardless of whether this component stays
+      // mounted.
+      if (!origStatus || origStatus === finalContainer) {
+        // Pure reorder, no status change — nothing more to do.
+        return;
       }
+      beginTransition(projectPath, {
+        origStatus,
+        newStatus,
+        task: draggedTask,
+        onForegroundOpen: onHide,
+      });
     },
-    [activeTask, chainMap, storeTasks, items, findContainer, projectPath, ensureWorktreeExists],
+    [activeTask, chainMap, storeTasks, items, findContainer, projectPath, ensureWorktreeExists, onHide],
   );
 
   // Task CRUD
   const handleAddTask = useCallback(
-    async (name: string) => {
-      await window.api.task.create(projectPath, name);
+    async (name: string, description?: string) => {
+      await window.api.task.create(projectPath, name, description);
       useProjectStore.getState().loadTasks(projectPath);
     },
     [projectPath],
@@ -568,6 +591,7 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
           useProjectStore.getState().addToast(startResult.error || 'Failed to start task', 'error');
           return;
         }
+        surfaceStartWarnings(startResult.warnings);
         useProjectStore.getState().loadTasks(projectPath);
         await addProjectTerminal(projectPath, undefined, {
           existingWorktree: {
@@ -613,20 +637,6 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
 
   const selectedTaskCount = useProjectStore((s) => s.selectedTaskNumbers.size);
 
-  const handleRunHookClose = useCallback(
-    async (result: RunHookResult | null) => {
-      const dialog = runHookDialog;
-      setRunHookDialog(null);
-      if (!dialog) return;
-
-      if (result) {
-        await executeTransition(projectPath, dialog.task, dialog.newStatus, result, onHide);
-      }
-      // Cancelled — do nothing, task already moved in the board
-    },
-    [runHookDialog, projectPath, onHide],
-  );
-
   const handleConfigureHook = useCallback(
     async (hookTypes: HookType[]) => {
       const hooks = await window.api.hooks.get(projectPath);
@@ -647,14 +657,8 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
 
   const handleHookDialogClose = useCallback(() => {
     setHookDialog(null);
-    // Refresh configured hooks
-    window.api.hooks.get(projectPath).then((hooks) => {
-      const configured: Record<string, boolean> = {};
-      for (const key of Object.keys(hooks)) {
-        if (hooks[key as HookType]) configured[key] = true;
-      }
-      setConfiguredHooks(configured);
-    });
+    // Refresh in the store so terminal headers and column badges agree.
+    useProjectStore.getState().loadProjectConfig(projectPath);
   }, [projectPath]);
 
   return (
@@ -688,14 +692,6 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
             onClose={missingWorktreeDialog.resolve}
           />
         )}
-        {runHookDialog && (
-          <RunHookDialog
-            hookType={runHookDialog.hookType}
-            hook={runHookDialog.hook}
-            projectPath={projectPath}
-            onClose={handleRunHookClose}
-          />
-        )}
         {hookDialog?.mode === 'single' && (
           <HookConfigDialog
             projectPath={projectPath}
@@ -712,12 +708,17 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
             onClose={handleHookDialogClose}
           />
         )}
+        <OnboardingPanel
+          projectPath={projectPath}
+          onConfigureCliAgent={() => handleConfigureHook(['start', 'continue'])}
+          onOpenHelp={() => useAppStore.getState().setHelpDialogOpen(true)}
+        />
         <div className="flex flex-1 min-h-0" style={{ overflowX: 'auto', overflowY: 'hidden' }}>
           {COLUMNS.map((col) => {
             const hookActive =
               (col.status === 'in_progress' && !!(configuredHooks.start || configuredHooks.continue)) ||
               (col.status === 'in_review' && !!configuredHooks.review) ||
-              (col.status === 'done' && !!configuredHooks.cleanup);
+              (col.status === 'done' && !!configuredHooks.done);
 
             return (
               <KanbanColumn
@@ -727,7 +728,7 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
                 tasks={items[col.status] ?? []}
                 projectPath={projectPath}
                 chainMap={chainMap}
-                settingUpTaskNumber={settingUpTaskNumber}
+                settingUpTaskNumbers={startingTaskNumbers}
                 onAddTask={col.status === 'todo' ? handleAddTask : undefined}
                 onRenameTask={handleRenameTask}
                 onUpdateDescription={handleUpdateDescription}
@@ -736,6 +737,9 @@ export function KanbanBoard({ projectPath, onHide }: KanbanBoardProps) {
                 onSelect={handleCardSelect}
                 onConfigureHook={handleConfigureHook}
                 hasConfiguredHook={hookActive}
+                sandboxAvailable={sandboxAvailable}
+                hasEditorHook={!!configuredHooks.editor}
+                onEditorHookConfigured={markEditorHookConfigured}
               />
             );
           })}
@@ -818,76 +822,7 @@ const KanbanTrashZone = forwardRef<HTMLDivElement, { visible: boolean; isOver: b
       <div className="[&>svg]:w-6 [&>svg]:h-6">
         <Icon name="trash" />
       </div>
-      <span className="text-xs font-medium whitespace-nowrap">Delete</span>
+      <span className="text-xs font-medium whitespace-nowrap">Move to Trash</span>
     </div>
   );
 });
-
-// ── Column transition lifecycle ──────────────────────────────────────
-
-async function executeTransition(
-  projectPath: string,
-  task: TaskWithWorkspace,
-  newStatus: TaskStatus,
-  hookResult: RunHookResult | undefined,
-  onHide: () => void,
-): Promise<void> {
-  if (newStatus === 'in_progress' && hookResult) {
-    const runConfig = { name: 'Start', command: hookResult.command, source: 'custom' as const, priority: 0 };
-    if (!task.worktreePath) {
-      await addProjectTerminal(projectPath, runConfig, {
-        useWorktree: true,
-        worktreeName: task.name,
-        taskId: task.taskNumber,
-        sandboxed: hookResult.sandboxed,
-      });
-    } else {
-      await addProjectTerminal(projectPath, runConfig, {
-        existingWorktree: { path: task.worktreePath, branch: task.branch || '', createdAt: task.createdAt },
-        taskId: task.taskNumber,
-        sandboxed: hookResult.sandboxed,
-        skipAutoHook: true,
-      });
-    }
-    if (hookResult.foreground) onHide();
-  } else if (newStatus === 'in_review') {
-    if (hookResult && task.worktreePath) {
-      await addProjectTerminal(
-        projectPath,
-        { name: 'Review', command: hookResult.command, source: 'custom', priority: 0 },
-        {
-          existingWorktree: { path: task.worktreePath, branch: task.branch || '', createdAt: task.createdAt },
-          taskId: task.taskNumber,
-          skipAutoHook: true,
-          sandboxed: hookResult.sandboxed,
-          background: !hookResult.foreground,
-        },
-      );
-      if (hookResult.foreground) onHide();
-    }
-  } else if (newStatus === 'done') {
-    if (hookResult && task.worktreePath) {
-      await addProjectTerminal(
-        projectPath,
-        { name: 'Cleanup', command: hookResult.command, source: 'custom', priority: 0 },
-        {
-          existingWorktree: { path: task.worktreePath, branch: task.branch || '', createdAt: task.createdAt },
-          taskId: task.taskNumber,
-          skipAutoHook: true,
-          sandboxed: hookResult.sandboxed,
-          background: !hookResult.foreground,
-        },
-      );
-      if (hookResult.foreground) onHide();
-    }
-    // Close all terminals for this task
-    const store = useTerminalStore.getState();
-    const ptyIds = store.terminalsByProject[projectPath] ?? [];
-    for (const ptyId of [...ptyIds]) {
-      const display = store.displayStates[ptyId];
-      if (display?.taskId === task.taskNumber) {
-        closeProjectTerminal(ptyId);
-      }
-    }
-  }
-}

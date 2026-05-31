@@ -22,8 +22,30 @@ jobs:
       - run: npm rebuild better-sqlite3 --silent
       - run: npx vitest run --project unit
 
-  publish:
+  create-draft:
     needs: test
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create or reuse draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Draft for $TAG already exists, reusing."
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" \
+              --draft \
+              --generate-notes
+          fi
+
+  publish:
+    needs: create-draft
     permissions:
       contents: write
     strategy:
@@ -96,6 +118,12 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           BUILD_ARCH: ${{ matrix.arch }}
         run: npm run publish -- --arch="$BUILD_ARCH"
+
+      # -- Verify the DMG would pass Gatekeeper on a user's machine.
+      # Catches missing signing or notarization before the draft is promoted.
+      - name: Verify DMG signed + notarized
+        if: matrix.platform == 'darwin'
+        run: ./scripts/verify-dmg.sh
 
       # -- Cleanup -----------------------------------------------------------
       - name: Clean up signing artifacts

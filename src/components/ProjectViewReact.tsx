@@ -9,6 +9,7 @@ import { TerminalCanvas, syncCanvasWithTerminals } from './canvas/TerminalCanvas
 import { KanbanBoard } from './kanban/KanbanBoard';
 import { ProjectSettingsPanel } from './scripts/ProjectSettingsPanel';
 import { focusKanbanAddInput } from './kanban/KanbanAddInput';
+import { RunHookDialog } from './dialogs/RunHookDialog';
 import {
   addProjectTerminal,
   closeProjectTerminal,
@@ -16,6 +17,7 @@ import {
   spawnRunner,
 } from './terminal/terminalActions';
 import { terminalInstances, refreshAllTerminalGitStatus } from './terminal/terminalReact';
+import { useHookStatusListener } from '../hooks/useHookStatusListener';
 
 const isMac = navigator.platform.toLowerCase().includes('mac');
 const GIT_STATUS_PERIODIC_INTERVAL = 30000;
@@ -257,41 +259,42 @@ export function ProjectView() {
     });
   }, [projectPath]);
 
-  // Periodic git status refresh
+  // Load project-scoped config (sandbox availability + configured hooks) once.
+  // Terminal headers and kanban cards read this from the store instead of each
+  // making their own `lima.status` (subprocess spawn) + `hooks.get` IPC calls.
   useEffect(() => {
     if (!projectPath) return;
-    const interval = setInterval(() => {
-      refreshAllTerminalGitStatus(projectPath);
-    }, GIT_STATUS_PERIODIC_INTERVAL);
-    return () => clearInterval(interval);
+    useProjectStore.getState().loadProjectConfig(projectPath);
+  }, [projectPath]);
+
+  // Periodic git status refresh — pauses while the window is hidden so we
+  // don't keep spawning git subprocesses for a project the user isn't watching.
+  useEffect(() => {
+    if (!projectPath) return;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (interval != null || document.hidden) return;
+      interval = setInterval(() => {
+        refreshAllTerminalGitStatus(projectPath);
+      }, GIT_STATUS_PERIODIC_INTERVAL);
+    };
+    const stop = () => {
+      if (interval != null) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+    const onVisibility = () => (document.hidden ? stop() : start());
+    start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      stop();
+    };
   }, [projectPath]);
 
   // Hook status: register ongoing listener + seed existing terminals
-  useEffect(() => {
-    if (!projectPath) return;
-
-    // Ongoing listener for hook status events
-    const cleanup = window.api.claudeHooks.onStatus((ptyId, status) => {
-      const instance = terminalInstances.get(ptyId);
-      if (instance) {
-        instance.handleHookStatus(status as 'thinking' | 'ready');
-      }
-    });
-
-    // Seed existing terminals with current hook status
-    const terms = useTerminalStore.getState().terminalsByProject[projectPath] ?? [];
-    for (const ptyId of terms) {
-      const instance = terminalInstances.get(ptyId);
-      if (!instance) continue;
-      window.api.claudeHooks.getStatus(ptyId).then((hookStatus) => {
-        if (hookStatus?.status === 'thinking' && hookStatus.thinkingCount > 0) {
-          instance.handleHookStatus('thinking');
-        }
-      });
-    }
-
-    return cleanup;
-  }, [projectPath]);
+  useHookStatusListener(projectPath);
 
   // Plan detection: register listeners + seed existing terminals
   useEffect(() => {
@@ -370,6 +373,36 @@ export function ProjectView() {
           {!kanbanVisible && renderTerminals()}
         </>
       )}
+      <GlobalRunHookDialog />
     </div>
+  );
+}
+
+/**
+ * Hook prompt rendered at the project-view level so it survives toggling
+ * between the kanban board and terminal stack mid-flow. Concurrent hook
+ * requests queue up and are presented one at a time as a stepper.
+ */
+function GlobalRunHookDialog() {
+  const queue = useProjectStore((s) => s.runHookQueue);
+  const total = useProjectStore((s) => s.runHookQueueTotal);
+  const request = queue[0];
+  if (!request) return null;
+  // Position counts up as the queue drains: total is held fixed so the user
+  // sees "Hook 1 of 3" → "Hook 2 of 3" rather than the denominator shrinking.
+  const position = total - queue.length + 1;
+  return (
+    <RunHookDialog
+      key={request.id}
+      hookType={request.hookType}
+      hook={request.hook}
+      projectPath={request.projectPath}
+      taskName={request.task.name}
+      queuePosition={position}
+      queueTotal={total}
+      onClose={(result) => useProjectStore.getState().resolveRunHookRequest(request.id, result)}
+      onRunAll={(result) => useProjectStore.getState().runAllRunHookRequests(result)}
+      onSkipAll={() => useProjectStore.getState().skipAllRunHookRequests()}
+    />
   );
 }

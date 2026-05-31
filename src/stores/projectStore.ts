@@ -1,7 +1,62 @@
 import { create } from 'zustand';
-import type { TaskWithWorkspace, Script } from '../types';
+import type { TaskWithWorkspace, Script, ScriptHook, HookType, CliHookMode, TaskStatus } from '../types';
+import type { RunHookResult } from '../components/dialogs/RunHookDialog';
+import { useAppStore } from './appStore';
 
 export type TerminalLayout = 'stack' | 'canvas';
+
+export interface RunHookRequest {
+  id: number;
+  projectPath: string;
+  hookType: HookType;
+  hook: ScriptHook;
+  task: TaskWithWorkspace;
+  resolve: (result: RunHookResult | null) => void;
+}
+
+export interface PendingCliStart {
+  taskNumber: number;
+  worktreePath: string;
+  branch: string;
+  createdAt: string;
+  sandboxed: boolean;
+  /** Hook-control mode from the CLI flags; absent = default start-hook dialog. */
+  hookMode?: CliHookMode;
+  /** Custom command when hookMode is 'command'. */
+  hookCommand?: string;
+}
+
+/**
+ * A CLI-initiated in_progress/in_review transition awaiting a hook spawn. Queued
+ * like {@link PendingCliStart} when the user isn't viewing the project, and
+ * drained on navigation. Carries the full task and origStatus so the renderer
+ * can run the same beginTransition path a kanban drop would.
+ */
+export interface PendingCliTransition {
+  taskNumber: number;
+  origStatus: TaskStatus;
+  newStatus: TaskStatus;
+  task: TaskWithWorkspace;
+  /** Hook-control mode from the CLI flags; absent = default hook dialog. */
+  hookMode?: CliHookMode;
+  /** Custom command when hookMode is 'command'. */
+  hookCommand?: string;
+}
+
+/**
+ * A CLI-initiated done transition awaiting its lifecycle. Queued like
+ * {@link PendingCliStart} when a *bare* done (which shows the Done dialog) lands
+ * for a project the user isn't viewing, and drained on navigation. A done with
+ * explicit hook flags runs headlessly and is never queued.
+ */
+export interface PendingCliCompletion {
+  taskNumber: number;
+  task: TaskWithWorkspace;
+  /** Hook-control mode from the CLI flags; absent = default Done dialog. */
+  hookMode?: CliHookMode;
+  /** Custom command when hookMode is 'command'. */
+  hookCommand?: string;
+}
 
 interface ProjectStoreState {
   tasks: TaskWithWorkspace[];
@@ -13,6 +68,8 @@ interface ProjectStoreState {
   highlightedChainTask: number | null;
   detachHoverParent: number | null;
   optionKeyHeld: boolean;
+  /** True while Shift is held — shift-drag to the done column skips the done hook. */
+  shiftKeyHeld: boolean;
   activeBadgeDrag: number | null;
   badgeDragOverTask: number | null;
   activeModal: string | null;
@@ -26,6 +83,34 @@ interface ProjectStoreState {
     actionLabel?: string;
     onAction?: () => void;
   }>;
+  /** Tasks whose worktree creation is currently in flight. View-independent. */
+  startingTaskNumbers: Set<number>;
+  /**
+   * FIFO queue of pending hook prompts. The head (`[0]`) is the one currently
+   * shown; the rest wait their turn. Rendered globally so it survives view
+   * switches. Concurrent task starts (CLI / multi-select drags) each append a
+   * request rather than evicting the prior one.
+   */
+  runHookQueue: RunHookRequest[];
+  /**
+   * Count of hook prompts seen since the queue was last empty. Drives the
+   * "Hook N of M" stepper — `M` stays fixed as the queue drains so the
+   * position counts up instead of the total shrinking under the user.
+   */
+  runHookQueueTotal: number;
+  /** Queued CLI-initiated task starts awaiting the user to enter the project. */
+  pendingCliStarts: Record<string, PendingCliStart[]>;
+  pendingCliTransitions: Record<string, PendingCliTransition[]>;
+  pendingCliCompletions: Record<string, PendingCliCompletion[]>;
+  /**
+   * Project-scoped config used by terminal/kanban cards. Loaded once per project
+   * so we don't fan out N `lima.status` (subprocess spawn) + `hooks.get` calls
+   * across every visible card.
+   */
+  sandboxAvailable: boolean;
+  configuredHooks: Record<string, boolean>;
+  /** projectPath the config currently reflects; null = not loaded. */
+  configProjectPath: string | null;
   _version: number;
 }
 
@@ -70,14 +155,52 @@ interface ProjectStoreActions {
   loadTasks: (projectPath: string) => Promise<void>;
   /** Load scripts from IPC */
   loadScripts: (projectPath: string) => Promise<void>;
+  /**
+   * Load project-scoped config (sandbox availability + configured hooks) in a
+   * single pair of IPC calls. Replaces per-card fan-out where every kanban card
+   * and terminal header spawned its own limactl subprocess on mount.
+   */
+  loadProjectConfig: (projectPath: string) => Promise<void>;
+  /** Mark a hook as configured after the user saves one from a card dialog. */
+  markHookConfigured: (hookType: HookType) => void;
   /** Move a task with optimistic update and rollback */
   moveTask: (projectPath: string, taskNumber: number, newStatus: string, targetIndex: number) => Promise<void>;
+
+  /** Mark a task as starting (worktree being created). Does not depend on any view being mounted. */
+  markTaskStarting: (taskNumber: number) => void;
+  markTaskStartingDone: (taskNumber: number) => void;
+
+  /** Enqueue a hook-prompt dialog and return a promise that resolves with the user's choice. */
+  requestRunHook: (req: Omit<RunHookRequest, 'id' | 'resolve'>) => Promise<RunHookResult | null>;
+  /** Resolve one queued hook prompt with a result (or null for skip/cancel). */
+  resolveRunHookRequest: (id: number, result: RunHookResult | null) => void;
+  /** Resolve the head prompt with `headResult`, then run every remaining queued hook with its default command. */
+  runAllRunHookRequests: (headResult: RunHookResult) => void;
+  /** Skip the entire queue — resolve every pending hook prompt with null. */
+  skipAllRunHookRequests: () => void;
+
+  /** Queue a CLI-initiated start for a project the user isn't currently viewing. */
+  enqueueCliStart: (projectPath: string, start: PendingCliStart) => void;
+  /** Atomically drain all queued starts for a project. */
+  drainCliStarts: (projectPath: string) => PendingCliStart[];
+
+  /** Queue a CLI-initiated in_progress/in_review transition for a project the user isn't viewing. */
+  enqueueCliTransition: (projectPath: string, transition: PendingCliTransition) => void;
+  /** Atomically drain all queued transitions for a project. */
+  drainCliTransitions: (projectPath: string) => PendingCliTransition[];
+
+  /** Queue a CLI-initiated done transition for a project the user isn't viewing. */
+  enqueueCliCompletion: (projectPath: string, completion: PendingCliCompletion) => void;
+  /** Atomically drain all queued completions for a project. */
+  drainCliCompletions: (projectPath: string) => PendingCliCompletion[];
 }
 
 type ProjectStore = ProjectStoreState & ProjectStoreActions;
 
 let toastCounter = 0;
 let moveCounter = 0;
+let runHookRequestCounter = 0;
+let configLoadVersion = 0;
 
 export const useProjectStore = create<ProjectStore>()((set, get) => ({
   tasks: [],
@@ -89,12 +212,22 @@ export const useProjectStore = create<ProjectStore>()((set, get) => ({
   highlightedChainTask: null,
   detachHoverParent: null,
   optionKeyHeld: false,
+  shiftKeyHeld: false,
   activeBadgeDrag: null,
   badgeDragOverTask: null,
   activeModal: null,
   selectedTaskNumbers: new Set<number>(),
   selectionAnchor: null,
   toasts: [],
+  startingTaskNumbers: new Set<number>(),
+  runHookQueue: [],
+  runHookQueueTotal: 0,
+  pendingCliStarts: {},
+  pendingCliTransitions: {},
+  pendingCliCompletions: {},
+  sandboxAvailable: false,
+  configuredHooks: {},
+  configProjectPath: null,
   _version: 0,
 
   setTasks: (tasks) => {
@@ -169,6 +302,8 @@ export const useProjectStore = create<ProjectStore>()((set, get) => ({
   },
 
   resetForProject: () => {
+    // Unblock any services awaiting a hook prompt before we drop the queue.
+    for (const pending of get().runHookQueue) pending.resolve(null);
     set({
       tasks: [],
       kanbanVisible: false,
@@ -179,11 +314,18 @@ export const useProjectStore = create<ProjectStore>()((set, get) => ({
       highlightedChainTask: null,
       detachHoverParent: null,
       optionKeyHeld: false,
+      shiftKeyHeld: false,
       activeBadgeDrag: null,
       badgeDragOverTask: null,
       activeModal: null,
       selectedTaskNumbers: new Set<number>(),
       selectionAnchor: null,
+      startingTaskNumbers: new Set<number>(),
+      runHookQueue: [],
+      runHookQueueTotal: 0,
+      sandboxAvailable: false,
+      configuredHooks: {},
+      configProjectPath: null,
       _version: 0,
     });
   },
@@ -228,6 +370,7 @@ export const useProjectStore = create<ProjectStore>()((set, get) => ({
       const tasks = await window.api.task.getAll(projectPath);
       if (get()._version !== version) return;
       set({ tasks });
+      useAppStore.getState().updateProjectTaskCache(projectPath, tasks);
     } catch (err) {
       if (get()._version !== version) return;
       get().addToast(`Failed to load tasks: ${err instanceof Error ? err.message : String(err)}`, 'error');
@@ -241,6 +384,40 @@ export const useProjectStore = create<ProjectStore>()((set, get) => ({
     } catch (err) {
       get().addToast(`Failed to load scripts: ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
+  },
+
+  loadProjectConfig: async (projectPath) => {
+    // Version counter: a later call (e.g. user switched projects A → B while
+    // A's IPC was still in flight) bumps the version, so when A's responses
+    // arrive their `version !== configLoadVersion` check drops them.
+    // Otherwise stale A config could land under project B.
+    const version = ++configLoadVersion;
+    try {
+      const [status, hooks] = await Promise.all([
+        window.api.lima.status(projectPath),
+        window.api.hooks.get(projectPath),
+      ]);
+      if (version !== configLoadVersion) return;
+      const configured: Record<string, boolean> = {};
+      for (const key of Object.keys(hooks)) {
+        if (hooks[key as HookType]) configured[key] = true;
+      }
+      set({
+        sandboxAvailable: status.available,
+        configuredHooks: configured,
+        configProjectPath: projectPath,
+      });
+    } catch {
+      // Swallow — project config (sandbox availability + configured hooks) is
+      // a UX nicety; if IPC fails the cards just render with falsy defaults
+      // and the user retries the action.
+    }
+  },
+
+  markHookConfigured: (hookType) => {
+    const prev = get().configuredHooks;
+    if (prev[hookType]) return;
+    set({ configuredHooks: { ...prev, [hookType]: true } });
   },
 
   moveTask: async (projectPath, taskNumber, newStatus, targetIndex) => {
@@ -280,5 +457,109 @@ export const useProjectStore = create<ProjectStore>()((set, get) => ({
     } catch {
       rollbackOrReload();
     }
+  },
+
+  markTaskStarting: (taskNumber) => {
+    const next = new Set(get().startingTaskNumbers);
+    if (next.has(taskNumber)) return;
+    next.add(taskNumber);
+    set({ startingTaskNumbers: next });
+  },
+
+  markTaskStartingDone: (taskNumber) => {
+    const prev = get().startingTaskNumbers;
+    if (!prev.has(taskNumber)) return;
+    const next = new Set(prev);
+    next.delete(taskNumber);
+    set({ startingTaskNumbers: next });
+  },
+
+  requestRunHook: (req) =>
+    new Promise<RunHookResult | null>((resolve) => {
+      // Concurrent transitions (CLI / multi-select batch starts) each append a
+      // request. They are presented one at a time as a stepper instead of the
+      // newest evicting the prior one, so no start hook is silently dropped.
+      const id = ++runHookRequestCounter;
+      set((s) => ({
+        runHookQueue: [...s.runHookQueue, { ...req, id, resolve }],
+        runHookQueueTotal: s.runHookQueueTotal + 1,
+      }));
+    }),
+
+  resolveRunHookRequest: (id, result) => {
+    const queue = get().runHookQueue;
+    const target = queue.find((r) => r.id === id);
+    if (!target) return;
+    const next = queue.filter((r) => r.id !== id);
+    set({ runHookQueue: next, runHookQueueTotal: next.length === 0 ? 0 : get().runHookQueueTotal });
+    target.resolve(result);
+  },
+
+  runAllRunHookRequests: (headResult) => {
+    const queue = get().runHookQueue;
+    if (queue.length === 0) return;
+    const [head, ...rest] = queue;
+    set({ runHookQueue: [], runHookQueueTotal: 0 });
+    head.resolve(headResult);
+    // Remaining hooks run with their default command in the background — the
+    // user opted into a bulk action rather than reviewing each one.
+    for (const req of rest) {
+      req.resolve({ command: req.hook.command, sandboxed: false, foreground: false });
+    }
+  },
+
+  skipAllRunHookRequests: () => {
+    const queue = get().runHookQueue;
+    if (queue.length === 0) return;
+    set({ runHookQueue: [], runHookQueueTotal: 0 });
+    for (const req of queue) req.resolve(null);
+  },
+
+  enqueueCliStart: (projectPath, start) => {
+    const current = get().pendingCliStarts[projectPath] ?? [];
+    if (current.some((s) => s.taskNumber === start.taskNumber)) return;
+    set({
+      pendingCliStarts: { ...get().pendingCliStarts, [projectPath]: [...current, start] },
+    });
+  },
+
+  drainCliStarts: (projectPath) => {
+    const queued = get().pendingCliStarts[projectPath];
+    if (!queued || queued.length === 0) return [];
+    const { [projectPath]: _drained, ...rest } = get().pendingCliStarts;
+    set({ pendingCliStarts: rest });
+    return queued;
+  },
+
+  enqueueCliTransition: (projectPath, transition) => {
+    const current = get().pendingCliTransitions[projectPath] ?? [];
+    if (current.some((t) => t.taskNumber === transition.taskNumber)) return;
+    set({
+      pendingCliTransitions: { ...get().pendingCliTransitions, [projectPath]: [...current, transition] },
+    });
+  },
+
+  drainCliTransitions: (projectPath) => {
+    const queued = get().pendingCliTransitions[projectPath];
+    if (!queued || queued.length === 0) return [];
+    const { [projectPath]: _drained, ...rest } = get().pendingCliTransitions;
+    set({ pendingCliTransitions: rest });
+    return queued;
+  },
+
+  enqueueCliCompletion: (projectPath, completion) => {
+    const current = get().pendingCliCompletions[projectPath] ?? [];
+    if (current.some((c) => c.taskNumber === completion.taskNumber)) return;
+    set({
+      pendingCliCompletions: { ...get().pendingCliCompletions, [projectPath]: [...current, completion] },
+    });
+  },
+
+  drainCliCompletions: (projectPath) => {
+    const queued = get().pendingCliCompletions[projectPath];
+    if (!queued || queued.length === 0) return [];
+    const { [projectPath]: _drained, ...rest } = get().pendingCliCompletions;
+    set({ pendingCliCompletions: rest });
+    return queued;
   },
 }));

@@ -1,15 +1,23 @@
 import { Component, useCallback, useEffect, useState, type ErrorInfo, type ReactNode } from 'react';
 import { useIPCListeners } from './hooks/useIPCListeners';
 import { useAppStore } from './stores/appStore';
+import { useProjectStore } from './stores/projectStore';
 import { useExperimentalStore } from './stores/experimentalStore';
 import { TitleBar } from './components/TitleBarReact';
 import { Sidebar } from './components/SidebarReact';
 import { HomeView } from './components/HomeViewReact';
+import { GlobalSettingsPanel } from './components/GlobalSettingsPanel';
 import { ProjectView } from './components/ProjectViewReact';
 import { ToastContainer } from './components/ui/ToastContainer';
 import { NewProjectDialog } from './components/dialogs/NewProjectDialog';
+import { InitGitRepoDialog } from './components/dialogs/InitGitRepoDialog';
 import { WhatsNewDialog } from './components/dialogs/WhatsNewDialog';
+import { HelpDialog } from './components/dialogs/HelpDialog';
 import { installCaptureNavigator } from './capture/navigator';
+import { hydrateTerminalFont } from './components/terminal/terminalReact';
+import { hydrateNotificationSettings } from './utils/notifications';
+import { installSessionAutoSave } from './components/terminal/sessionSnapshot';
+import { useUIStore } from './stores/uiStore';
 import log from 'electron-log/renderer';
 import type { Project } from './types';
 
@@ -34,9 +42,9 @@ class ViewErrorBoundary extends Component<{ children: ReactNode }, { error: Erro
     if (this.state.error) {
       return (
         <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center">
+          <div className="text-center w-full max-w-[28rem]">
             <div className="text-sm text-red-400 font-mono mb-2">View crashed</div>
-            <div className="text-xs text-white/50 font-mono max-w-md break-all">{this.state.error.message}</div>
+            <div className="text-xs text-white/50 font-mono break-words">{this.state.error.message}</div>
             <button
               className="mt-4 px-3 py-1.5 text-xs bg-white/10 rounded border border-white/20 text-white/70 hover:bg-white/20"
               onClick={() => this.setState({ error: null })}
@@ -57,7 +65,10 @@ export function App() {
   const activeView = useAppStore((s) => s.activeView);
   const activeProjectPath = useAppStore((s) => s.activeProjectPath);
   const whatsNew = useAppStore((s) => s.whatsNew);
+  const helpDialogOpen = useAppStore((s) => s.helpDialogOpen);
+  const homeActivePanel = useAppStore((s) => s.homeActivePanel);
   const [showNewProject, setShowNewProject] = useState(false);
+  const [gitInitPath, setGitInitPath] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
   // Hydrate experimental flags whenever the active project changes
@@ -83,62 +94,177 @@ export function App() {
     installCaptureNavigator();
   }, []);
 
+  // Hydrate terminal-font cache from global settings before any terminal is constructed.
+  useEffect(() => {
+    hydrateTerminalFont();
+  }, []);
+
+  // Hydrate the ready-audio toggle so notifyReady reads it without an async call.
+  useEffect(() => {
+    hydrateNotificationSettings();
+  }, []);
+
+  // Hydrate persisted sidebar-pinned preference. Defaults to pinned (see the
+  // store initial state) — only an explicit '0' from a prior session unpins it.
+  useEffect(() => {
+    window.api.globalSettings.get('ui:sidebar-pinned').then((value) => {
+      if (value === '0') useUIStore.setState({ sidebarPinned: false });
+    });
+  }, []);
+
+  // Subscribe to terminal store changes so the cross-launch session snapshot
+  // stays current. Resume banner reads it on next launch.
+  useEffect(() => {
+    installSessionAutoSave();
+  }, []);
+
+  // First-run marker — set so other surfaces can know whether the user has
+  // launched before. The actual welcome UI lives inline in the empty home view.
+  useEffect(() => {
+    (async () => {
+      const seen = await window.api.globalSettings.get('hasSeenWelcome');
+      if (seen) return;
+      await window.api.globalSettings.set('hasSeenWelcome', '1');
+    })();
+  }, []);
+
   // Load projects and restore last active view before rendering content
   useEffect(() => {
     window.api.getProjects().then(async (projects) => {
       useAppStore.getState().setProjects(projects);
 
-      const lastView = await window.api.globalSettings.get('lastActiveView');
-      if (lastView) {
-        try {
-          const parsed = JSON.parse(lastView);
-          if (parsed.type === 'project' && parsed.path) {
-            const project = projects.find((p) => p.path === parsed.path);
-            if (project) {
-              // Fetch sandbox status before navigating so button renders instantly
-              const limaStatus = await window.api.lima.status(parsed.path);
-              useAppStore.getState().setSandboxStatus(limaStatus.available, limaStatus.vmStatus);
-              useAppStore.getState().navigateToProject(parsed.path, project);
+      // If we have a session snapshot to resume, force the user to home so
+      // the resume banner is the first thing they see — taking them back to
+      // their last project view would hide the offer behind the kanban/empty
+      // state and force them to navigate manually.
+      const pendingSnapshot = await window.api.globalSettings.get('lastSession:snapshot');
+      const hasResumable = !!pendingSnapshot && pendingSnapshot.length > 0;
+
+      let restoredToProject = false;
+      if (!hasResumable) {
+        const lastView = await window.api.globalSettings.get('lastActiveView');
+        if (lastView) {
+          try {
+            const parsed = JSON.parse(lastView);
+            if (parsed.type === 'project' && parsed.path) {
+              const project = projects.find((p) => p.path === parsed.path);
+              if (project) {
+                // Pre-fetch sandbox status + tasks before navigating so the
+                // first project paint (kanban included) shows correct content.
+                const limaStatus = await window.api.lima.status(parsed.path);
+                useAppStore.getState().setSandboxStatus(limaStatus.available, limaStatus.vmStatus);
+                await useProjectStore.getState().loadTasks(parsed.path);
+                useAppStore.getState().navigateToProject(parsed.path, project);
+                restoredToProject = true;
+              }
             }
+          } catch {
+            /* invalid JSON, stay on home */
           }
-        } catch {
-          /* invalid JSON, stay on home */
         }
+      }
+
+      // Pre-warm the home recents cache regardless of which view we're
+      // restoring to, so a later home click paints from cache instantly.
+      // Awaited only when landing on home, to keep the initial home paint
+      // populated; for project restores the fetch runs in the background.
+      const recentsPromise = useAppStore.getState().loadHomeRecents();
+      if (!restoredToProject) {
+        await recentsPromise;
       }
 
       setInitialized(true);
     });
   }, []);
 
-  // Sidebar callbacks
-  const handleProjectSelect = useCallback((path: string, project: Project) => {
+  // Sidebar callbacks. Direction in the view transition reflects the relative
+  // position in the sidebar — clicking a project below the current one slides
+  // the new view up into place; above slides down. Home is treated as the
+  // top of the list.
+  //
+  // Project select pre-fetches tasks before navigating so the kanban paints
+  // correctly through the view-transition snapshot. Home select navigates
+  // immediately and refreshes in the background, since `homeRecents` is kept
+  // warm by `projectStore.loadTasks` and the app-init pre-fetch.
+  const handleProjectSelect = useCallback(async (path: string, project: Project) => {
     const state = useAppStore.getState();
     if (state.activeProjectPath === path) return;
-    state.navigateToProject(path, project);
+    const orderedPaths = state.projects.map((p) => p.path);
+    const oldIndex = state.activeView === 'home' ? -1 : orderedPaths.indexOf(state.activeProjectPath ?? '');
+    const newIndex = orderedPaths.indexOf(path);
+    const direction = newIndex > oldIndex ? 'down' : newIndex < oldIndex ? 'up' : undefined;
+    await useProjectStore.getState().loadTasks(path);
+    state.navigateToProject(path, project, { direction });
     window.api.globalSettings.set('lastActiveView', JSON.stringify({ type: 'project', path }));
   }, []);
 
   const handleHomeSelect = useCallback(() => {
     const state = useAppStore.getState();
     if (state.activeView === 'home') return;
-    state.navigateHome();
+    // Navigate immediately; the cached homeRecents (kept warm by
+    // projectStore.loadTasks via updateProjectTaskCache, plus app-init
+    // pre-fetch) paints during the view transition. Refresh in background
+    // to reconcile with the source of truth.
+    state.navigateHome({ direction: 'up' });
+    void state.loadHomeRecents();
     window.api.globalSettings.set('lastActiveView', JSON.stringify({ type: 'home' }));
+  }, []);
+
+  // Register the added folder, refresh the project list, and navigate to it.
+  const finalizeAddedProject = useCallback(async (addedPath: string) => {
+    const projects = await window.api.refreshProjects();
+    useAppStore.getState().setProjects(projects);
+    const project = projects.find((p) => p.path === addedPath);
+    if (project) {
+      useAppStore.getState().navigateToProject(addedPath, project);
+    }
   }, []);
 
   const handleAddExisting = useCallback(async () => {
     const result = await window.api.showFolderPicker();
     if (!result.canceled && result.filePaths.length > 0) {
-      const addResult = await window.api.addProject(result.filePaths[0]);
+      const addedPath = result.filePaths[0];
+      const addResult = await window.api.addProject(addedPath);
       if (addResult.success) {
-        const projects = await window.api.refreshProjects();
-        useAppStore.getState().setProjects(projects);
+        await finalizeAddedProject(addedPath);
+      } else if (addResult.reason === 'not-a-git-repo') {
+        // Recoverable dead-end: offer to `git init` the folder in place.
+        setGitInitPath(addedPath);
+      } else if (addResult.error) {
+        useProjectStore.getState().addToast(addResult.error, 'error');
       }
     }
-  }, []);
+  }, [finalizeAddedProject]);
+
+  const handleGitInitClose = useCallback(
+    async (result: { initialized: boolean; initialCommit: boolean } | null) => {
+      const folderPath = gitInitPath;
+      setGitInitPath(null);
+      if (!result?.initialized || !folderPath) return;
+      const addResult = await window.api.addProject(folderPath);
+      if (addResult.success) {
+        await finalizeAddedProject(folderPath);
+      } else if (addResult.error) {
+        useProjectStore.getState().addToast(addResult.error, 'error');
+      }
+    },
+    [gitInitPath, finalizeAddedProject],
+  );
 
   const handleCreateNew = useCallback(() => {
     setShowNewProject(true);
   }, []);
+
+  useEffect(() => {
+    const onAddExisting = () => handleAddExisting();
+    const onCreateNew = () => handleCreateNew();
+    document.addEventListener('add-existing-project', onAddExisting);
+    document.addEventListener('create-new-project', onCreateNew);
+    return () => {
+      document.removeEventListener('add-existing-project', onAddExisting);
+      document.removeEventListener('create-new-project', onCreateNew);
+    };
+  }, [handleAddExisting, handleCreateNew]);
 
   const handleNewProjectClose = useCallback(
     async (result: { created: boolean; projectName?: string; projectPath?: string } | null) => {
@@ -171,7 +297,7 @@ export function App() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <TitleBar mode={activeView} />
         <main
-          className="flex-1 min-h-0"
+          className="app-content-main flex-1 min-h-0"
           style={
             activeView === 'project' || activeView === 'home'
               ? { padding: 0 }
@@ -179,13 +305,14 @@ export function App() {
           }
         >
           <ViewErrorBoundary>
-            {activeView === 'home' && <HomeView />}
+            {activeView === 'home' && (homeActivePanel === 'settings' ? <GlobalSettingsPanel /> : <HomeView />)}
             {activeView === 'project' && <ProjectView />}
           </ViewErrorBoundary>
         </main>
       </div>
       <ToastContainer />
       {showNewProject && <NewProjectDialog onClose={handleNewProjectClose} />}
+      {gitInitPath && <InitGitRepoDialog folderPath={gitInitPath} onClose={handleGitInitClose} />}
       {whatsNew && (
         <WhatsNewDialog
           version={whatsNew.version}
@@ -193,6 +320,7 @@ export function App() {
           onClose={() => useAppStore.getState().setWhatsNew(null)}
         />
       )}
+      {helpDialogOpen && <HelpDialog onClose={() => useAppStore.getState().setHelpDialogOpen(false)} />}
     </div>
   );
 }

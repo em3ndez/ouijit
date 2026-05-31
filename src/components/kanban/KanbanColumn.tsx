@@ -7,14 +7,14 @@ import type { TaskChainInfo } from '../../utils/taskChain';
 import { useProjectStore } from '../../stores/projectStore';
 import { KanbanCard } from './KanbanCard';
 import { KanbanAddInput } from './KanbanAddInput';
-import { Icon } from '../terminal/Icon';
+import { KanbanColumnView } from './KanbanColumnView';
 
 /** Map column status to the hook type(s) its config button should open */
 const COLUMN_HOOK_TYPES: Record<string, HookType[]> = {
   todo: [],
   in_progress: ['start', 'continue'],
   in_review: ['review'],
-  done: ['cleanup'],
+  done: ['done'],
 };
 
 interface KanbanColumnProps {
@@ -22,8 +22,8 @@ interface KanbanColumnProps {
   label: string;
   tasks: TaskWithWorkspace[];
   projectPath: string;
-  settingUpTaskNumber?: number | null;
-  onAddTask?: (name: string) => void;
+  settingUpTaskNumbers?: ReadonlySet<number>;
+  onAddTask?: (name: string, description?: string) => void;
   onRenameTask: (taskNumber: number, newName: string) => void;
   onUpdateDescription: (taskNumber: number, description: string) => void;
   onOpenTerminal: (task: TaskWithWorkspace, sandboxed?: boolean) => void;
@@ -32,6 +32,9 @@ interface KanbanColumnProps {
   onConfigureHook?: (hookTypes: HookType[]) => void;
   hasConfiguredHook?: boolean;
   chainMap?: Map<number, TaskChainInfo>;
+  sandboxAvailable?: boolean;
+  hasEditorHook?: boolean;
+  onEditorHookConfigured?: () => void;
 }
 
 export function KanbanColumn({
@@ -39,7 +42,7 @@ export function KanbanColumn({
   label,
   tasks,
   projectPath,
-  settingUpTaskNumber,
+  settingUpTaskNumbers,
   onAddTask,
   onRenameTask,
   onUpdateDescription,
@@ -49,67 +52,62 @@ export function KanbanColumn({
   onConfigureHook,
   hasConfiguredHook,
   chainMap,
+  sandboxAvailable,
+  hasEditorHook,
+  onEditorHookConfigured,
 }: KanbanColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const taskIds = useMemo(() => tasks.map((t) => `task-${t.taskNumber}`), [tasks]);
   const hookTypes = COLUMN_HOOK_TYPES[status] ?? [];
 
+  const showOverHighlight = isOver && tasks.length === 0;
+
+  // Surface the shift-to-skip affordance on the done column when shift is held
+  // mid-drag and a done hook is actually configured (otherwise the cue is noise).
+  const shiftKeyHeld = useProjectStore((s) => s.shiftKeyHeld);
+  const showSkipHookHint = status === 'done' && shiftKeyHeld && !!hasConfiguredHook;
+
   return (
-    <div
-      className="kanban-column flex flex-col transition-all duration-150 ease-out shrink-0 last:border-r-0"
-      style={{ minWidth: 240, flex: '1 0 240px', borderRight: '1px solid rgba(255, 255, 255, 0.06)' }}
-      data-status={status}
+    <KanbanColumnView
+      status={status}
+      label={label}
+      count={tasks.length}
+      hookTypes={hookTypes}
+      hasConfiguredHook={hasConfiguredHook}
+      onConfigureHook={onConfigureHook}
+      isOver={showOverHighlight}
+      bodyRef={setNodeRef}
+      caption={showSkipHookHint ? 'shift to skip hook' : undefined}
+      onBodyClick={(e) => {
+        if (e.target === e.currentTarget) useProjectStore.getState().clearSelection();
+      }}
     >
-      <div className="flex items-center gap-2 px-3 py-2.5 shrink-0 h-[46px]">
-        <span className="text-[13px] font-medium text-text-secondary uppercase tracking-wide flex-1">
-          {label}
-          <span className="kanban-column-count text-text-secondary opacity-50 normal-case tracking-normal ml-1.5">
-            {tasks.length}
-          </span>
-        </span>
-        {hookTypes.length > 0 && onConfigureHook && (
-          <button
-            className={`flex items-center justify-center border-none text-text-tertiary transition-all duration-150 ease-out rounded-md hover:text-text-secondary hover:bg-white/[0.08] [&>svg]:w-[18px] [&>svg]:h-[18px]${hasConfiguredHook ? ' !text-accent hover:!text-accent-hover' : ''}`}
-            style={{ padding: '4px 10px', background: 'transparent' }}
-            onClick={() => onConfigureHook(hookTypes)}
-          >
-            <Icon name="webhooks-logo" />
-          </button>
-        )}
-      </div>
-      <div
-        ref={setNodeRef}
-        className="kanban-column-body flex flex-col overflow-y-auto flex-1 min-h-0"
-        style={{
-          borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-          scrollbarColor: 'transparent transparent',
-          transition: 'background 150ms ease',
-          minHeight: 80,
-          background: isOver && tasks.length === 0 ? 'rgba(10, 132, 255, 0.08)' : undefined,
-        }}
-        onClick={(e) => {
-          if (e.target === e.currentTarget) useProjectStore.getState().clearSelection();
-        }}
-      >
-        <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
-          {tasks.map((task) => (
-            <SortableCard
-              key={task.taskNumber}
-              task={task}
-              projectPath={projectPath}
-              chainMap={chainMap}
-              isSettingUp={settingUpTaskNumber === task.taskNumber}
-              onRename={onRenameTask}
-              onUpdateDescription={onUpdateDescription}
-              onOpenTerminal={onOpenTerminal}
-              onSwitchToTerminal={onSwitchToTerminal}
-              onSelect={onSelect}
-            />
-          ))}
-        </SortableContext>
-        {onAddTask && <KanbanAddInput onAdd={onAddTask} />}
-      </div>
-    </div>
+      <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
+        {tasks.map((task) => (
+          <SortableCard
+            key={task.taskNumber}
+            task={task}
+            projectPath={projectPath}
+            chainMap={chainMap}
+            isSettingUp={settingUpTaskNumbers?.has(task.taskNumber) ?? false}
+            onRename={onRenameTask}
+            onUpdateDescription={onUpdateDescription}
+            onOpenTerminal={onOpenTerminal}
+            onSwitchToTerminal={onSwitchToTerminal}
+            onSelect={onSelect}
+            sandboxAvailable={sandboxAvailable}
+            hasEditorHook={hasEditorHook}
+            onEditorHookConfigured={onEditorHookConfigured}
+          />
+        ))}
+      </SortableContext>
+      {status === 'todo' && tasks.length === 0 && (
+        <div className="px-3 py-3 text-xs text-text-tertiary leading-relaxed">
+          No tasks yet. Type a name below to add one.
+        </div>
+      )}
+      {onAddTask && <KanbanAddInput onAdd={onAddTask} />}
+    </KanbanColumnView>
   );
 }
 
@@ -125,6 +123,9 @@ function SortableCard({
   onOpenTerminal,
   onSwitchToTerminal,
   onSelect,
+  sandboxAvailable,
+  hasEditorHook,
+  onEditorHookConfigured,
 }: {
   task: TaskWithWorkspace;
   projectPath: string;
@@ -135,6 +136,9 @@ function SortableCard({
   onOpenTerminal: (task: TaskWithWorkspace, sandboxed?: boolean) => void;
   onSwitchToTerminal: (ptyId: string) => void;
   onSelect: (taskNumber: number, event: MouseEvent) => void;
+  sandboxAvailable?: boolean;
+  hasEditorHook?: boolean;
+  onEditorHookConfigured?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `task-${task.taskNumber}`,
@@ -152,7 +156,11 @@ function SortableCard({
     return (
       <div
         ref={setNodeRef}
-        style={{ ...style, background: 'rgba(10, 132, 255, 0.15)', border: '1px solid rgba(10, 132, 255, 0.4)' }}
+        style={{
+          ...style,
+          background: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--color-accent) 40%, transparent)',
+        }}
         {...attributes}
         {...listeners}
         className="[&>*]:opacity-0"
@@ -182,6 +190,9 @@ function SortableCard({
         onOpenTerminal={onOpenTerminal}
         onSwitchToTerminal={onSwitchToTerminal}
         onSelect={onSelect}
+        sandboxAvailable={sandboxAvailable}
+        hasEditorHook={hasEditorHook}
+        onEditorHookConfigured={onEditorHookConfigured}
       />
     </div>
   );

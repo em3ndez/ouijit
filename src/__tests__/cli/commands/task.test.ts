@@ -106,6 +106,82 @@ describe('task commands', () => {
     expect(result.success).toBe(true);
   });
 
+  describe('start hook flags', () => {
+    test('start with no hook flag omits hookMode', async () => {
+      vi.mocked(post).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'start', '3'], { from: 'user' });
+      output.getJson();
+      expect(post).toHaveBeenCalledWith(`/api/tasks/3/start?project=${encodeURIComponent(PROJECT)}`, {
+        branchName: undefined,
+      });
+    });
+
+    test('start --run-hook sends hookMode run', async () => {
+      vi.mocked(post).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'start', '3', '--run-hook'], { from: 'user' });
+      output.getJson();
+      expect(post).toHaveBeenCalledWith(`/api/tasks/3/start?project=${encodeURIComponent(PROJECT)}`, {
+        branchName: undefined,
+        hookMode: 'run',
+      });
+    });
+
+    test('start --skip-hook sends hookMode skip', async () => {
+      vi.mocked(post).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'start', '3', '--skip-hook'], { from: 'user' });
+      output.getJson();
+      expect(post).toHaveBeenCalledWith(`/api/tasks/3/start?project=${encodeURIComponent(PROJECT)}`, {
+        branchName: undefined,
+        hookMode: 'skip',
+      });
+    });
+
+    test('start --hook-command sends hookMode command + hookCommand', async () => {
+      vi.mocked(post).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'start', '3', '--hook-command', 'claude'], { from: 'user' });
+      output.getJson();
+      expect(post).toHaveBeenCalledWith(`/api/tasks/3/start?project=${encodeURIComponent(PROJECT)}`, {
+        branchName: undefined,
+        hookMode: 'command',
+        hookCommand: 'claude',
+      });
+    });
+
+    test('create-and-start --run-hook sends hookMode run', async () => {
+      vi.mocked(post).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'create-and-start', 'New task', '--run-hook'], { from: 'user' });
+      output.getJson();
+      expect(post).toHaveBeenCalledWith(`/api/tasks/start?project=${encodeURIComponent(PROJECT)}`, {
+        name: 'New task',
+        prompt: undefined,
+        branchName: undefined,
+        hookMode: 'run',
+      });
+    });
+
+    test('mutually exclusive hook flags error and exit non-zero', async () => {
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+        throw new Error(`exit:${code}`);
+      }) as never);
+      try {
+        await expect(
+          createProgram().parseAsync(['task', 'start', '3', '--run-hook', '--skip-hook'], { from: 'user' }),
+        ).rejects.toThrow(/exit:1/);
+        expect(post).not.toHaveBeenCalled();
+        expect(errSpy).toHaveBeenCalled();
+      } finally {
+        errSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+    });
+  });
+
   test('set-status calls PATCH /api/tasks/:number/status', async () => {
     vi.mocked(patch).mockResolvedValue({ success: true });
     const output = captureOutput();
@@ -115,6 +191,233 @@ describe('task commands', () => {
       status: 'in_progress',
     });
     expect(result.success).toBe(true);
+  });
+
+  describe('set-status done hook flags', () => {
+    test('done with no flags sends just the status (renderer shows the dialog)', async () => {
+      vi.mocked(patch).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'set-status', '1', 'done'], { from: 'user' });
+      output.getJson();
+      expect(patch).toHaveBeenCalledWith(expect.any(String), { status: 'done' });
+    });
+
+    test('done --run-hook forwards hookMode run', async () => {
+      vi.mocked(patch).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'set-status', '1', 'done', '--run-hook'], { from: 'user' });
+      output.getJson();
+      expect(patch).toHaveBeenCalledWith(expect.any(String), { status: 'done', hookMode: 'run' });
+    });
+
+    test('done --skip-hook forwards hookMode skip', async () => {
+      vi.mocked(patch).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'set-status', '1', 'done', '--skip-hook'], { from: 'user' });
+      output.getJson();
+      expect(patch).toHaveBeenCalledWith(expect.any(String), { status: 'done', hookMode: 'skip' });
+    });
+
+    test('done --hook-command forwards hookMode command + hookCommand', async () => {
+      vi.mocked(patch).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'set-status', '1', 'done', '--hook-command', 'npm run deploy'], {
+        from: 'user',
+      });
+      output.getJson();
+      expect(patch).toHaveBeenCalledWith(expect.any(String), {
+        status: 'done',
+        hookMode: 'command',
+        hookCommand: 'npm run deploy',
+      });
+    });
+
+    test('done with both --skip-hook and --hook-command exits non-zero', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await createProgram().parseAsync(['task', 'set-status', '1', 'done', '--skip-hook', '--hook-command', 'x'], {
+          from: 'user',
+        });
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      } finally {
+        exitSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
+
+    test('done with empty --hook-command exits non-zero', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await createProgram().parseAsync(['task', 'set-status', '1', 'done', '--hook-command', '  '], { from: 'user' });
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      } finally {
+        exitSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
+
+    test('done with both --skip-hook and --run-hook exits non-zero', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await createProgram().parseAsync(['task', 'set-status', '1', 'done', '--skip-hook', '--run-hook'], {
+          from: 'user',
+        });
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      } finally {
+        exitSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('set-status in_progress/in_review hook flags', () => {
+    test('in_review with no flags sends just the status (renderer shows the dialog)', async () => {
+      vi.mocked(patch).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'set-status', '1', 'in_review'], { from: 'user' });
+      output.getJson();
+      expect(patch).toHaveBeenCalledWith(expect.any(String), { status: 'in_review' });
+    });
+
+    test('in_review --run-hook forwards hookMode run', async () => {
+      vi.mocked(patch).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'set-status', '1', 'in_review', '--run-hook'], { from: 'user' });
+      output.getJson();
+      expect(patch).toHaveBeenCalledWith(expect.any(String), { status: 'in_review', hookMode: 'run' });
+    });
+
+    test('in_review --skip-hook forwards hookMode skip', async () => {
+      vi.mocked(patch).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'set-status', '1', 'in_review', '--skip-hook'], { from: 'user' });
+      output.getJson();
+      expect(patch).toHaveBeenCalledWith(expect.any(String), { status: 'in_review', hookMode: 'skip' });
+    });
+
+    test('in_review --hook-command forwards hookMode command + hookCommand', async () => {
+      vi.mocked(patch).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'set-status', '1', 'in_review', '--hook-command', 'claude review'], {
+        from: 'user',
+      });
+      output.getJson();
+      expect(patch).toHaveBeenCalledWith(expect.any(String), {
+        status: 'in_review',
+        hookMode: 'command',
+        hookCommand: 'claude review',
+      });
+    });
+
+    test('in_progress --run-hook forwards hookMode run', async () => {
+      vi.mocked(patch).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'set-status', '1', 'in_progress', '--run-hook'], { from: 'user' });
+      output.getJson();
+      expect(patch).toHaveBeenCalledWith(expect.any(String), { status: 'in_progress', hookMode: 'run' });
+    });
+
+    test('in_review with both --run-hook and --skip-hook exits non-zero', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await createProgram().parseAsync(['task', 'set-status', '1', 'in_review', '--run-hook', '--skip-hook'], {
+          from: 'user',
+        });
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      } finally {
+        exitSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
+
+    test('hook flags on todo exit non-zero (no hook on that transition)', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await createProgram().parseAsync(['task', 'set-status', '1', 'todo', '--skip-hook'], { from: 'user' });
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      } finally {
+        exitSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('bulk-set-status', () => {
+    test('fans out N parallel PATCH requests and aggregates success', async () => {
+      vi.mocked(patch).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'bulk-set-status', 'in_review', '1', '2', '3'], { from: 'user' });
+      const result = output.getJson();
+
+      expect(patch).toHaveBeenCalledTimes(3);
+      expect(patch).toHaveBeenCalledWith(expect.stringContaining('/api/tasks/1/status'), { status: 'in_review' });
+      expect(patch).toHaveBeenCalledWith(expect.stringContaining('/api/tasks/2/status'), { status: 'in_review' });
+      expect(patch).toHaveBeenCalledWith(expect.stringContaining('/api/tasks/3/status'), { status: 'in_review' });
+      expect(result).toEqual({ success: true, status: 'In Review', succeeded: [1, 2, 3], failed: [] });
+    });
+
+    test('done forwards --skip-hook (hookMode skip) to every task', async () => {
+      vi.mocked(patch).mockResolvedValue({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'bulk-set-status', 'done', '5', '6', '--skip-hook'], { from: 'user' });
+      output.getJson();
+      expect(patch).toHaveBeenCalledWith(expect.stringContaining('/api/tasks/5/status'), {
+        status: 'done',
+        hookMode: 'skip',
+      });
+      expect(patch).toHaveBeenCalledWith(expect.stringContaining('/api/tasks/6/status'), {
+        status: 'done',
+        hookMode: 'skip',
+      });
+    });
+
+    test('aggregates per-task failures without rejecting the whole batch', async () => {
+      vi.mocked(patch)
+        .mockResolvedValueOnce({ success: true })
+        .mockResolvedValueOnce({ success: false, error: 'not found' })
+        .mockResolvedValueOnce({ success: true });
+      const output = captureOutput();
+      await createProgram().parseAsync(['task', 'bulk-set-status', 'done', '1', '2', '3'], { from: 'user' });
+      const result = output.getJson();
+      expect(result).toEqual({
+        success: false,
+        status: 'Done',
+        succeeded: [1, 3],
+        failed: [{ taskNumber: 2, error: 'not found' }],
+      });
+    });
+
+    test('rejects --skip-hook + --hook-command together', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await createProgram().parseAsync(
+          ['task', 'bulk-set-status', 'done', '1', '2', '--skip-hook', '--hook-command', 'x'],
+          { from: 'user' },
+        );
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      } finally {
+        exitSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
+
+    test('rejects non-integer task numbers', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await createProgram().parseAsync(['task', 'bulk-set-status', 'done', '1', 'abc'], { from: 'user' });
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      } finally {
+        exitSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
   });
 
   test('set-name calls PATCH /api/tasks/:number/name', async () => {

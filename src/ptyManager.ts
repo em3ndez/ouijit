@@ -16,6 +16,70 @@ import { issueToken, revokeToken, revokeAllTokens } from './apiAuth';
 
 const ptyLog = getLogger().scope('pty');
 
+/**
+ * Builds the command string to run in the spawned shell.
+ *
+ * Env vars (OUIJIT_* and any custom vars from the caller) are passed to the
+ * PTY process as real environment variables, so the shell expands $VAR /
+ * ${VAR} references itself when it parses the command.
+ *
+ * The command must NOT be pre-substituted with the raw env values. Splicing a
+ * value into the command text lets the shell re-parse and re-evaluate any
+ * shell metacharacters it contains (backticks, $(), quotes) — e.g. a task
+ * named ``Add `.DS_Store` in .gitignore`` would have its backticks executed
+ * as a command. Genuine env-var expansion inside double quotes keeps such
+ * characters literal.
+ *
+ * `env` is accepted (and ignored) so callers can document that those values
+ * reach the shell as environment variables rather than as command text.
+ */
+export function buildCommandString(command: string | undefined, _env?: Record<string, string> | undefined): string {
+  return command || '';
+}
+
+/**
+ * Builds the argv for the spawned shell when a startup command is present.
+ *
+ * The command runs via `-ic` then the shell execs into an interactive
+ * session, which avoids the double-echo from writing to stdin.
+ *
+ * The command is spliced into the `-c` script verbatim: it is shell *code*
+ * the shell must parse (so $VAR expands and the user's own quotes apply), not
+ * a data string. It must NOT be quote-escaped — the `'\''` idiom is only
+ * valid inside an enclosing single-quoted string, and here the command is
+ * interpolated unquoted, so escaping it would corrupt any command containing
+ * a single quote into an unterminated quote.
+ */
+export function buildCommandShellArgs(command: string, shell: string, shellIntegrationDir: string): string[] {
+  const isZsh = shell.endsWith('/zsh') || shell === 'zsh';
+  const isBash = shell.endsWith('/bash') || shell === 'bash';
+  const prefix = 'export PATH="$OUIJIT_WRAPPER_DIR:$PATH"';
+
+  // Wrap the user command in a subshell so a stray `exit` (a shell builtin,
+  // not a child process) only terminates the subshell, not our outer zsh/bash.
+  // Without this, a hook like `echo hi; exit 1` would nuke the outer shell
+  // before we could `exec` into the interactive one. Subshell exit code is
+  // captured into $? exactly like an inline command would be.
+  const wrapped = `(${command})`;
+
+  // Capture the subshell's exit code into an env var so it survives the
+  // `exec` into the interactive shell — exec replaces the process and resets
+  // $?, so without this the renderer would never learn the initial command's
+  // exit code. The integration script reads OUIJIT_INITIAL_EXIT on first load
+  // and emits OSC 133;D itself.
+  const captureExit = 'export OUIJIT_INITIAL_EXIT=$?';
+
+  if (isZsh) {
+    return ['-ic', `${prefix}; ${wrapped}; ${captureExit}; ZDOTDIR="$OUIJIT_SHELL_INTEGRATION_DIR/zsh" exec ${shell}`];
+  }
+  if (isBash) {
+    const rcfile = path.join(shellIntegrationDir, 'ouijit-bash-integration.bash');
+    return ['-ic', `${prefix}; ${wrapped}; ${captureExit}; exec bash --rcfile ${rcfile}`];
+  }
+  // Fallback for other shells
+  return ['-ic', `${prefix}; ${wrapped}; ${captureExit}; exec ${shell}`];
+}
+
 interface ManagedPty {
   process: pty.IPty;
   projectPath: string;
@@ -31,6 +95,12 @@ interface ManagedPty {
   outputChunks: string[];
   outputSize: number;
   maxBufferSize: number;
+  // Per-tick IPC coalescing — heavy output (find /, builds, log tails) emits
+  // many small chunks; sending each as its own IPC message saturates the
+  // renderer with serialization work and stutters the UI. We collect chunks
+  // and flush once per Node event-loop tick.
+  pendingForwardChunks: string[];
+  forwardFlushScheduled: boolean;
   // Terminal state tracking for accurate reconnection replay
   isAltScreen: boolean;
   lastCols: number;
@@ -79,7 +149,34 @@ function canSendToRenderer(): boolean {
 }
 
 /**
- * Handle PTY output: always buffer for history, and forward to renderer if connected
+ * Flush any pending forwarded chunks for a PTY as a single concatenated IPC
+ * message. Safe to call when nothing is pending or when no renderer is attached.
+ */
+function flushPendingForward(ptyId: PtyId, channel: string): void {
+  const managed = activePtys.get(ptyId);
+  if (!managed) return;
+  managed.forwardFlushScheduled = false;
+  if (managed.pendingForwardChunks.length === 0) return;
+  if (!canSendToRenderer()) {
+    // Drop the queue if there's no renderer to receive it; the chunks are
+    // already retained in `outputChunks` for reconnection replay.
+    managed.pendingForwardChunks.length = 0;
+    return;
+  }
+  const payload =
+    managed.pendingForwardChunks.length === 1 ? managed.pendingForwardChunks[0] : managed.pendingForwardChunks.join('');
+  managed.pendingForwardChunks.length = 0;
+  currentWindow!.webContents.send(channel, payload);
+}
+
+/**
+ * Handle PTY output: always buffer for history, and forward to renderer if connected.
+ *
+ * Forwarding is coalesced once per Node event-loop tick via `setImmediate`. A
+ * heavy command (build, `find /`, log tail) can emit many small data events
+ * per millisecond; sending each as its own IPC was saturating the renderer
+ * with serialization + xterm side-effect work, stuttering kanban drag and
+ * other UI animations.
  */
 function handlePtyOutput(ptyId: PtyId, channel: string, data: string): void {
   const managed = activePtys.get(ptyId);
@@ -93,19 +190,19 @@ function handlePtyOutput(ptyId: PtyId, channel: string, data: string): void {
     managed.isAltScreen = false;
   }
 
-  // Array-based buffering to avoid string concatenation churn
+  // Array-based history buffer (preserved per-chunk for accurate replay)
   managed.outputChunks.push(data);
   managed.outputSize += data.length;
-
-  // Trim from front when over limit
   while (managed.outputSize > managed.maxBufferSize && managed.outputChunks.length > 1) {
     const removed = managed.outputChunks.shift()!;
     managed.outputSize -= removed.length;
   }
 
-  // Forward to renderer if available
-  if (canSendToRenderer()) {
-    currentWindow!.webContents.send(channel, data);
+  // Coalesce forwards to the renderer
+  managed.pendingForwardChunks.push(data);
+  if (!managed.forwardFlushScheduled) {
+    managed.forwardFlushScheduled = true;
+    setImmediate(() => flushPendingForward(ptyId, channel));
   }
 }
 
@@ -160,17 +257,10 @@ export async function spawnPty(options: PtySpawnOptions, window: BrowserWindow):
     const cliPath = getCliPath();
     if (cliPath) finalEnv['OUIJIT_CLI_PATH'] = cliPath;
 
-    // Expand environment variables in the command if provided
-    let expandedCommand = options.command || '';
-    if (options.command && options.env) {
-      for (const [key, value] of Object.entries(options.env)) {
-        // Replace $VAR and ${VAR} patterns
-        expandedCommand = expandedCommand.replace(new RegExp(`\\$\\{${key}\\}|\\$${key}\\b`, 'g'), value);
-      }
-    }
+    // Build the command string to run in the spawned shell
+    const expandedCommand = buildCommandString(options.command, options.env);
 
     // If there's a command, run it via shell -c then exec into interactive shell
-    // This avoids the double-echo issue from writing to stdin
     let shellArgs: string[] = [];
 
     const isZsh = shell.endsWith('/zsh') || shell === 'zsh';
@@ -184,27 +274,18 @@ export async function spawnPty(options: PtySpawnOptions, window: BrowserWindow):
       finalEnv['ZDOTDIR'] = path.join(shellIntegrationDir, 'zsh');
 
       if (expandedCommand) {
-        const escapedCmd = expandedCommand.replace(/'/g, "'\\''");
-        shellArgs = [
-          '-ic',
-          `export PATH="$OUIJIT_WRAPPER_DIR:$PATH"; ${escapedCmd}; ZDOTDIR="$OUIJIT_SHELL_INTEGRATION_DIR/zsh" exec ${shell}`,
-        ];
+        shellArgs = buildCommandShellArgs(expandedCommand, shell, shellIntegrationDir);
       }
     } else if (isBash) {
       // --rcfile/--init-file: bash sources this instead of ~/.bashrc.
       // Our integration script sources .bashrc first, then fixes PATH.
-      const rcfile = path.join(shellIntegrationDir, 'ouijit-bash-integration.bash');
-
       if (expandedCommand) {
-        const escapedCmd = expandedCommand.replace(/'/g, "'\\''");
-        shellArgs = ['-ic', `export PATH="$OUIJIT_WRAPPER_DIR:$PATH"; ${escapedCmd}; exec bash --rcfile ${rcfile}`];
+        shellArgs = buildCommandShellArgs(expandedCommand, shell, shellIntegrationDir);
       } else {
-        shellArgs = ['--init-file', rcfile];
+        shellArgs = ['--init-file', path.join(shellIntegrationDir, 'ouijit-bash-integration.bash')];
       }
     } else if (expandedCommand) {
-      // Fallback for other shells
-      const escapedCmd = expandedCommand.replace(/'/g, "'\\''");
-      shellArgs = ['-ic', `export PATH="$OUIJIT_WRAPPER_DIR:$PATH"; ${escapedCmd}; exec ${shell}`];
+      shellArgs = buildCommandShellArgs(expandedCommand, shell, shellIntegrationDir);
     }
 
     const ptyProcess = pty.spawn(shell, shellArgs, {
@@ -230,6 +311,8 @@ export async function spawnPty(options: PtySpawnOptions, window: BrowserWindow):
       outputChunks: [],
       outputSize: 0,
       maxBufferSize: MAX_BUFFER_SIZE,
+      pendingForwardChunks: [],
+      forwardFlushScheduled: false,
       isAltScreen: false,
       lastCols: options.cols || 80,
       lastRows: options.rows || 24,
@@ -244,6 +327,9 @@ export async function spawnPty(options: PtySpawnOptions, window: BrowserWindow):
 
     ptyProcess.onExit(({ exitCode }) => {
       ptyLog.info('exited', { ptyId, exitCode });
+      // Drain any output buffered in the same tick as the exit so the user
+      // sees the final lines before the exit message.
+      flushPendingForward(ptyId, `pty:data:${ptyId}`);
       if (canSendToRenderer()) {
         currentWindow!.webContents.send(`pty:exit:${ptyId}`, exitCode);
       }
@@ -284,6 +370,12 @@ export function reconnectPty(
   // Update window reference
   currentWindow = window;
 
+  // Drop any chunks queued for forwarding — `outputChunks` already contains
+  // them, and the renderer replays the full history below. Without this clear,
+  // a scheduled setImmediate flush would re-send those same chunks after the
+  // replay, producing duplicated output on reconnect.
+  managed.pendingForwardChunks.length = 0;
+
   // Join chunks for replay (only done on reconnection, not per data event)
   const bufferedOutput = managed.outputChunks.join('');
 
@@ -316,6 +408,16 @@ export function getActiveSessions(): ActiveSession[] {
 /** Get the number of active PTY sessions */
 export function getActiveSessionCount(): number {
   return activePtys.size;
+}
+
+/**
+ * Update a PTY's display label (user renamed the terminal card). Keeps the
+ * managed record in sync so `getActiveSessions` — and therefore the reconnect
+ * path after a renderer reload — restores the renamed label, not the original.
+ */
+export function setPtyLabel(ptyId: PtyId, label: string): void {
+  const managed = activePtys.get(ptyId);
+  if (managed) managed.label = label;
 }
 
 /**

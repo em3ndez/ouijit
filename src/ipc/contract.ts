@@ -26,15 +26,19 @@ import type {
   TaskWorktreeResult,
   CheckWorktreeResult,
   TaskWithWorkspace,
+  CliHookMode,
   TaskStatus,
   ScriptHook,
   HookType,
   BranchInfo,
   TagRow,
   Script,
+  ValidateFolderFailureReason,
 } from '../types';
 import type { SandboxStatus } from '../lima/types';
 import type { HookStatusEntry } from '../hookServer';
+import type { HealthStatus } from '../healthCheck';
+import type { CaptureNavigatePayload } from '../capture/types';
 
 /** Hooks object returned by hooks:get — derived from the canonical ProjectSettings type */
 export type ProjectHooks = NonNullable<ProjectSettings['hooks']>;
@@ -57,7 +61,14 @@ export interface IpcInvokeContract {
   'refresh-projects': { args: []; return: Project[] };
   'create-project': { args: [options: CreateProjectOptions]; return: CreateProjectResult };
   'show-folder-picker': { args: []; return: { canceled: boolean; filePaths: string[] } };
-  'add-project': { args: [folderPath: string]; return: { success: boolean; error?: string } };
+  'add-project': {
+    args: [folderPath: string];
+    return: { success: boolean; error?: string; reason?: ValidateFolderFailureReason };
+  };
+  'init-git-repo': {
+    args: [folderPath: string, initialCommit?: boolean];
+    return: { success: boolean; error?: string };
+  };
   'remove-project': { args: [folderPath: string]; return: { success: boolean } };
   'reorder-projects': { args: [paths: string[]]; return: { success: boolean } };
   'get-project-settings': { args: [projectPath: string]; return: ProjectSettings };
@@ -126,6 +137,10 @@ export interface IpcInvokeContract {
     args: [projectPath: string, taskNumber: number, parentTaskNumber: number | null, mergeTarget?: string];
     return: { success: boolean; error?: string };
   };
+  'task:save-attachment': {
+    args: [data: Uint8Array, ext: string];
+    return: { success: boolean; path?: string; error?: string };
+  };
 
   // ── Worktree ─────────────────────────────────────────────────────────
   'worktree:validate-branch-name': {
@@ -182,6 +197,12 @@ export interface IpcInvokeContract {
   'settings:get-global': { args: [key: string]; return: string | undefined };
   'settings:set-global': { args: [key: string, value: string]; return: { success: boolean } };
 
+  // ── Onboarding ───────────────────────────────────────────────────────
+  'onboarding:seed-task': { args: [projectPath: string]; return: { success: boolean } };
+
+  // ── Health ───────────────────────────────────────────────────────────
+  'health:check': { args: []; return: HealthStatus };
+
   // ── Lima ─────────────────────────────────────────────────────────────
   'lima:status': { args: [projectPath: string]; return: SandboxStatus };
   'lima:start': { args: [projectPath: string]; return: { success: boolean; error?: string } };
@@ -201,6 +222,7 @@ export interface IpcSendContract {
   'pty:write': { args: [ptyId: string, data: string] };
   'pty:resize': { args: [ptyId: string, cols: number, rows: number] };
   'pty:kill': { args: [ptyId: string] };
+  'pty:set-label': { args: [ptyId: string, label: string] };
   'pty:set-window': { args: [] };
 }
 
@@ -213,7 +235,7 @@ export interface IpcSendContract {
  */
 export interface IpcPushContract {
   'fullscreen-change': { args: [isFullscreen: boolean] };
-  'claude-hook-status': { args: [ptyId: string, status: import('../hookServer').HookStatus] };
+  'agent-hook-status': { args: [ptyId: string, status: import('../hookServer').HookStatus] };
   'claude-plan-detected': { args: [ptyId: string, planPath: string] };
   'claude-plan-ready': { args: [ptyId: string] };
   'plan:content-changed': { args: [planPath: string, content: string] };
@@ -221,8 +243,59 @@ export interface IpcPushContract {
   'sandbox:diverged': {
     args: [event: { taskNumber: number; userWorktreePath: string; sandboxViewPath: string }];
   };
+  health: { args: [status: HealthStatus] };
   'update-available': { args: [info: { version: string; url: string }] };
   'whats-new': { args: [info: { version: string; notes: string }] };
   'cli-change': { args: [payload: { project: string; action: string; message?: string; ts: number }] };
-  'capture:navigate': { args: [payload: import('../capture/types').CaptureNavigatePayload] };
+  'cli:task-started': {
+    args: [
+      payload: {
+        project: string;
+        taskNumber: number;
+        worktreePath: string;
+        branch: string;
+        createdAt: string;
+        sandboxed: boolean;
+        /** Hook-control mode from the CLI flags; absent = default dialog. */
+        hookMode?: CliHookMode;
+        /** Custom command when hookMode is 'command'. */
+        hookCommand?: string;
+      },
+    ];
+  };
+  'cli:task-completed': {
+    args: [
+      payload: {
+        project: string;
+        taskNumber: number;
+        /** Full task record fetched server-side, so the renderer doesn't need to
+         *  look it up in projectStore.tasks (which only holds the *active*
+         *  project's tasks — would miss when the user is viewing a different project). */
+        task: TaskWithWorkspace;
+        /** Hook-control mode from the CLI flags; absent = default Done dialog. */
+        hookMode?: CliHookMode;
+        /** Custom command when hookMode is 'command'. */
+        hookCommand?: string;
+      },
+    ];
+  };
+  'cli:task-transitioned': {
+    args: [
+      payload: {
+        project: string;
+        taskNumber: number;
+        /** Status before the CLI write — disambiguates start vs continue. */
+        origStatus: TaskStatus;
+        /** Status the CLI just wrote (in_progress or in_review). */
+        newStatus: TaskStatus;
+        /** Full task record fetched server-side (same rationale as cli:task-completed). */
+        task: TaskWithWorkspace;
+        /** Hook-control mode from the CLI flags; absent = default dialog. */
+        hookMode?: CliHookMode;
+        /** Custom command when hookMode is 'command'. */
+        hookCommand?: string;
+      },
+    ];
+  };
+  'capture:navigate': { args: [payload: CaptureNavigatePayload] };
 }

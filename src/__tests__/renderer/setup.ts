@@ -10,6 +10,16 @@ afterEach(() => {
   cleanup();
 });
 
+// Stub the icon registry. The real module statically imports ~200 Phosphor
+// SVGs via Vite's `?raw` query, which Vitest's resolver chokes on (each
+// import is a separate fetch through the asset transform pipeline). Tests
+// don't need real icon glyphs — an empty proxy satisfies any name lookup.
+vi.mock('../../utils/icons', () => ({
+  iconMap: new Proxy({} as Record<string, string>, {
+    get: () => '<svg></svg>',
+  }),
+}));
+
 // Mock the Electron API surface
 const mockApi = {
   getProjects: vi.fn().mockResolvedValue([]),
@@ -29,6 +39,7 @@ const mockApi = {
   createProject: vi.fn().mockResolvedValue({ success: true }),
   showFolderPicker: vi.fn().mockResolvedValue({ canceled: true, filePaths: [] }),
   addProject: vi.fn().mockResolvedValue({ success: true }),
+  initGitRepo: vi.fn().mockResolvedValue({ success: true }),
   removeProject: vi.fn().mockResolvedValue({ success: true }),
   reorderProjects: vi.fn().mockResolvedValue({ success: true }),
   onFullscreenChange: vi.fn().mockReturnValue(() => {}),
@@ -41,6 +52,7 @@ const mockApi = {
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn(),
+    setLabel: vi.fn(),
     onData: vi.fn().mockReturnValue(() => {}),
     onExit: vi.fn().mockReturnValue(() => {}),
     getActiveSessions: vi.fn().mockResolvedValue([]),
@@ -88,7 +100,7 @@ const mockApi = {
     removeFromTask: vi.fn().mockResolvedValue(undefined),
     setTaskTags: vi.fn().mockResolvedValue([]),
   },
-  claudeHooks: {
+  agentHooks: {
     onStatus: vi.fn().mockReturnValue(() => {}),
     getStatus: vi.fn().mockResolvedValue(null),
   },
@@ -103,10 +115,10 @@ const mockApi = {
     checkFilesExist: vi.fn().mockResolvedValue({}),
   },
   lima: {
-    status: vi.fn().mockResolvedValue('stopped'),
+    status: vi.fn().mockResolvedValue({ available: false, vmStatus: 'Stopped' }),
     start: vi.fn().mockResolvedValue({ success: true }),
     stop: vi.fn().mockResolvedValue({ success: true }),
-    getConfig: vi.fn().mockResolvedValue({ memoryGiB: 4, diskGiB: 50 }),
+    getConfig: vi.fn().mockResolvedValue({ memoryGiB: 4, diskGiB: 10 }),
     setConfig: vi.fn().mockResolvedValue({ success: true }),
     recreate: vi.fn().mockResolvedValue({ success: true }),
     delete: vi.fn().mockResolvedValue({ success: true }),

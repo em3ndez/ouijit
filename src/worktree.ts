@@ -19,6 +19,7 @@ import {
   setTaskBranch,
   setTaskWorktreePath,
   setTaskMergeTarget,
+  getGlobalSetting,
   type TaskMetadata,
 } from './db';
 import { mergeWorktreeBranch } from './git';
@@ -28,6 +29,36 @@ const worktreeLog = getLogger().scope('worktree');
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+
+// Serializes the worktree path probe + `git worktree add` so two concurrent
+// startTask calls can't both probe to the same T-N path and race on create.
+let worktreeCreateMutex: Promise<unknown> = Promise.resolve();
+function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const next = worktreeCreateMutex.then(fn, fn);
+  worktreeCreateMutex = next.catch((): undefined => undefined);
+  return next;
+}
+
+interface Timer {
+  mark: (name: string) => void;
+  finish: () => Record<string, number>;
+}
+
+function timer(): Timer {
+  const start = performance.now();
+  let last = start;
+  const marks: Record<string, number> = {};
+  return {
+    mark(name) {
+      const now = performance.now();
+      marks[name] = Math.round(now - last);
+      last = now;
+    },
+    finish() {
+      return { ...marks, total: Math.round(performance.now() - start) };
+    },
+  };
+}
 
 // Native CoW clone support via koffi FFI
 // macOS: clonefile() clones files and directories atomically in one kernel call
@@ -61,6 +92,8 @@ export interface TaskWorktreeResult {
   task?: TaskMetadata;
   worktreePath?: string;
   error?: string;
+  /** Non-fatal advisories surfaced to the renderer (e.g., missing CLI tool) */
+  warnings?: string[];
 }
 
 export interface WorktreeRemoveResult {
@@ -113,17 +146,55 @@ async function fetchIgnoredFiles(sourcePath: string): Promise<string[]> {
   return stdout.split('\n').filter((item) => item.trim());
 }
 
+/** Concurrency cap for ignored-file copies. Unbounded `Promise.all` over many
+ * top-level dirs spikes CPU and spawns too many cp children at once. */
+const COPY_CONCURRENCY = 8;
+
+async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0;
+  const runners: Promise<void>[] = [];
+  const runOne = async (): Promise<void> => {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      await worker(items[i]);
+    }
+  };
+  for (let i = 0; i < Math.min(limit, items.length); i++) runners.push(runOne());
+  await Promise.all(runners);
+}
+
+/**
+ * Read the per-project worktree mode. Defaults to quick-start (copy ignored files)
+ * to preserve the current behavior when the user hasn't picked a mode.
+ */
+async function shouldCopyIgnoredFiles(projectPath: string): Promise<boolean> {
+  try {
+    const json = await getGlobalSetting(`worktree:${projectPath}`);
+    if (!json) return true;
+    const parsed = JSON.parse(json) as { mode?: string };
+    return parsed.mode !== 'clean-checkout';
+  } catch {
+    return true;
+  }
+}
+
 async function copyGitIgnoredFiles(
   sourcePath: string,
   worktreePath: string,
   prefetchedItems?: string[],
 ): Promise<void> {
+  const t = performance.now();
+  let copiedFiles = 0;
+  let copiedDirs = 0;
+  let cloneSyscalls = 0;
+  let cpFallbacks = 0;
+  let skipped = 0;
   try {
     const items = prefetchedItems ?? (await fetchIgnoredFiles(sourcePath));
     if (items.length === 0) return;
 
-    // Copy each item in parallel
-    const copyPromises = items.map(async (item) => {
+    await runWithConcurrency(items, COPY_CONCURRENCY, async (item) => {
       // Remove trailing slash if present (directories)
       const cleanItem = item.replace(/\/$/, '');
       if (!cleanItem) return;
@@ -134,6 +205,7 @@ async function copyGitIgnoredFiles(
       // Validate paths don't escape their roots (prevents path traversal attacks)
       if (!isPathWithinBase(sourcePath, sourceItem) || !isPathWithinBase(worktreePath, destItem)) {
         worktreeLog.warn('skipping suspicious path', { path: cleanItem });
+        skipped++;
         return;
       }
 
@@ -144,6 +216,7 @@ async function copyGitIgnoredFiles(
         // Skip symlinks to prevent following malicious symlinks to sensitive files
         if (stat.isSymbolicLink()) {
           worktreeLog.warn('skipping symlink', { path: cleanItem });
+          skipped++;
           return;
         }
 
@@ -153,7 +226,11 @@ async function copyGitIgnoredFiles(
         // macOS: clonefile() for individual files only — directories fall through
         // to cp -c (child process) to avoid blocking the event loop on large trees
         if (clonefileFn && stat.isFile()) {
-          if (clonefileFn(sourceItem, destItem, 0) === 0) return;
+          if (clonefileFn(sourceItem, destItem, 0) === 0) {
+            cloneSyscalls++;
+            copiedFiles++;
+            return;
+          }
           // Fall through to cp on failure (e.g. EEXIST from race with start script, non-APFS, cross-volume)
         }
 
@@ -173,6 +250,8 @@ async function copyGitIgnoredFiles(
           }
           if (cloned) {
             await fs.utimes(destItem, stat.atime, stat.mtime);
+            cloneSyscalls++;
+            copiedFiles++;
             return;
           }
           // FICLONE failed — remove empty dest before falling through to cp
@@ -183,9 +262,13 @@ async function copyGitIgnoredFiles(
         if (stat.isDirectory()) {
           const cpFlags = os.platform() === 'darwin' ? '-RPpc' : '-RPp --reflink=auto';
           await execAsync(`cp ${cpFlags} ${shellEscape(sourceItem)} ${shellEscape(destItem)}`);
+          copiedDirs++;
+          cpFallbacks++;
         } else {
           const cpFlags = os.platform() === 'darwin' ? '-Ppc' : '-Pp --reflink=auto';
           await execAsync(`cp ${cpFlags} ${shellEscape(sourceItem)} ${shellEscape(destItem)}`);
+          copiedFiles++;
+          cpFallbacks++;
         }
       } catch (error) {
         // Log but don't fail - some files might be transient or locked
@@ -195,12 +278,20 @@ async function copyGitIgnoredFiles(
         });
       }
     });
-
-    await Promise.all(copyPromises);
   } catch (error) {
     // Log but don't fail worktree creation if git ls-files fails
     worktreeLog.warn('failed to copy gitignored files', {
       error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    worktreeLog.info('copyGitIgnoredFiles', {
+      ms: Math.round(performance.now() - t),
+      items: prefetchedItems?.length ?? 0,
+      copiedFiles,
+      copiedDirs,
+      cloneSyscalls,
+      cpFallbacks,
+      skipped,
     });
   }
 }
@@ -289,8 +380,10 @@ export async function startTask(
   baseBranch?: string,
   sandboxed: boolean = false,
 ): Promise<TaskWorktreeResult> {
+  const t = timer();
   try {
     const task = await getTaskByNumber(projectPath, taskNumber);
+    t.mark('lookup');
     if (!task) return { success: false, error: 'Task not found' };
 
     // Idempotent: if already started with a worktree, return success
@@ -300,77 +393,95 @@ export async function startTask(
 
     worktreeLog.info('starting task', { taskNumber, name: task.name });
 
-    const [hasHead, branchResult] = await Promise.all([
-      execAsync('git rev-parse HEAD', { cwd: projectPath }).then(
-        () => true,
-        () => false,
-      ),
-      execAsync('git rev-parse --abbrev-ref HEAD', { cwd: projectPath })
-        .then(({ stdout }) => stdout.trim())
-        .catch((): undefined => undefined),
+    // Kick off everything that does not depend on each other in parallel.
+    const projectName = path.basename(projectPath);
+    const baseDir = getWorktreeBaseDir(projectName);
+    const branch = branchName || generateBranchName(task.name, taskNumber);
+
+    const headPromise = execAsync('git rev-parse HEAD', { cwd: projectPath }).then(
+      () => true,
+      () => false,
+    );
+    const branchHeadPromise = execAsync('git rev-parse --abbrev-ref HEAD', { cwd: projectPath })
+      .then(({ stdout }) => stdout.trim())
+      .catch((): undefined => undefined);
+    const mkdirPromise = fs.mkdir(baseDir, { recursive: true });
+    const prunePromise = execAsync('git worktree prune', { cwd: projectPath });
+    const branchExistsPromise = execFileAsync('git', ['rev-parse', '--verify', branch], { cwd: projectPath }).then(
+      () => true,
+      () => false,
+    );
+    const copyIgnored = !sandboxed && (await shouldCopyIgnoredFiles(projectPath));
+    const ignoredFilesPromise = copyIgnored ? fetchIgnoredFiles(projectPath) : Promise.resolve<string[]>([]);
+
+    const [hasHead, branchHead, , branchExists] = await Promise.all([
+      headPromise,
+      branchHeadPromise,
+      prunePromise,
+      branchExistsPromise,
+      mkdirPromise,
     ]);
+    t.mark('parallelPrelude');
 
     if (!hasHead) {
       await execAsync('git commit --allow-empty -m "Initial commit"', { cwd: projectPath });
     }
 
-    const mergeTarget = baseBranch || branchResult;
-    const projectName = path.basename(projectPath);
-    const baseDir = getWorktreeBaseDir(projectName);
-    await fs.mkdir(baseDir, { recursive: true });
+    const mergeTarget = baseBranch || branchHead;
 
-    let worktreePath = path.join(baseDir, `T-${taskNumber}`);
-    let dirNum = taskNumber;
-    while (
-      await fs.access(worktreePath).then(
-        () => true,
-        () => false,
-      )
-    ) {
-      dirNum++;
-      worktreePath = path.join(baseDir, `T-${dirNum}`);
-    }
+    // Probe + add run inside the mutex so two concurrent starts don't both
+    // claim the same T-N. Prune has already completed above, so the probe
+    // sees git's current view of existing worktrees.
+    const worktreePath = await runExclusive(async () => {
+      let p = path.join(baseDir, `T-${taskNumber}`);
+      let dirNum = taskNumber;
+      while (
+        await fs.access(p).then(
+          () => true,
+          () => false,
+        )
+      ) {
+        dirNum++;
+        p = path.join(baseDir, `T-${dirNum}`);
+      }
+      t.mark('pathProbe');
 
-    const branch = branchName || generateBranchName(task.name, taskNumber);
+      const wtAddArgs = branchExists
+        ? ['worktree', 'add', p, branch]
+        : baseBranch
+          ? ['worktree', 'add', '-b', branch, p, baseBranch]
+          : ['worktree', 'add', '-b', branch, p];
 
-    // Prune stale worktree registrations so deleted directories can be reused
-    await execAsync('git worktree prune', { cwd: projectPath });
+      await execFileAsync('git', wtAddArgs, { cwd: projectPath });
+      t.mark('worktreeAdd');
+      return p;
+    });
 
-    // Check if branch already exists (e.g. leftover from a previous failed attempt)
-    const branchExists = await execFileAsync('git', ['rev-parse', '--verify', branch], { cwd: projectPath }).then(
-      () => true,
-      () => false,
-    );
-    const wtAddArgs = branchExists
-      ? ['worktree', 'add', worktreePath, branch]
-      : baseBranch
-        ? ['worktree', 'add', '-b', branch, worktreePath, baseBranch]
-        : ['worktree', 'add', '-b', branch, worktreePath];
-
-    const [, ignoredFiles] = await Promise.all([
-      execFileAsync('git', wtAddArgs, { cwd: projectPath }),
-      sandboxed ? Promise.resolve<string[]>([]) : fetchIgnoredFiles(projectPath),
-    ]);
-
-    await Promise.all([
+    const dbWrites: Promise<unknown>[] = [
       setTaskBranch(projectPath, taskNumber, branch),
       setTaskWorktreePath(projectPath, taskNumber, worktreePath),
-    ]);
+    ];
+    if (mergeTarget) dbWrites.push(setTaskMergeTarget(projectPath, taskNumber, mergeTarget));
+    await Promise.all(dbWrites);
+    t.mark('dbWrites');
 
-    if (mergeTarget) {
-      await setTaskMergeTarget(projectPath, taskNumber, mergeTarget);
-    }
-
-    if (!sandboxed) {
+    if (copyIgnored) {
+      const ignoredFiles = await ignoredFilesPromise;
       await copyGitIgnoredFiles(projectPath, worktreePath, ignoredFiles);
+    } else if (!sandboxed) {
+      worktreeLog.info('clean checkout mode, skipping ignored file copy', { projectPath, taskNumber });
     }
+    t.mark('copyIgnored');
 
-    worktreeLog.info('started task', { taskNumber, worktreePath, branch });
     const updated = await getTaskByNumber(projectPath, taskNumber);
+    t.mark('refetch');
+    worktreeLog.info('startTask timings', { taskNumber, ...t.finish() });
+    worktreeLog.info('started task', { taskNumber, worktreePath, branch });
     return { success: true, task: updated || undefined, worktreePath };
   } catch (error) {
     worktreeLog.error('startTask failed', {
       taskNumber,
+      ...t.finish(),
       error: error instanceof Error ? error.message : String(error),
     });
     return { success: false, error: error instanceof Error ? error.message : 'Failed to start task' };
@@ -437,11 +548,13 @@ export async function createTaskWorktree(
       ? ['worktree', 'add', worktreePath, branch]
       : ['worktree', 'add', '-b', branch, worktreePath];
 
+    const copyIgnored = !sandboxed && (await shouldCopyIgnoredFiles(projectPath));
+
     // Start ls-files in parallel with git worktree add
     // ls-files reads from source dir, doesn't need the worktree to exist
     const [, ignoredFiles] = await Promise.all([
       execFileAsync('git', wtAddArgs, { cwd: projectPath }),
-      sandboxed ? Promise.resolve<string[]>([]) : fetchIgnoredFiles(projectPath),
+      copyIgnored ? fetchIgnoredFiles(projectPath) : Promise.resolve<string[]>([]),
     ]);
 
     const task = await createTask(projectPath, currentTaskNumber, displayName, {
@@ -452,8 +565,13 @@ export async function createTaskWorktree(
       sandboxed,
     });
 
-    if (!sandboxed) {
+    if (copyIgnored) {
       await copyGitIgnoredFiles(projectPath, worktreePath, ignoredFiles);
+    } else if (!sandboxed) {
+      worktreeLog.info('clean checkout mode, skipping ignored file copy', {
+        projectPath,
+        taskNumber: currentTaskNumber,
+      });
     }
 
     return {
@@ -669,17 +787,21 @@ export async function recoverTaskWorktree(projectPath: string, taskNumber: numbe
       worktreePath = path.join(baseDir, `T-${dirNum}`);
     }
 
+    const copyIgnored = !task.sandboxed && (await shouldCopyIgnoredFiles(projectPath));
+
     // Re-create worktree from the existing branch (no -b flag)
     const [, ignoredFiles] = await Promise.all([
       execAsync(`git worktree add ${shellEscape(worktreePath)} ${shellEscape(task.branch)}`, { cwd: projectPath }),
-      task.sandboxed ? Promise.resolve<string[]>([]) : fetchIgnoredFiles(projectPath),
+      copyIgnored ? fetchIgnoredFiles(projectPath) : Promise.resolve<string[]>([]),
     ]);
 
     // Update metadata with new path
     await setTaskWorktreePath(projectPath, taskNumber, worktreePath);
 
-    if (!task.sandboxed) {
+    if (copyIgnored) {
       await copyGitIgnoredFiles(projectPath, worktreePath, ignoredFiles);
+    } else if (!task.sandboxed) {
+      worktreeLog.info('clean checkout mode, skipping ignored file copy', { projectPath, taskNumber });
     }
 
     worktreeLog.info('recovered', { taskNumber, worktreePath });
